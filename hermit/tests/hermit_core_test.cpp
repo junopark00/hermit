@@ -521,49 +521,176 @@ static void testClipboardChangeInputs()
         CHECK(o.hostSeen(0xA, 1) == HC::Fetch);
     }
 
-    // Files sent in full without the host's confirmation (no reply within 5 minutes): the next new
-    // host files are ours, not fetched back over the local copy (round 10, 2).
+    // Files sent in full without the host's confirmation (no reply within 5 minutes), on a host
+    // that lists its files: new host files are compared with them before anything else; when they
+    // hold the same, they are ours and not fetched back over the local copy (rounds 10 and 11, 3).
     {
         ClipboardChangeOrder o;
         o.hostRecorded(100);
         o.localSentUnconfirmed(1);
         CHECK(o.unconfirmedUpload());
-        CHECK(!o.hostIsUnconfirmedUpload(100, false, 1));  // not placed yet: still waiting
+        CHECK(o.hostPulled(100, false, true, 1) == HC::Unchanged);  // not placed yet: still waiting
         CHECK(o.unconfirmedUpload());
-        CHECK(o.hostIsUnconfirmedUpload(101, true, 1));
-        CHECK(o.hostSeen(101, 1) == HC::Unchanged);
+        CHECK(o.hostPulled(101, true, true, 1) == HC::FetchAndMatch);
+        CHECK(o.matchingUpload());
+        CHECK(o.hostListMatched(101, true));
+        CHECK(!o.unconfirmedUpload() && !o.matchingUpload());
+        CHECK(o.hostKey() == 101 && o.hostOrder() == 1);
+        CHECK(o.hostPulled(101, true, true, 1) == HC::Unchanged);
+        CHECK(o.hostPulled(102, true, true, 1) == HC::Fetch);  // files copied on the host later still come
+    }
+    // ...also after newer local content was sent and host text came, neither of which ends the
+    // wait: the host may still place the files after them. They then replace nothing: the newer
+    // content keeps its order (round 11, 3).
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        o.localSent(true, 101, 2);  // text copied and sent after the files
+        CHECK(o.unconfirmedUpload());
+        CHECK(o.hostPulled(102, false, true, 2) == HC::Fetch);  // host text: a change as usual
+        CHECK(o.unconfirmedUpload());
+        CHECK(o.hostPulled(103, true, true, 3) == HC::FetchAndMatch);
+        CHECK(o.hostListMatched(103, true));
+        CHECK(o.hostOrder() == 2);
+        CHECK(!o.localMayReplaceHost(2));
+        CHECK(o.localMayReplaceHost(3));  // the local copy made since is still sent
+        CHECK(o.hostPulled(103, true, true, 3) == HC::Unchanged);
+    }
+    // ...and after a local change not sent yet (copied files wait for the return to the stream
+    // window): ours, not fetched back over it, and it is still sent (round 11, 3).
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        CHECK(o.hostPulled(101, true, true, 2) == HC::FetchAndMatch);
+        CHECK(o.hostListMatched(101, true));
+        CHECK(o.hostOrder() == 1);
+        CHECK(o.localMayReplaceHost(2));
+    }
+    // Host files that do not hold the same (a copy made on the host) are a host change and end the
+    // wait (round 11, 3).
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        CHECK(o.hostPulled(101, true, true, 1) == HC::FetchAndMatch);
+        CHECK(!o.hostListMatched(101, false));
         CHECK(!o.unconfirmedUpload());
-        CHECK(o.hostSeen(102, 1) == HC::Fetch);  // files copied on the host later still come
+        CHECK(o.hostSeen(101, 1) == HC::Unchanged);  // the list is delivered under its key
+        CHECK(o.hostOrder() == 1);
+        CHECK(o.hostPulled(102, true, true, 1) == HC::Fetch);
+        CHECK(!o.hostListMatched(102, true));  // nothing awaited any more
     }
-    // ...unless a local change came after them: then they are fetched like any host change...
+    // A list under a newer key than the one asked about (the host's clipboard changed in between)
+    // is taken under that key.
     {
         ClipboardChangeOrder o;
         o.hostRecorded(100);
         o.localSentUnconfirmed(1);
-        CHECK(!o.hostIsUnconfirmedUpload(101, true, 2));
-        CHECK(o.hostSeen(101, 2) == HC::Fetch);
+        CHECK(o.hostPulled(101, true, true, 1) == HC::FetchAndMatch);
+        CHECK(o.hostListMatched(102, true));
+        CHECK(o.hostKey() == 102);
+        CHECK(o.hostPulled(102, true, true, 1) == HC::Unchanged);
     }
-    // ...or other host content came first, which ends the wait.
+    // A list that could not be fetched (busy host) is compared when it is fetched again; a local
+    // change before that drops it, and the wait goes on.
     {
         ClipboardChangeOrder o;
         o.hostRecorded(100);
         o.localSentUnconfirmed(1);
-        CHECK(!o.hostIsUnconfirmedUpload(101, false, 1));
-        CHECK(o.hostSeen(101, 1) == HC::Fetch);
-        CHECK(!o.hostIsUnconfirmedUpload(102, true, 1));
-        CHECK(o.hostSeen(102, 1) == HC::Fetch);
+        CHECK(o.hostPulled(101, true, true, 1) == HC::FetchAndMatch);
+        o.hostRetry(101);
+        CHECK(o.hostPulled(101, true, true, 1) == HC::FetchAndMatch);
+        CHECK(o.hostListMatched(101, true));
+        CHECK(o.hostOrder() == 1);
+        ClipboardChangeOrder p;
+        p.hostRecorded(100);
+        p.localSentUnconfirmed(1);
+        CHECK(p.hostPulled(101, true, true, 1) == HC::FetchAndMatch);
+        p.hostRetry(101);
+        CHECK(p.hostPulled(101, true, true, 2) == HC::Superseded);
+        CHECK(p.unconfirmedUpload() && !p.matchingUpload());
+        CHECK(p.hostPulled(102, true, true, 2) == HC::FetchAndMatch);
     }
-    // A later confirmed send ends the wait too; the unconfirmed files hold back older local content.
+    // Only a list fetched with FetchAndMatch is compared.
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        CHECK(!o.hostListMatched(100, true));
+        CHECK(o.unconfirmedUpload());
+    }
+    // A host that does not list its files (archive): they cannot be compared, so the first new host
+    // content ends the wait, and is ours when it is files and no local change came after them; a
+    // later send does not end the wait.
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        CHECK(o.hostPulled(100, false, false, 1) == HC::Unchanged);
+        CHECK(o.hostPulled(101, true, false, 1) == HC::OwnUpload);
+        CHECK(!o.unconfirmedUpload());
+        CHECK(o.hostKey() == 101 && o.hostOrder() == 1);
+        CHECK(o.hostPulled(101, true, false, 1) == HC::Unchanged);
+        CHECK(o.hostPulled(102, true, false, 1) == HC::Fetch);
+    }
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        CHECK(o.hostPulled(101, true, false, 2) == HC::Fetch);
+        CHECK(!o.unconfirmedUpload());
+    }
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        CHECK(o.hostPulled(101, false, false, 1) == HC::Fetch);
+        CHECK(!o.unconfirmedUpload());
+        CHECK(o.hostPulled(102, true, false, 1) == HC::Fetch);
+    }
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        o.localSent(true, 101, 1);  // files dropped after them
+        CHECK(o.unconfirmedUpload());
+        CHECK(o.hostPulled(102, true, false, 1) == HC::OwnUpload);
+        CHECK(o.hostOrder() == 1);
+    }
+    // The unconfirmed files hold back older local content.
     {
         ClipboardChangeOrder o;
         o.hostRecorded(100);
         o.localSentUnconfirmed(2);
         CHECK(!o.localMayReplaceHost(1));
         CHECK(o.localMayReplaceHost(3));
-        o.localSent(true, 101, 3);
-        CHECK(!o.unconfirmedUpload());
-        CHECK(!o.hostIsUnconfirmedUpload(102, true, 3));
-        CHECK(o.hostSeen(102, 3) == HC::Fetch);
+    }
+
+    // What the uploaded files and a host file list hold: the top-level names and the total size of
+    // the files, whatever the order (round 11, 3).
+    {
+        struct Item {
+            bool directory;
+            QString path;
+            quint64 size;
+        };
+        const QVector<Item> upload = {{true, QStringLiteral("Photos"), 0}, {false, QStringLiteral("Photos/a.jpg"), 300},
+                                      {false, QStringLiteral("notes.txt"), 20}};
+        const QVector<Item> listed = {{false, QStringLiteral("notes.txt"), 20}, {true, QStringLiteral("Photos"), 0},
+                                      {false, QStringLiteral("Photos/a.jpg"), 300}};
+        const ClipboardFilesSummary summary = ClipboardFilesSummary::of(upload);
+        CHECK(summary.names == QStringList({QStringLiteral("Photos"), QStringLiteral("notes.txt")}));
+        CHECK(summary.bytes == 320);
+        CHECK(summary == ClipboardFilesSummary::of(listed));
+        const QVector<Item> otherSize = {{true, QStringLiteral("Photos"), 0}, {false, QStringLiteral("Photos/a.jpg"), 301},
+                                         {false, QStringLiteral("notes.txt"), 20}};
+        CHECK(!(summary == ClipboardFilesSummary::of(otherSize)));
+        const QVector<Item> otherName = {{true, QStringLiteral("Photos"), 0}, {false, QStringLiteral("Photos/a.jpg"), 300},
+                                         {false, QStringLiteral("notes2.txt"), 20}};
+        CHECK(!(summary == ClipboardFilesSummary::of(otherName)));
+        CHECK(!(summary == ClipboardFilesSummary()));
     }
 
     // Network errors fetching host content: one notice per content; an image or archive is fetched

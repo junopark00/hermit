@@ -1427,9 +1427,11 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
         // Hermit: every byte reached the host, which was still unpacking the files and placing them
         // on its clipboard when the wait for its answer ended. It most likely took them, so they
         // are not sent again (up to 256 MB once more); the notice says they may still arrive.
-        // They count as sent, under a sequence number not known yet: the next new host files are
-        // taken for them rather than fetched back over the local copy (unless a local change
-        // comes first; ClipboardChangeOrder::localSentUnconfirmed).
+        // They count as sent, under a sequence number not known yet: host files that turn out to
+        // be them (on a host that lists its files, the same top-level names and total size) are
+        // taken for them rather than fetched back over the local copy, also after newer content
+        // (ClipboardChangeOrder::localSentUnconfirmed).
+        m_UnconfirmedFiles = ClipboardFilesSummary::of(entries);
         m_Order.localSentUnconfirmed(localOrder);
         m_HostTextHashValid = false;
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -1495,7 +1497,14 @@ static bool shouldFetch(ClipboardChangeOrder::HostContent decision)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Host clipboard content not fetched again: newer content was copied locally");
     }
-    return decision == ClipboardChangeOrder::HostContent::Fetch;
+    else if (decision == ClipboardChangeOrder::HostContent::OwnUpload) {
+        // The files sent before without the host's confirmation, placed on its clipboard after
+        // all: our own, not fetched back over the local copy.
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host clipboard files taken for the ones sent without a confirmation; not fetched");
+    }
+    return decision == ClipboardChangeOrder::HostContent::Fetch ||
+           decision == ClipboardChangeOrder::HostContent::FetchAndMatch;
 }
 
 void ClipboardSyncWorker::pull(quint64 localChanges)
@@ -1548,16 +1557,16 @@ void ClipboardSyncWorker::pull(quint64 localChanges)
     }
     QByteArray files;
     m_HostStreamsFiles = parseField(body, "files", files) && files == "stream";
-    if (m_Order.hostIsUnconfirmedUpload(seq, type == "files", localChanges)) {
-        // Hermit: the files sent before without the host's confirmation, placed on its clipboard
-        // after all: our own, not fetched back over the local copy.
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Host clipboard files taken for the ones sent without a confirmation; not fetched");
-        return;
-    }
     // Unchanged since we last pushed or pulled, or waiting to be fetched again but older than a
-    // local change
-    if (!shouldFetch(m_Order.hostSeen(seq, localChanges))) {
+    // local change; Hermit: or the files sent before without the host's confirmation, placed on
+    // its clipboard after all (on a host that lists its files, pullFileList compares the list with
+    // them first)
+#ifdef Q_OS_WIN32
+    const bool listed = m_HostStreamsFiles;
+#else
+    const bool listed = false;
+#endif
+    if (!shouldFetch(m_Order.hostPulled(seq, type == "files", listed, localChanges))) {
         return;
     }
 
@@ -1735,6 +1744,16 @@ void ClipboardSyncWorker::pullFileList(quint64 localChanges)
         delete content;
         notify(listError == QLatin1String("unsafe path") || listError == QLatin1String("duplicate path")
                    ? HostFilesUnsupported : HostFilesFailed, true);
+        return;
+    }
+    // Hermit: the files sent before without the host's confirmation, placed on its clipboard after
+    // all (the same top-level names and total size): our own, not offered over newer content.
+    const bool sameAsUpload = m_Order.matchingUpload() &&
+                              ClipboardFilesSummary::of(content->remoteFiles.entries) == m_UnconfirmedFiles;
+    if (m_Order.hostListMatched(content->remoteFiles.seq, sameAsUpload)) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host file list taken for the files sent without a confirmation; not offered");
+        delete content;
         return;
     }
     if (!ClipboardVirtualFiles::fitsFileDescriptors(content->remoteFiles)) {

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <QLatin1Char>
+#include <QString>
+#include <QStringList>
+
 #include <algorithm>
 #include <cstdint>
 
@@ -21,16 +25,18 @@
 // - host content found when sync is set up is not a change while no setup failed before (at stream
 //   start); a setup that succeeds after one failed takes it for a host change seen by the last
 //   failed attempt (hostSetUp);
-// - files whose every byte reached the host without its confirmation count as sent, and the next
-//   new host files as those files, unless a local change came first (localSentUnconfirmed).
+// - files whose every byte reached the host without its confirmation count as sent, and host files
+//   that turn out to be them later (the host may place them after newer content) are recorded as
+//   ours, in the order they already have, replacing nothing (localSentUnconfirmed).
 //
 // So:
 // - local content is sent (again, after a busy host or a network error) only while no host change
 //   was seen after it (localMayReplaceHost); otherwise it is dropped and the host's newer content
 //   wins;
-// - host content is fetched (again) only while no local change was seen after it (hostSeen), and
-//   content already on its way is put on the local clipboard only then (hostMayReplaceLocal, on the
-//   main thread); otherwise it is dropped and the local copy wins, and is sent.
+// - host content is fetched (again) only while no local change was seen after it (hostSeen,
+//   hostPulled), and content already on its way is put on the local clipboard only then
+//   (hostMayReplaceLocal, on the main thread); otherwise it is dropped and the local copy wins, and
+//   is sent.
 //
 // The clipboard worker keeps one of these for the host side; it runs its jobs one at a time, so the
 // state needs no lock. The main thread keeps the count of local changes and hands it to every pull
@@ -42,6 +48,13 @@ public:
         Unchanged,   // already delivered, given up on, or replaced by our own content
         Superseded,  // waiting to be fetched again, but a local change came after it: dropped now
         Fetch,       // new, or waiting and still the latest change: fetch and deliver it
+        // Like Fetch, for host files that may be the files sent without a confirmation, placed on
+        // the host's clipboard late: their list is compared with those files first
+        // (hostListMatched), and they are only delivered when they are not them
+        FetchAndMatch,
+        // The files sent without a confirmation (judged without their list, on a host that does
+        // not list its files): recorded as ours, not fetched
+        OwnUpload,
     };
 
     // The host holds content it held already when sync started (or that we cannot have caused):
@@ -52,6 +65,7 @@ public:
         m_HostKey = key;
         m_HostPending = false;
         m_Unconfirmed = false;
+        m_Matching = false;
     }
 
     // A setup (the worker's init) starts in a job posted after localChanges local changes (a push:
@@ -91,6 +105,7 @@ public:
         m_HostOrder = (std::max)(m_HostOrder, m_SetupFailedOrder);
         m_HostPending = true;
         m_Unconfirmed = false;
+        m_Matching = false;
     }
 
     // A pull posted after localChanges local changes found host content key (its clipboard sequence
@@ -105,6 +120,7 @@ public:
             m_HostKey = key;
             m_HostOrder = (std::max)(m_HostOrder, localChanges);
             m_HostPending = false;
+            m_Matching = false;
             return HostContent::Fetch;
         }
         if (!m_HostPending) {
@@ -112,6 +128,62 @@ public:
         }
         m_HostPending = false;
         return hostMayReplaceLocal(m_HostOrder, localChanges) ? HostContent::Fetch : HostContent::Superseded;
+    }
+
+    // What a pull posted after localChanges local changes does with host content key: hostSeen,
+    // except while files sent without a confirmation are awaited (localSentUnconfirmed). files: the
+    // host holds files; listed: the host lists its files before they are fetched (a Shell host
+    // that streams files).
+    // - listed: new host files (or such files waiting to be fetched again after their list failed)
+    //   are fetched with FetchAndMatch, so their list is compared with the files sent before
+    //   anything else (hostListMatched). Other host content is a host change as usual, and the wait
+    //   goes on, as it does after later sends and local changes: the host may still place the files
+    //   after them (it unpacks them on a worker of its own).
+    // - not listed: the files cannot be compared without downloading them, so the first new host
+    //   content ends the wait, and is taken for those files (OwnUpload) when it is files and no
+    //   local change came after them.
+    HostContent hostPulled(uint64_t key, bool files, bool listed, uint64_t localChanges)
+    {
+        if (m_Unconfirmed) {
+            const bool newKey = !m_HostKnown || key != m_HostKey;
+            if (listed && files && (newKey || m_Matching)) {
+                // The order before these files, which stays if they turn out to be ours
+                const uint64_t before = newKey ? m_HostOrder : m_MatchOrder;
+                const HostContent seen = hostSeen(key, localChanges);
+                m_Matching = seen == HostContent::Fetch;
+                m_MatchOrder = before;
+                return m_Matching ? HostContent::FetchAndMatch : seen;
+            }
+            if (!listed && newKey) {
+                m_Unconfirmed = false;
+                if (files && localChanges <= m_UnconfirmedOrder) {
+                    takeUpload(key, m_HostOrder);
+                    return HostContent::OwnUpload;
+                }
+            }
+        }
+        return hostSeen(key, localChanges);
+    }
+
+    // The list of the host files fetched with FetchAndMatch arrived under key (its own sequence
+    // number: newer if the host's clipboard changed in between); same: it holds what the files
+    // sent without a confirmation held (ClipboardFilesSummary). True when they are those files:
+    // recorded as ours and not delivered, keeping the order from before them, so they replace
+    // nothing that came after the upload (neither the local clipboard nor local content still to
+    // be sent). Otherwise they are files copied on the host: the wait ends, and they are a host
+    // change (hostSeen with key).
+    bool hostListMatched(uint64_t key, bool same)
+    {
+        if (!m_Matching) {
+            return false;
+        }
+        m_Matching = false;
+        m_Unconfirmed = false;
+        if (!same) {
+            return false;
+        }
+        takeUpload(key, m_MatchOrder);
+        return true;
     }
 
     // Host content key was not delivered (the fetch failed in a way that may pass, or it could not
@@ -126,7 +198,8 @@ public:
 
     // Local change localOrder is now on the host. keyKnown: the host said under which key (its
     // sequence number), so a later pull does not fetch it back. Host content waiting to be fetched
-    // again is gone from the host.
+    // again is gone from the host. Files sent without a confirmation are still awaited: the host
+    // may place them after this.
     void localSent(bool keyKnown, uint64_t key, uint64_t localOrder)
     {
         if (keyKnown) {
@@ -135,35 +208,19 @@ public:
         }
         m_HostPending = false;
         m_HostOrder = (std::max)(m_HostOrder, localOrder);
-        m_Unconfirmed = false;
+        m_Matching = false;
     }
 
     // Every byte of the files of local change localOrder reached the host, but it did not confirm
     // taking them in time (it was still unpacking them). It most likely did, under a sequence
-    // number we do not know yet: recorded as sent, and the next host files seen are taken for them
-    // (hostIsUnconfirmedUpload) instead of being fetched back over the local copy.
+    // number we do not know yet: recorded as sent, and host files that turn out to be them
+    // (hostPulled) are recorded as ours instead of being fetched back over the local copy, also
+    // when they arrive after newer content.
     void localSentUnconfirmed(uint64_t localOrder)
     {
         localSent(false, 0, localOrder);
         m_Unconfirmed = true;
         m_UnconfirmedOrder = localOrder;
-    }
-
-    // A pull posted after localChanges local changes found host content key; files: it is a file
-    // list. True when these are most likely the files of an unconfirmed upload: new host content,
-    // the first host change since that upload, files, and no local change since. They are then
-    // recorded as ours (not fetched). Any other host change ends the wait for them.
-    bool hostIsUnconfirmedUpload(uint64_t key, bool files, uint64_t localChanges)
-    {
-        if (!m_Unconfirmed || (m_HostKnown && key == m_HostKey)) {
-            return false;
-        }
-        m_Unconfirmed = false;
-        if (!files || localChanges > m_UnconfirmedOrder) {
-            return false;
-        }
-        localSent(true, key, m_UnconfirmedOrder);
-        return true;
     }
 
     // Whether local change localOrder may still replace the host's content: no host change (nor a
@@ -188,8 +245,22 @@ public:
     bool hostPending() const { return m_HostPending; }
     // Files sent without a confirmation, not seen on the host yet
     bool unconfirmedUpload() const { return m_Unconfirmed; }
+    // Host files fetched with FetchAndMatch, their list not compared yet (hostListMatched)
+    bool matchingUpload() const { return m_Matching; }
 
 private:
+    // Host files under key are the files sent without a confirmation: the host's content, in the
+    // order of their upload unless content after it (orderBefore) reached the host first.
+    void takeUpload(uint64_t key, uint64_t orderBefore)
+    {
+        m_HostKnown = true;
+        m_HostKey = key;
+        m_HostOrder = (std::max)(orderBefore, m_UnconfirmedOrder);
+        m_HostPending = false;
+        m_Unconfirmed = false;
+        m_Matching = false;
+    }
+
     bool m_HostKnown = false;
     uint64_t m_HostKey = 0;
     uint64_t m_HostOrder = 0;
@@ -199,6 +270,41 @@ private:
     uint64_t m_SetupFailedOrder = 0;  // of the job whose setup failed last
     bool m_Unconfirmed = false;
     uint64_t m_UnconfirmedOrder = 0;
+    // The host files under m_HostKey are being compared with the unconfirmed upload; m_MatchOrder:
+    // the host's order before them
+    bool m_Matching = false;
+    uint64_t m_MatchOrder = 0;
+};
+
+// Hermit: what a set of files holds, to recognize files we sent among the host's files: the names
+// of its top-level items (what was copied; sorted) and the total size of its files. Entries: the
+// items of an upload (ClipboardArchive::Entry) or of a host file list (ClipboardArchive::RemoteFile),
+// each with a relative path ('/' separators), whether it is a directory and its size.
+struct ClipboardFilesSummary
+{
+    QStringList names;
+    uint64_t bytes = 0;
+
+    template <typename Entries>
+    static ClipboardFilesSummary of(const Entries& entries)
+    {
+        ClipboardFilesSummary summary;
+        for (const auto& entry : entries) {
+            if (!entry.path.contains(QLatin1Char('/'))) {
+                summary.names.append(entry.path);
+            }
+            if (!entry.directory) {
+                summary.bytes += entry.size;
+            }
+        }
+        summary.names.sort();
+        return summary;
+    }
+
+    bool operator==(const ClipboardFilesSummary& other) const
+    {
+        return bytes == other.bytes && names == other.names;
+    }
 };
 
 // Hermit: host images and files whose fetch hit a network error without a reply (a timeout,

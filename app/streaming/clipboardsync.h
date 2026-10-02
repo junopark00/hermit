@@ -207,6 +207,9 @@ private:
     bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error
     quint32 m_LocalNetworkNoticeSeq;
     bool m_UploadSentAll;  // Hermit: the last upload sent every byte (transfer)
+    // Hermit: what the files sent last without the host's confirmation held, to recognize them in
+    // a host file list (ClipboardChangeOrder::hostListMatched)
+    ClipboardFilesSummary m_UnconfirmedFiles;
     // Hermit: the host text last seen or sent, so identical text is not echoed back without local
     // change tracking
     bool m_HostTextHashValid;
