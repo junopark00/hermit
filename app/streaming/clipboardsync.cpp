@@ -565,6 +565,7 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_PushAccepted(false),
       m_LastHttpStatus(0)
 {
+    m_Clock.start();
 }
 
 void ClipboardSyncWorker::run(const std::function<void()>& job)
@@ -1370,6 +1371,8 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
     ActiveTransfer active(*m_Control);
     ClipboardArchive::ArchiveUploadDevice device(entries, archiveSize, m_RateBytesPerSecond);
     device.open(QIODevice::ReadOnly | QIODevice::Unbuffered);
+    // Hermit: files the host did not confirm are awaited for a while from here (localSentUnconfirmed)
+    const quint64 uploadStartedMs = (quint64)m_Clock.elapsed();
     const TransferResult result = transfer(QStringLiteral("files"), &device, nullptr, 0, &body, error, k_TransferInactivityTimeoutMs);
     if (result == TransferResult::Cancelled) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1430,9 +1433,9 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
         // They count as sent, under a sequence number not known yet: host files that turn out to
         // be them (on a host that lists its files, the same top-level names and total size) are
         // taken for them rather than fetched back over the local copy, also after newer content
-        // (ClipboardChangeOrder::localSentUnconfirmed).
+        // (ClipboardChangeOrder::localSentUnconfirmed), until the host can no longer place them.
         m_UnconfirmedFiles = ClipboardFilesSummary::of(entries);
-        m_Order.localSentUnconfirmed(localOrder);
+        m_Order.localSentUnconfirmed(localOrder, uploadStartedMs);
         m_HostTextHashValid = false;
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Sending files to host: %s; not sent again", qPrintable(m_LastError));
@@ -1566,7 +1569,12 @@ void ClipboardSyncWorker::pull(quint64 localChanges)
 #else
     const bool listed = false;
 #endif
-    if (!shouldFetch(m_Order.hostPulled(seq, type == "files", listed, localChanges))) {
+    const ClipboardChangeOrder::HostContent decision = m_Order.hostPulled(seq, type == "files", listed, localChanges,
+                                                                          (quint64)m_Clock.elapsed());
+    if (!m_Order.unconfirmedUpload()) {
+        m_UnconfirmedFiles = ClipboardFilesSummary();  // no longer awaited
+    }
+    if (!shouldFetch(decision)) {
         return;
     }
 
@@ -1750,7 +1758,7 @@ void ClipboardSyncWorker::pullFileList(quint64 localChanges)
     // all (the same top-level names and total size): our own, not offered over newer content.
     const bool sameAsUpload = m_Order.matchingUpload() &&
                               ClipboardFilesSummary::of(content->remoteFiles.entries) == m_UnconfirmedFiles;
-    if (m_Order.hostListMatched(content->remoteFiles.seq, sameAsUpload)) {
+    if (m_Order.hostListMatched(content->remoteFiles.seq, sameAsUpload, (quint64)m_Clock.elapsed())) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Host file list taken for the files sent without a confirmation; not offered");
         delete content;

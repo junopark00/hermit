@@ -265,9 +265,10 @@ to sync the clipboard in both directions.
   streams files, Hermit recognizes them by their top-level names and total size, also when they
   arrive after something newer was copied on either side, and then they replace nothing (other host
   files come over as usual); with a host that sends an archive, the next new host content is taken
-  for them if it is files and you copied nothing locally since. When the host cannot be reached at
-  all at that moment, what you copied is sent the next time you return to the stream window (but see
-  above for a setup that failed).
+  for them if it is files and you copied nothing locally since. After 30 minutes from the start of
+  the upload the host can no longer place them, and new host files come over as usual. When the host
+  cannot be reached at all at that moment, what you copied is sent the next time you return to the
+  stream window (but see above for a setup that failed).
 - Network transfer, image conversion and file I/O run on separate threads and never stall the
   stream. Clipboard contents are never logged.
 - **Speed limit**: image and file transfers are rate-limited in both directions, leaving bandwidth for

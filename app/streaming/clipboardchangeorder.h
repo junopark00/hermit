@@ -27,7 +27,8 @@
 //   failed attempt (hostSetUp);
 // - files whose every byte reached the host without its confirmation count as sent, and host files
 //   that turn out to be them later (the host may place them after newer content) are recorded as
-//   ours, in the order they already have, replacing nothing (localSentUnconfirmed).
+//   ours, in the order they already have, replacing nothing (localSentUnconfirmed), until the host
+//   can no longer place them (k_UnconfirmedWaitMs);
 //
 // So:
 // - local content is sent (again, after a busy host or a network error) only while no host change
@@ -142,8 +143,11 @@ public:
     // - not listed: the files cannot be compared without downloading them, so the first new host
     //   content ends the wait, and is taken for those files (OwnUpload) when it is files and no
     //   local change came after them.
-    HostContent hostPulled(uint64_t key, bool files, bool listed, uint64_t localChanges)
+    // nowMs: a monotonic clock in milliseconds, the one handed to localSentUnconfirmed; the wait
+    // ends once k_UnconfirmedWaitMs passed since the upload started.
+    HostContent hostPulled(uint64_t key, bool files, bool listed, uint64_t localChanges, uint64_t nowMs)
     {
+        expireUnconfirmed(nowMs);
         if (m_Unconfirmed) {
             const bool newKey = !m_HostKnown || key != m_HostKey;
             if (listed && files && (newKey || m_Matching)) {
@@ -171,9 +175,10 @@ public:
     // recorded as ours and not delivered, keeping the order from before them, so they replace
     // nothing that came after the upload (neither the local clipboard nor local content still to
     // be sent). Otherwise they are files copied on the host: the wait ends, and they are a host
-    // change (hostSeen with key).
-    bool hostListMatched(uint64_t key, bool same)
+    // change (hostSeen with key). nowMs: as for hostPulled (the list may take a while).
+    bool hostListMatched(uint64_t key, bool same, uint64_t nowMs)
     {
+        expireUnconfirmed(nowMs);
         if (!m_Matching) {
             return false;
         }
@@ -215,13 +220,20 @@ public:
     // taking them in time (it was still unpacking them). It most likely did, under a sequence
     // number we do not know yet: recorded as sent, and host files that turn out to be them
     // (hostPulled) are recorded as ours instead of being fetched back over the local copy, also
-    // when they arrive after newer content.
-    void localSentUnconfirmed(uint64_t localOrder)
+    // when they arrive after newer content. startedMs: when the upload's request started (a
+    // monotonic clock in milliseconds); the files are awaited for k_UnconfirmedWaitMs from then.
+    void localSentUnconfirmed(uint64_t localOrder, uint64_t startedMs)
     {
         localSent(false, 0, localOrder);
         m_Unconfirmed = true;
         m_UnconfirmedOrder = localOrder;
+        m_UnconfirmedStartedMs = startedMs;
     }
+
+    // Shell answers a request within its content timeout (timeout_content, 1800 s): files that are
+    // not on its clipboard this long after their upload's request started will not come any more,
+    // and host files after that are not taken for them.
+    static constexpr uint64_t k_UnconfirmedWaitMs = 30 * 60 * 1000;
 
     // Whether local change localOrder may still replace the host's content: no host change (nor a
     // newer local change) reached the host after it.
@@ -249,6 +261,15 @@ public:
     bool matchingUpload() const { return m_Matching; }
 
 private:
+    // The wait for files sent without a confirmation ends once the host can no longer place them.
+    void expireUnconfirmed(uint64_t nowMs)
+    {
+        if (m_Unconfirmed && nowMs >= m_UnconfirmedStartedMs + k_UnconfirmedWaitMs) {
+            m_Unconfirmed = false;
+            m_Matching = false;
+        }
+    }
+
     // Host files under key are the files sent without a confirmation: the host's content, in the
     // order of their upload unless content after it (orderBefore) reached the host first.
     void takeUpload(uint64_t key, uint64_t orderBefore)
@@ -270,6 +291,7 @@ private:
     uint64_t m_SetupFailedOrder = 0;  // of the job whose setup failed last
     bool m_Unconfirmed = false;
     uint64_t m_UnconfirmedOrder = 0;
+    uint64_t m_UnconfirmedStartedMs = 0;  // when their upload's request started
     // The host files under m_HostKey are being compared with the unconfirmed upload; m_MatchOrder:
     // the host's order before them
     bool m_Matching = false;

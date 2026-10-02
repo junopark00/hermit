@@ -5,6 +5,7 @@
 #include "clipboardchangeorder.h"
 
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QList>
 #include <QObject>
 #include <QSslCertificate>
@@ -210,6 +211,7 @@ private:
     // Hermit: what the files sent last without the host's confirmation held, to recognize them in
     // a host file list (ClipboardChangeOrder::hostListMatched)
     ClipboardFilesSummary m_UnconfirmedFiles;
+    QElapsedTimer m_Clock;  // Hermit: monotonic, for how long such files are awaited
     // Hermit: the host text last seen or sent, so identical text is not echoed back without local
     // change tracking
     bool m_HostTextHashValid;
