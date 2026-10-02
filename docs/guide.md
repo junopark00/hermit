@@ -203,7 +203,11 @@ to sync the clipboard in both directions.
   - A file that was changed or deleted on the host after you copied it fails to paste (File Explorer
     shows an error); copy it again on the host.
   - A download that stops (network loss, or the host's 30-minute limit per request) continues from
-    where it stopped; it fails after 60 seconds without data.
+    where it stopped. It waits up to 5 minutes for data, since the host may first have to download a
+    OneDrive placeholder; File Explorer shows the copy waiting, and its Cancel ends it. The file fails
+    when two attempts in a row bring no data.
+  - The list itself may take up to 2 minutes (folders in OneDrive, for example). If it does not
+    arrive, it is fetched again the next time you leave the stream window.
   - This needs a current Shell host. With older Shell versions, and for folders with paths over 259
     characters, the files come over as one archive when you leave the stream window (256 MB limit) and
     are pasted from a temporary folder, as described next.
@@ -213,9 +217,14 @@ to sync the clipboard in both directions.
   deleted.
 - A received file list is written only after the paths, duplicates and sizes have all been checked.
   Symbolic links and junctions are not followed in either direction; OneDrive Files On-Demand
-  placeholders are ordinary files and are downloaded as they are sent.
+  placeholders are ordinary files and are downloaded as they are sent. App execution aliases (the
+  commands in `WindowsApps`) and Unix sockets cannot be read and are skipped when sending.
 - Both sides track the clipboard sequence number, so unchanged content is not sent again and a side
   never receives back what it wrote itself.
+- When another program on the host holds its clipboard at that moment, the host answers that it is
+  busy (HTTP 503). Nothing is shown; the content moves the next time you leave or return to the stream
+  window. When the host refuses content (HTTP 422), it names the reason (names it can't create, only
+  links, an image it can't convert), and the notice says which.
 - Network transfer, image conversion and file I/O run on separate threads and never stall the
   stream. Clipboard contents are never logged.
 - **Speed limit**: image and file transfers are rate-limited in both directions, leaving bandwidth for
@@ -227,7 +236,9 @@ to sync the clipboard in both directions.
     flow control and written to a temporary file (`%TEMP%\HermitClipboard\download-*.apcf`), which is
     checked as a whole before it is unpacked. An archive is never held in memory in full.
   - An upload fails if a file changes size while it is being sent. A transfer with no data in either
-    direction for 60 seconds fails.
+    direction for 60 seconds fails; reading the local files counts, so an upload waits while OneDrive
+    downloads a placeholder that is being sent. Files received from the host as one archive wait up
+    to 5 minutes, since the host may first download its own placeholders.
   - The host protocol is unchanged: one HTTP request carries the same archive format.
 - Transfers that take longer than a second show their progress under the stream every 0.5 seconds,
   for example "Sending to the host: 45% (12.0 / 26.0 MB)". Pasting files copied on the host shows File
@@ -243,7 +254,8 @@ to sync the clipboard in both directions.
   (Ctrl+Alt+Shift+H) appears above the warning, which returns when the list closes.
 - Content that does not move also gets a short notice: an image over 32 MB or 8192×8192 pixels or in
   a format that can't be converted, text over 1 MB, host files over the limit, host files with names
-  the host can't copy ("unsupported or duplicate names"), or a transfer that failed. Host content is
+  the host can't copy ("unsupported or duplicate names") or only links ("only links or nothing to
+  copy"), a whole drive copied locally, or a transfer that failed. Host content is
   fetched when you leave the stream window, where the notice is easy to miss, so a notice about host
   content (or a missing permission) is shown once more when you return to the stream window.
 - Turn it off with Settings → Streaming conveniences → "Sync clipboard with the host" (on by
@@ -251,8 +263,8 @@ to sync the clipboard in both directions.
 - **Permissions**: the host grants each direction separately in its device permissions. Clipboard
   Read lets this device fetch the host's clipboard; Clipboard Set lets it send to the host's
   clipboard. Files also need File Download (from the host) or File Upload (to the host). A newly
-  paired device has them only if they were granted on the host's pairing page (Shell offers presets
-  there; other hosts start with none). When one is missing, only that direction stops: for example,
+  paired device has them only if the host granted them at pairing (Shell offers presets on its
+  pairing page). When one is missing, only that direction stops: for example,
   with Clipboard Set alone, what you copy locally still reaches the host. A notice over the stream names
   the missing permission (once, and once more when you return to the stream window); turn it on in
   the host's device permissions and start a new stream.
