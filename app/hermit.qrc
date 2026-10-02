@@ -1,0 +1,19 @@
+<RCC>
+    <!-- Resources added by Hermit, kept out of upstream's resources.qrc and qml.qrc. -->
+    <qresource prefix="/">
+        <file>gui/SessionSummaryDialog.qml</file>
+        <file>gui/ReconnectDialog.qml</file>
+        <file>gui/ProfilesButton.qml</file>
+        <file>gui/CollapsibleGroupBox.qml</file>
+        <file>gui/StreamPanel.qml</file>
+        <file>gui/StreamPanelHandle.qml</file>
+        <file>res/hermit/tune.svg</file>
+        <file>res/hermit/chevron-down.svg</file>
+        <file>res/hermit/info.svg</file>
+        <file>res/fonts/IBMPlexSansKR-Regular.ttf</file>
+        <file>res/fonts/IBMPlexSansKR-SemiBold.ttf</file>
+        <file>res/fonts/IBMPlexSansCondensed-Medium.ttf</file>
+        <file>res/fonts/IBMPlexSansCondensed-SemiBold.ttf</file>
+        <file>languages/hermit_ko.qm</file>
+    </qresource>
+</RCC>

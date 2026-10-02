@@ -1,0 +1,194 @@
+Hermit
+Copyright (C) 2026 Juno Park
+
+Hermit is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version (GPL-3.0-or-later; see LICENSE). Hermit is
+distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Source code: https://github.com/junopark00/hermit
+
+
+ORIGIN AND MODIFICATIONS
+========================
+
+Hermit is a modified version of Moonlight-qt (Moonlight PC), copyright Cameron Gutman and the
+Moonlight contributors, which is distributed under the GNU General Public License version 3 and
+declared as GPL-3.0-or-later ("GPL-3.0+") in its AppStream metadata.
+  https://github.com/moonlight-stream/moonlight-qt
+
+Hermit is based on Moonlight-qt as of commit 8369d1a0e11b999d4d1598f62ca5f6dea49602fb
+(September 2026). Juno Park modified it in 2026. The main changes are: the Hermit name, icon,
+theme and Korean translation; clipboard sync of text, images and files; a settings panel over the
+stream; live and automatic bitrate on Shell hosts; remote shutdown and restart of Shell hosts;
+automatic reconnect; connection profiles; a configurable performance overlay; session summaries
+and history; a single-file executable; and the removal of the online services operated by the
+Moonlight project (update check, host compatibility list, connection test, gamepad mapping
+updates, Discord integration). Changes inside files inherited from Moonlight-qt are generally
+marked with comments that start with "Hermit:". This repository does not carry Moonlight-qt's
+version history.
+
+Notes for readers of the source:
+- "Upstream" in comments means Moonlight-qt, and "upstream issue #N" refers to the Moonlight-qt
+  issue tracker (https://github.com/moonlight-stream/moonlight-qt/issues).
+- On its first run, if it has no settings yet, Hermit copies the settings of an installed
+  Moonlight client once (paired hosts, client identity, preferences); see copyMoonlightSettings()
+  in app/main.cpp.
+- The STUN server used to find the external address of the local network is stun.cloudflare.com
+  (see app/backend/computermanager.cpp).
+
+
+THIRD-PARTY COMPONENTS
+======================
+
+The license texts referred to below are in the "licenses" folder of the source tree and of the
+binary distributions, except where another location is given. In binary distributions, LICENSE is
+named LICENSE.txt and this file NOTICE.txt.
+
+Source code in this repository
+------------------------------
+
+moonlight-common-c (git submodule moonlight-common-c/moonlight-common-c)
+  Copyright Cameron Gutman and the Moonlight contributors. GNU GPL version 3 (LICENSE).
+  https://github.com/moonlight-stream/moonlight-common-c
+  It includes:
+  - ENet, copyright (c) 2002-2020 Lee Salzman, MIT license (licenses/ENet.txt in binary
+    distributions; enet/LICENSE in the submodule).
+  - nanors, copyright (c) 2021 Joseph Calderon, MIT license (licenses/nanors.txt in binary
+    distributions; nanors/LICENSE in the submodule).
+
+qmdnsengine (git submodule qmdnsengine/qmdnsengine)
+  Copyright (c) 2018 Nathan Osman. MIT license (licenses/qmdnsengine.txt in binary
+  distributions; LICENSE.txt in the submodule).
+  https://github.com/cgutman/qmdnsengine (fork of https://github.com/nitroshare/qmdnsengine)
+
+h264bitstream (h264bitstream/)
+  Copyright (C) 2005-2007 Auroras Entertainment, LLC, and (C) 2008-2011 Avail-TVN.
+  GNU LGPL version 2.1 (h264bitstream/LICENSE, licenses/LGPL-2.1.txt).
+  https://github.com/aizvorski/h264bitstream
+
+SDL_GameControllerDB (git submodule app/SDL_GameControllerDB)
+  Community gamepad mapping database. Copyright (C) 1997-2025 Sam Lantinga; zlib license
+  (licenses/SDL_GameControllerDB.txt in binary distributions; LICENSE in the submodule).
+  https://github.com/gabomdq/SDL_GameControllerDB
+
+AntiHooking (AntiHooking/)
+  Part of Moonlight-qt: copyright Cameron Gutman and the Moonlight contributors, under the same
+  license as Moonlight-qt (see above). It is linked with Microsoft Detours (see below).
+
+Material Design icons (app/res, the icons inherited from Moonlight-qt)
+  Copyright Google LLC. Apache License 2.0 (licenses/Apache-2.0.txt).
+  https://github.com/google/material-design-icons
+  The icons in app/res/hermit/ and the Hermit icon are part of Hermit (GPL-3.0-or-later).
+
+IBM Plex Sans KR and IBM Plex Sans Condensed (app/res/fonts)
+  Copyright 2017 IBM Corp. with Reserved Font Name "Plex". SIL Open Font License 1.1
+  (app/res/fonts/IBM-Plex-OFL.txt; licenses/IBM-Plex-OFL.txt in binary distributions).
+
+ModeSeven font (app/ModeSeven.ttf)
+  "This rendition (C) 1998 Andrew C. Bulhak. Freely distributable." (from the font's own
+  metadata). Inherited from Moonlight-qt.
+
+WiX installer theme (wix/HermitSetup/RtfTheme.xml)
+  Copyright (c) .NET Foundation and contributors. Microsoft Reciprocal License. The wix/ folder is
+  inherited from Moonlight-qt, unmaintained and not part of the binary distributions.
+
+Libraries in the binary distributions
+-------------------------------------
+
+Qt 6.11.3 (Qt Base, Qt Declarative, Qt SVG, and their plugins and translations)
+  Copyright (C) The Qt Company Ltd. and other contributors. GNU LGPL version 3
+  (licenses/LGPL-3.0.txt, which supplements the GNU GPL version 3 in LICENSE). Hermit uses the
+  official, unmodified Qt 6.11.3 binaries for MSVC 2022 x64, linked dynamically; the Qt DLLs can
+  be replaced with compatible builds of your own.
+  Corresponding source (the official Qt 6.11.3 source archives of the modules used, from the
+  Qt online repository, folder
+  https://download.qt.io/online/qtsdkrepository/all_os/qt/qt6_6113_windows_line_endings_src/qt.qt6.6113.src/):
+    6.11.3-0-202609240252qtbase-everywhere-src-6.11.3.zip
+    6.11.3-0-202609240252qtdeclarative-everywhere-src-6.11.3.zip
+    6.11.3-0-202609240252qtsvg-everywhere-src-6.11.3.zip
+    6.11.3-0-202609240252qttranslations-everywhere-src-6.11.3.zip
+  Qt's source is also available from https://code.qt.io/ (tag v6.11.3).
+  Qt contains third-party code; licenses/Qt-third-party.txt lists it with copyrights and
+  licenses (generated from the SBOMs of this Qt build; see also
+  https://doc.qt.io/qt-6/licenses-used-in-qt.html). Among it:
+  - FreeType 2.14.3 and HarfBuzz 14.4.0 (see FreeType and HarfBuzz below).
+  - libjpeg-turbo 3.2.0 in the qjpeg image format plugin (IJG and BSD-3-Clause licenses):
+    this software is based in part on the work of the Independent JPEG Group.
+  - libpng 1.6.58, zlib 1.3.2, PCRE2 10.48, md4c 0.5.3, double-conversion 3.4.0 and others.
+
+The following libraries are prebuilt by the Moonlight project and downloaded by setup-deps.ps1
+from the public repository https://github.com/moonlight-stream/moonlight-qt-deps, release
+v18.1. They are shipped unmodified as DLLs next to Hermit.exe, except Detours, which is linked
+statically into AntiHooking.dll. Their corresponding source is the v18.1 tag of that repository,
+which pins the exact source of each library as a git submodule and contains the build scripts:
+https://github.com/moonlight-stream/moonlight-qt-deps/tree/v18.1
+(binaries: https://github.com/moonlight-stream/moonlight-qt-deps/releases/tag/v18.1). Versions
+below are read from the shipped DLLs.
+
+FFmpeg, release/8.1 branch at git revision 946fcce (libavcodec 63.1.102, libavformat 63.1.102,
+libavutil 61.1.102, libswscale 10.1.102)
+  Copyright the FFmpeg developers. GNU LGPL version 2.1 or later (licenses/LGPL-2.1.txt); the
+  libraries report the license "LGPL version 2.1 or later" (built without GPL or nonfree
+  components). https://ffmpeg.org/
+
+libplacebo v7.372.0
+  Copyright the libplacebo developers. GNU LGPL version 2.1 or later (licenses/LGPL-2.1.txt).
+  https://code.videolan.org/videolan/libplacebo
+  It contains glslang 16.4.0 (copyright The Khronos Group Inc., 3Dlabs Inc. Ltd., LunarG, Inc.,
+  Google, Inc., ARM Limited and others; BSD-3-Clause, BSD-2-Clause, MIT, Apache-2.0 and other
+  permissive licenses, as listed per file in
+  https://github.com/KhronosGroup/glslang/blob/16.4.0/LICENSE.txt).
+
+dav1d 1.5.4
+  Copyright (c) 2018-2024, VideoLAN and dav1d authors. BSD 2-Clause license (licenses/dav1d.txt).
+  https://code.videolan.org/videolan/dav1d
+
+SDL3 3.4.17 (revision 383fb13), SDL2 2.32.70 (sdl2-compat, revision a53b6ad), SDL2_ttf 2.25.0
+  Copyright (C) 1997-2025 Sam Lantinga. zlib license (licenses/SDL.txt). https://libsdl.org/
+  SDL2_ttf contains FreeType and HarfBuzz (see below).
+
+FreeType (in Qt and in SDL2_ttf)
+  Portions of this software are copyright (C) 1996-2026 The FreeType Project
+  (https://freetype.org). All rights reserved. Used under the FreeType License
+  (licenses/FreeType-FTL.txt).
+
+HarfBuzz (in Qt and in SDL2_ttf)
+  "Old MIT" license; copyright notices and license text in licenses/HarfBuzz.txt.
+
+OpenSSL 3.6.4
+  Copyright (c) 1998-2025 The OpenSSL Project Authors. Apache License 2.0
+  (licenses/Apache-2.0.txt). https://www.openssl.org/
+
+Opus (the DLL does not report its version; see the v18.1 tag above)
+  Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic, Jean-Marc Valin, Timothy B. Terriberry,
+  CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo, Mozilla, Amazon.
+  BSD 3-Clause license (licenses/opus.txt). https://opus-codec.org/
+
+Microsoft Detours (statically linked into AntiHooking.dll)
+  Copyright (c) Microsoft Corporation. MIT license (licenses/Detours.txt).
+  https://github.com/microsoft/Detours
+
+Microsoft Visual C++ runtime (not from setup-deps; copied from the Visual Studio installation)
+  The Visual C++ runtime DLLs are redistributed with Hermit under the Microsoft Visual Studio
+  license terms for redistributable code.
+
+Obtaining the source code
+-------------------------
+
+The complete corresponding source code of Hermit is available at
+https://github.com/junopark00/hermit, at the tag of each release. The source of the libraries
+above is available at the locations given for each. If any of these sources is no longer
+available there, Juno Park will provide the corresponding source code of a Hermit binary release,
+including the libraries it contains, on request for at least three years after that release, at no
+charge beyond the cost of providing it. Ask through an issue at
+https://github.com/junopark00/hermit/issues.
+
+
+TRADEMARKS
+==========
+
+Hermit is not affiliated with, endorsed by or sponsored by NVIDIA Corporation or the Moonlight
+project. NVIDIA and GameStream are trademarks of NVIDIA Corporation. All other trademarks are the
+property of their respective owners.

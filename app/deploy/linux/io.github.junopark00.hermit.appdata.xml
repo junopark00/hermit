@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+	<id>io.github.junopark00.hermit</id>
+	<metadata_license>CC0-1.0</metadata_license>
+	<project_license>GPL-3.0-or-later</project_license>
+	<name>Hermit</name>
+	<summary>Stream games and other applications from another PC running a GameStream host such as Shell</summary>
+
+	<description>
+		<p>Hermit streams games and other applications from another PC running a GameStream host such as Shell.</p>
+		<p>Features include:</p>
+		<ul>
+			<li>Hardware accelerated video decoding with VAAPI, VDPAU, and Vulkan Video support</li>
+			<li>H.264, HEVC, and AV1 codec support</li>
+			<li>7.1 surround sound audio support</li>
+			<li>10-point multitouch support</li>
+			<li>Gamepad support with force feedback for up to 16 players</li>
+			<li>Support for both pointer capture (for games) and direct mouse control (for remote desktop)</li>
+			<li>Support for passing system-wide keyboard shortcuts like Alt+Tab to the host</li>
+			<li>Clipboard sync of text, images and files with Shell hosts</li>
+		</ul>
+	</description>
+
+	<url type="homepage">https://github.com/junopark00/hermit</url>
+	<url type="bugtracker">https://github.com/junopark00/hermit/issues</url>
+	<url type="vcs-browser">https://github.com/junopark00/hermit</url>
+	<developer id="io.github.junopark00">
+		<name>Juno Park</name>
+	</developer>
+	<launchable type="desktop-id">io.github.junopark00.hermit.desktop</launchable>
+	<provides>
+		<binary>hermit</binary>
+	</provides>
+	<content_rating type="oars-1.1" />
+</component>

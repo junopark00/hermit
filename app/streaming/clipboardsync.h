@@ -1,0 +1,177 @@
+#pragma once
+
+#include "backend/nvaddress.h"
+
+#include <QByteArray>
+#include <QList>
+#include <QObject>
+#include <QSslCertificate>
+#include <QString>
+#include <QStringList>
+
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <memory>
+
+class NvHTTP;
+class NvComputer;
+class QIODevice;
+class QThread;
+struct SDL_Window;
+
+namespace ClipboardArchive {
+class ThrottledUploadDevice;
+}
+
+// Shared by the main thread (cancel shortcut) and the worker (file and image transfers).
+struct ClipboardTransferControl
+{
+    std::atomic<bool> active {false};
+    std::atomic<bool> cancel {false};
+};
+
+// Clipboard content fetched from the host, handed to the SDL main thread in an SDL user event.
+struct ClipboardHostContent
+{
+    enum Kind { Text, Image, Files };
+
+    int generation = 0;
+    Kind kind = Text;
+    QByteArray text;    // UTF-8
+    QByteArray png;     // Image: PNG bytes
+    QByteArray dib;     // Image: CF_DIBV5 block (Windows)
+    QStringList files;  // Files: top-level local paths in the staging folder
+};
+
+// Runs every host request on its own thread, so the SDL streaming loop is never blocked by the
+// network, image conversion or file I/O. Tracks what the host clipboard holds so content only
+// moves when it actually changed.
+class ClipboardSyncWorker : public QObject
+{
+    Q_OBJECT
+
+public:
+    ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, QSslCertificate serverCert, bool useTrueUid,
+                        int sdlEventCode, int generation, bool localChangeTracking, int rateMbps,
+                        std::shared_ptr<std::atomic<bool>> stopped,
+                        std::shared_ptr<ClipboardTransferControl> control);
+
+    // Runs a job now, or after the current one if it is still running. Requests wait in nested
+    // event loops that also deliver queued jobs, which would otherwise start re-entrantly (for
+    // example a text push in the middle of a file upload) and reorder clipboard changes.
+    void run(const std::function<void()>& job);
+
+    // Detects the host protocol (Shell extensions or the text-only clipboard endpoint) and records
+    // the host's current clipboard state without transferring it.
+    void init();
+
+    void pushText(const QByteArray& utf8);
+    void pushImage(const QByteArray& data, bool isDib);
+    // dropped: files dropped on the stream window, so every outcome is announced
+    void pushFiles(const QStringList& paths, bool dropped = false);
+
+    // Brings the host clipboard to the client if it changed since we last saw or set it.
+    void pull();
+
+private:
+    enum class Mode { Unknown, Extended, Legacy, Disabled };
+    enum class TransferResult { Done, Failed, Cancelled, Stopped };
+
+    NvHTTP* http();
+    bool request(const QString& type, const QByteArray* postBody, int timeoutMs, QByteArray& body, int& qtError);
+    // Moves an image or file archive with the rate limit, progress notices, cancel support and
+    // an inactivity timeout. An upload sends the open device and stores the host's reply in
+    // response; a download (upload == nullptr) writes the body to sink, up to sinkLimit bytes.
+    TransferResult transfer(const QString& type, ClipboardArchive::ThrottledUploadDevice* upload,
+                            QIODevice* sink, qint64 sinkLimit, QByteArray* response, int& qtError);
+    void showTransferProgress(bool upload, qint64 done, qint64 total);
+    void showTransferEnd(TransferResult result);
+    bool ensureReady();
+    void handleTextFailure(const char* operation, int qtError);
+    void recordHostSequence(const QByteArray& responseBody);
+    void deliver(ClipboardHostContent* content);
+    bool stopped() const { return m_Stopped->load(); }
+
+    NvAddress m_Address;
+    uint16_t m_HttpsPort;
+    QSslCertificate m_ServerCert;
+    bool m_UseTrueUid;
+    int m_SdlEventCode;
+    int m_Generation;
+    bool m_LocalChangeTracking;
+    qint64 m_RateBytesPerSecond;  // 0: unlimited
+    std::shared_ptr<std::atomic<bool>> m_Stopped;
+    std::shared_ptr<ClipboardTransferControl> m_Control;
+    NvHTTP* m_Http;
+
+    bool m_Busy;
+    QList<std::function<void()>> m_Pending;
+    bool m_ProgressShown;
+    QByteArray m_ReadBuffer;
+
+    Mode m_Mode;
+    bool m_HostSeqValid;
+    quint32 m_HostSeq;
+    bool m_HostTextHashValid;
+    QByteArray m_HostTextHash;
+    bool m_WarnedTextOnly;
+    QString m_LastError;
+};
+
+// Clipboard sync with hosts that have the /actions/clipboard extension.
+//
+// Text works with any such host. With a Shell host, Windows clients also sync
+// images (PNG / DIB) and copied files and folders.
+//
+// Local -> host: text and images when the stream starts, when the stream window regains focus
+// and whenever the local clipboard changes; files when the stream starts and when the stream
+// window regains focus (not on every copy, since they can be large).
+// Host -> local: when the stream window loses focus, so "copy on the host, switch to a local
+// app, paste" works like RDP.
+//
+// Images and files move at most at the configured rate (clipboardRateMbps), so a large
+// transfer does not starve the video stream or the input packets, and can be cancelled with
+// Ctrl+Alt+Shift+T.
+//
+// All public methods must be called on the SDL main thread.
+class ClipboardSync
+{
+public:
+    enum class Trigger { Start, FocusGained, ClipboardChanged };
+
+    ClipboardSync(NvComputer* computer, int sdlEventCode, SDL_Window* window);
+    ~ClipboardSync();
+
+    void start();
+    void pushLocalToHost(Trigger trigger);
+
+    // Files and folders dropped on the stream window: put on the host clipboard, to be pasted
+    // there with Ctrl+V.
+    void pushDroppedFiles(const QStringList& paths);
+    void pullHostToLocal();
+
+    // Applies content from the SDL user event and takes ownership of it.
+    void onHostContent(ClipboardHostContent* content);
+
+    // Frees event content that arrives when no sync object exists.
+    static void discardHostContent(void* content);
+
+    // Cancels the image or file transfer in progress, if any (cancel shortcut). False if there
+    // was none.
+    static bool cancelActiveTransfer();
+
+private:
+    void markLocalHandled();
+    void post(const std::function<void()>& job);
+
+    QThread* m_Thread;
+    ClipboardSyncWorker* m_Worker;
+    std::shared_ptr<std::atomic<bool>> m_Stopped;
+    std::shared_ptr<ClipboardTransferControl> m_Control;
+    int m_Generation;
+    void* m_WindowHandle;  // HWND on Windows, used as the clipboard owner
+
+    bool m_LocalSeqValid;
+    quint32 m_LocalSeq;
+};

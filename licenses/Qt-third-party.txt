@@ -1,0 +1,542 @@
+Third-party components of Qt 6.11.3
+====================================
+
+Qt 6.11.3 (Qt Base, Qt Declarative, Qt SVG) is shipped with Hermit as DLLs and plugins. This file
+lists the third-party components recorded in the SPDX software bills of materials of the
+Qt 6.11.3 MSVC 2022 x64 build (sbom/qtbase-6.11.3.spdx.json, qtdeclarative-6.11.3.spdx.json,
+qtsvg-6.11.3.spdx.json in the Qt installation). Some of them are used only on other platforms,
+in tests or while building Qt.
+
+Licenses are given as SPDX identifiers; their full texts are at https://spdx.org/licenses/.
+Licenses specific to Qt ("LicenseRef-...") are reproduced at the end of this file. Qt's own
+list of third-party code and licenses: https://doc.qt.io/qt-6/licenses-used-in-qt.html
+
+This software is based in part on the work of the Independent JPEG Group (libjpeg-turbo, used
+by the qjpeg image format plugin).
+
+------------------------------------------------------------------------------
+aglfn 1.7  [Qt module: qtbase]
+License: BSD-3-Clause
+
+Copyright 2002, 2003, 2005, 2006, 2008, 2010, 2015 Adobe Systems
+
+------------------------------------------------------------------------------
+blake2 ed1974ea83433eba7b2d95c5dcd9ac33cb847913  [Qt module: qtbase]
+License: CC0-1.0 OR Apache-2.0
+
+Copyright 2012, Samuel Neves <sneves@dei.uc.pt>
+
+------------------------------------------------------------------------------
+catch2 2.13.10  [Qt module: qtbase]
+License: BSL-1.0
+
+Copyright (c) 2022 Two Blue Cubes Ltd. All rights reserved.
+
+------------------------------------------------------------------------------
+cmake-runcmake-test-modules 3.31.5  [Qt module: qtbase]
+License: BSD-3-Clause
+
+Copyright © 2000-2024 Kitware, Inc. and Contributors
+
+------------------------------------------------------------------------------
+cycle 3.3.11  [Qt module: qtbase]
+License: MIT
+
+Copyright (c) 2003, 2007-14 Matteo Frigo
+Copyright (c) 2003, 2007-14 Massachusetts Institute of Technology
+
+------------------------------------------------------------------------------
+d3d12memoryallocator f128d39b7a95b4235bd228d231646278dc6c24b2  [Qt module: qtbase]
+License: MIT
+
+Copyright (c) 2019-2022 Advanced Micro Devices, Inc. All rights reserved.
+
+------------------------------------------------------------------------------
+doubleconversion 3.4.0  [Qt module: qtbase]
+License: BSD-3-Clause
+
+Copyright 2006-2012, the V8 project authors
+
+------------------------------------------------------------------------------
+easing   [Qt module: qtbase]
+License: BSD-3-Clause
+
+Copyright (c) 2001 Robert Penner
+
+------------------------------------------------------------------------------
+emoji-segmenter 0.4.0  [Qt module: qtbase]
+License: Apache-2.0
+
+Copyright 2019 Google LLC
+
+------------------------------------------------------------------------------
+extra-cmake-modules 5.84.0  [Qt module: qtbase]
+License: BSD-3-Clause
+
+Copyright © 2011-2018 The KDE community
+
+------------------------------------------------------------------------------
+Freetype 2.14.3  [Qt module: qtbase]
+License: FTL OR GPL-2.0-only
+
+Copyright (c) 2007-2014 Adobe Systems Incorporated
+Copyright (c) 2004-2026 Albert Chin-A-Young
+Copyright (c) 2018-2026 Armin Hasitzka, David Turner, Robert Wilhelm, and Werner Lemberg
+Copyright (c) 2000 Computing Research Labs, New Mexico State University
+Copyright (c) 1996-2026 David Turner, Robert Wilhelm, Dominik Röttsches, and Werner Lemberg
+Copyright (c) 2004-2026 David Turner, Robert Wilhelm, Werner Lemberg and George Williams
+Copyright (c) 2022-2026 David Turner, Robert Wilhelm, Werner Lemberg, and Moazin Khatti
+Copyright (c) 2008-2026 David Turner, Robert Wilhelm, Werner Lemberg, and suzuki toshiya
+Copyright (c) 2003-2026 David Turner, Robert Wilhelm, and Werner Lemberg
+Copyright (c) 2005-2026 David Turner
+Copyright (c) 2007-2026 Derek Clegg and Michael Toftdal
+Copyright (c) 2007 Dmitry Timoshkov for Codeweavers
+Copyright (c) 2001-2015 Francesco Zappa Nardelli
+Copyright (c) 2005, 2007, 2008, 2013 George Williams
+Copyright (c) 2013-2026 Google, Inc. Google Author(s) Behdad Esfahbod and Stuart Gill
+Copyright (c) 2013-2022 Google, Inc.
+Copyright (c) 2003 Huw D M Davies for Codeweavers
+Copyright (c) 2010-2026 Joel Klinghed
+Copyright (c) 1996-2026 Just van Rossum, David Turner, Robert Wilhelm, and Werner Lemberg
+Copyright (c) 2003-2026 Masatake YAMATO and Redhat K.K.
+Copyright (c) 2004-2026 Masatake YAMATO, Redhat K.K, David Turner, Robert Wilhelm, and Werner Lemberg
+Copyright (c) 2019-2026 Nikhil Ramakrishnan, David Turner, Robert Wilhelm, and Werner Lemberg
+Copyright (c) 2009-2026 Oran Agra and Mickey Gabel
+Copyright (c) 2007-2026 Rahul Bhalerao <rahul.bhalerao@redhat.com>
+Copyright (c) 2002-2026 Roberto Alameda
+Copyright (c) 2015-2026 Werner Lemberg
+Copyright (c) 2004-2026 suzuki toshiya, Masatake YAMATO, Red Hat K.K., David Turner, Robert Wilhelm, and Werner Lemberg
+Copyright (c) 2019 nyorain
+Copyright (c) 2022-2026 David Turner, Robert Wilhelm, Werner Lemberg, George Williams, and Dominik Röttsches
+Copyright (C) 2009, 2023  Red Hat, Inc.
+
+------------------------------------------------------------------------------
+freetype-bdf   [Qt module: qtbase]
+License: MIT
+
+Copyright (c) 2000 Computing Research Labs, New Mexico State University
+Copyright (c) 2001-2014 Francesco Zappa Nardelli
+
+------------------------------------------------------------------------------
+freetype-pcf   [Qt module: qtbase]
+License: MIT AND MIT-open-group
+
+Copyright (c) 2001, 2012 David Turner, Robert Wilhelm, and Werner Lemberg
+Copyright (c) 2000-2014 Francesco Zappa Nardelli
+Copyright (c) 1990, 1994, 1998 The Open Group
+
+------------------------------------------------------------------------------
+freetype-zlib   [Qt module: qtbase]
+License: Zlib
+
+Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+
+------------------------------------------------------------------------------
+grayraster   [Qt module: qtbase]
+License: FTL OR GPL-2.0-only
+
+Copyright 2000-2016 by David Turner, Robert Wilhelm, and Werner Lemberg.
+
+------------------------------------------------------------------------------
+Harfbuzz 14.4.0  [Qt module: qtbase]
+License: MIT
+
+Copyright © 2010-2022  Google, Inc.
+Copyright © 2015-2020  Ebrahim Byagowi
+Copyright © 2019,2020  Facebook, Inc.
+Copyright © 2012,2015  Mozilla Foundation
+Copyright © 2011  Codethink Limited
+Copyright © 2008,2010  Nokia Corporation and/or its subsidiary(-ies)
+Copyright © 2009  Keith Stribley
+Copyright © 2011  Martin Hosken and SIL International
+Copyright © 2007  Chris Wilson
+Copyright © 2005,2006,2020,2021,2022,2023  Behdad Esfahbod
+Copyright © 2004,2007,2008,2009,2010,2013,2021,2022,2023  Red Hat, Inc.
+Copyright © 1998-2005  David Turner and Werner Lemberg
+Copyright © 2016  Igalia S.L.
+Copyright © 2022  Matthias Clasen
+Copyright © 2018,2021  Khaled Hosny
+Copyright © 2018,2019,2020  Adobe, Inc
+Copyright © 2013-2015  Alexei Podtelezhnikov
+
+------------------------------------------------------------------------------
+icc-srgb-color-profile   [Qt module: qtbase]
+License: LicenseRef-ICC-License
+
+Copyright International Color Consortium, 2015
+
+------------------------------------------------------------------------------
+kwin 5.13.4  [Qt module: qtbase]
+License: BSD-3-Clause
+
+Copyright 2014 Alex Merry <alex.merry@kde.org>
+Copyright 2014 Martin Gräßlin <mgraesslin@kde.org>
+Copyright (c) 2006,2007 Laurent Montel, <montel@kde.org>
+
+------------------------------------------------------------------------------
+libdbus-1-headers 1.13.12  [Qt module: qtbase]
+License: AFL-2.1 OR GPL-2.0-or-later
+
+Copyright (C) 2002, 2003 CodeFactory AB
+Copyright (C) 2004, 2005 Red Hat, Inc.
+
+------------------------------------------------------------------------------
+Libjpeg 3.2.0  [Qt module: qtbase]
+License: IJG AND BSD-3-Clause
+
+Copyright (C) 2009-2026 D. R. Commander
+Copyright (C) 1991-1998 Thomas G. Lane
+Copyright (C) 2009 Pierre Ossman for Cendio AB
+Copyright (C) 1999-2006 MIYASAKA Masaru
+Copyright (C) 1999 Ken Murchison
+Copyright (C) 2015-2016, 2018, 2022 Matthieu Darbois
+Copyright (C) 2018 Matthias Räncker
+Copyright (C) 2019-2020 Arm Limited
+Copyright (C) 2022 Felix Hanau
+Copyright (C) 1997-1998 Thomas G. Lane, Todd Newman
+Copyright (C) 2021 Alex Richardson
+Copyright (C) 2015, 2020 Google, Inc.
+Copyright (C) 2013 Linaro Limited
+Copyright (C) 2014 Olle Liljenzin
+Copyright (C) 1991-2020 Thomas G. Lane, Guido Vollbeding
+
+------------------------------------------------------------------------------
+Libjpeg12bits 3.2.0  [Qt module: qtbase]
+License: IJG AND BSD-3-Clause
+
+Copyright (C) 2009-2026 D. R. Commander
+Copyright (C) 1991-1998 Thomas G. Lane
+Copyright (C) 2009 Pierre Ossman for Cendio AB
+Copyright (C) 1999-2006 MIYASAKA Masaru
+Copyright (C) 1999 Ken Murchison
+Copyright (C) 2015-2016, 2018, 2022 Matthieu Darbois
+Copyright (C) 2018 Matthias Räncker
+Copyright (C) 2019-2020 Arm Limited
+Copyright (C) 2022 Felix Hanau
+Copyright (C) 1997-1998 Thomas G. Lane, Todd Newman
+Copyright (C) 2021 Alex Richardson
+Copyright (C) 2015, 2020 Google, Inc.
+Copyright (C) 2013 Linaro Limited
+Copyright (C) 2014 Olle Liljenzin
+Copyright (C) 1991-2020 Thomas G. Lane, Guido Vollbeding
+
+------------------------------------------------------------------------------
+Libjpeg16bits 3.2.0  [Qt module: qtbase]
+License: IJG AND BSD-3-Clause
+
+Copyright (C) 2009-2026 D. R. Commander
+Copyright (C) 1991-1998 Thomas G. Lane
+Copyright (C) 2009 Pierre Ossman for Cendio AB
+Copyright (C) 1999-2006 MIYASAKA Masaru
+Copyright (C) 1999 Ken Murchison
+Copyright (C) 2015-2016, 2018, 2022 Matthieu Darbois
+Copyright (C) 2018 Matthias Räncker
+Copyright (C) 2019-2020 Arm Limited
+Copyright (C) 2022 Felix Hanau
+Copyright (C) 1997-1998 Thomas G. Lane, Todd Newman
+Copyright (C) 2021 Alex Richardson
+Copyright (C) 2015, 2020 Google, Inc.
+Copyright (C) 2013 Linaro Limited
+Copyright (C) 2014 Olle Liljenzin
+Copyright (C) 1991-2020 Thomas G. Lane, Guido Vollbeding
+
+------------------------------------------------------------------------------
+Libpng 1.6.58  [Qt module: qtbase]
+License: Libpng AND libpng-2.0
+
+Copyright (c) 1995-2026 The PNG Reference Library Authors
+Copyright (c) 2000-2026 Cosmin Truta
+Copyright (c) 1998-2018 Glenn Randers-Pehrson
+Copyright (c) 1996-1997 Andreas Dilger
+Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+Copyright (c) 2000-2017 Simon-Pierre Cadieux
+Copyright (c) 2000-2017 Eric S. Raymond
+Copyright (c) 2000-2017 Mans Rullgard
+Copyright (c) 2000-2017 Gilles Vollant
+Copyright (c) 2000-2017 James Yu
+Copyright (c) 2000-2017 Mandar Sahastrabuddhe
+Copyright (c) 1998-2000 Tom Lane
+Copyright (c) 1998-2000 Willem van Schaik
+Copyright (c) 1996-1997 John Bowler
+Copyright (c) 1996-1997 Kevin Bracey
+Copyright (c) 1996-1997 Sam Bushell
+Copyright (c) 1996-1997 Magnus Holmgren
+Copyright (c) 1996-1997 Greg Roelofs
+Copyright (c) 1996-1997 Tom Tanner
+Copyright (c) 1995-1996 Dave Martindale
+Copyright (c) 1995-1996 Paul Schmidt
+Copyright (c) 1995-1996 Tim Wegner
+
+------------------------------------------------------------------------------
+libpsl 664f3dc85259ec65e30248a61fa1c45b7b0e4c3f  [Qt module: qtbase]
+License: BSD-3-Clause
+
+Copyright 2014-2016 The Chromium Authors. All rights reserved.
+
+------------------------------------------------------------------------------
+linuxperf 6.13  [Qt module: qtbase]
+License: GPL-2.0-only WITH Linux-syscall-note
+
+Copyright (C) 2008-2009, Thomas Gleixner <tglx@linutronix.de>
+Copyright (C) 2008-2011, Red Hat, Inc., Ingo Molnar
+Copyright (C) 2008-2011, Red Hat, Inc., Peter Zijlstra
+
+------------------------------------------------------------------------------
+masm   [Qt module: qtdeclarative]
+License: BSD-2-Clause
+
+Copyright (C) 2003-2018 Apple Inc. All rights reserved.
+Copyright (C) 2007 Justin Haygood (jhaygood@reaktix.com)
+Copyright (C) 2007-2009 Torch Mobile, Inc. All rights reserved. (http://www.torchmobile.com/)
+Copyright (C) 2009, 2010 University of Szeged
+Copyright (C) 2009-2011 STMicroelectronics. All rights reserved.
+Copyright (C) 2010 MIPS Technologies, Inc. All rights reserved.
+Copyright (C) 2010 Peter Varga (pvarga@inf.u-szeged.hu), University of Szeged
+Copyright (C) 2010 MIPS Technologies, Inc. All rights reserved.
+Copyright (C) 2010, 2011 Research In Motion Limited. All rights reserved.
+Copyright (C) 2011 Google Inc. All rights reserved.
+Copyright (C) 2013 Samsung Electronics. All rights reserved.
+Copyright (C) 2015 Cisco Systems, Inc. All rights reserved.
+Copyright (c) 2002-2009 Vivek Thampi
+
+------------------------------------------------------------------------------
+md4   [Qt module: qtbase]
+License: CC0-1.0
+
+Written by Alexander Peslyak - better known as Solar Designer <solar@openwall.com> - in 2001, and placed in the public domain. There's absolutely no warranty.
+
+------------------------------------------------------------------------------
+md4c 0.5.3  [Qt module: qtbase]
+License: MIT
+
+Copyright © 2016-2024 Martin Mitáš
+
+------------------------------------------------------------------------------
+md5   [Qt module: qtbase]
+License: CC0-1.0
+
+Written by Colin Plumb in 1993, no copyright is claimed. Ian Jackson <ian@chiark.greenend.org.uk>.
+
+------------------------------------------------------------------------------
+opengl-es2-headers Revision 27673  [Qt module: qtbase]
+License: MIT
+
+Copyright (c) 2013-2014 The Khronos Group Inc.
+
+------------------------------------------------------------------------------
+opengl-headers Revision 27684  [Qt module: qtbase]
+License: MIT
+
+Copyright (c) 2013-2014 The Khronos Group Inc.
+
+------------------------------------------------------------------------------
+pcre2 10.48  [Qt module: qtbase]
+License: LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception
+
+Copyright (c) 1997-2007 University of Cambridge
+Copyright (c) 2007-2024 Philip Hazel
+Copyright (c) 2010-2024 Zoltan Herczeg
+
+------------------------------------------------------------------------------
+pcre2-sljit 10.48  [Qt module: qtbase]
+License: BSD-2-Clause
+
+Copyright Zoltan Herczeg
+
+------------------------------------------------------------------------------
+psl-data 2026-05-14_08-35-31_UTC  [Qt module: qtbase]
+License: MPL-2.0
+
+The list was originally provided by Jo Hermans <jo.hermans@gmail.com>.
+It is now maintained on github (https://github.com/publicsuffix/list).
+
+------------------------------------------------------------------------------
+rfc6234   [Qt module: qtbase]
+License: BSD-3-Clause
+
+Copyright (c) 2011 IETF Trust and the persons identified as authors of the code.
+
+------------------------------------------------------------------------------
+rhi-miniengine-d3d12-mipmap 0aa79bad78992da0b6a8279ddb9002c1753cb849  [Qt module: qtbase]
+License: MIT
+
+Copyright (c) 2015 Microsoft
+
+------------------------------------------------------------------------------
+sha1   [Qt module: qtbase]
+License: LicenseRef-SHA1-Public-Domain
+
+Copyright (C) Dominik Reichl <dominik.reichl@t-online.de>
+Copyright (C) 2016 The Qt Company Ltd
+
+------------------------------------------------------------------------------
+sha3_endian 1.0.0  [Qt module: qtbase]
+License: BSD-2-Clause
+
+Copyright (c) 1998-2013, Brian Gladman, Worcester, UK. All rights reserved.
+
+------------------------------------------------------------------------------
+sha3_keccak 3.2  [Qt module: qtbase]
+License: CC0-1.0
+
+Guido Bertoni, Joan Daemen, Michaël Peeters and Gilles Van Assche.
+To the extent possible under law, the implementers have waived all copyright
+and related or neighboring rights to the source code in this file.
+
+------------------------------------------------------------------------------
+shadow_angular_material   [Qt module: qtdeclarative]
+License: MIT
+
+Copyright (c) 2014-2016 Google, Inc
+
+------------------------------------------------------------------------------
+siphash   [Qt module: qtbase]
+License: CC0-1.0
+
+Copyright (C) 2012-2014 Jean-Philippe Aumasson
+Copyright (C) 2012-2014 Daniel J. Bernstein <djb@cr.yp.to>
+Copyright (C) 2016 Intel Corporation
+
+------------------------------------------------------------------------------
+smooth-scaling-algorithm   [Qt module: qtbase]
+License: BSD-2-Clause AND Imlib2
+
+Copyright (C) 2004, 2005 Daniel M. Duley.
+(C) Carsten Haitzler and various contributors.
+(C) Willem Monsuwe <willem@stack.nl>
+
+------------------------------------------------------------------------------
+sqlite 3.53.4  [Qt module: qtbase]
+License: blessing
+
+The authors disclaim copyright to the source code. However, a license can be obtained if needed.
+
+------------------------------------------------------------------------------
+tika-mimetypes c29724782854bb5a319f4a1940d0828a58ace3f9  [Qt module: qtbase]
+License: Apache-2.0
+
+Copyright 2026 The Apache Software Foundation
+
+------------------------------------------------------------------------------
+tinycbor 7.0  [Qt module: qtbase]
+License: MIT
+
+Copyright (C) 2015-2025 Intel Corporation
+
+------------------------------------------------------------------------------
+tlexpected 41d3e1f48d682992a2230b2a715bca38b848b269  [Qt module: qtbase]
+License: CC0-1.0
+
+To the extent possible under law, Sy Brand has waived all copyright and related or neighboring rights to the expected library. This work is published from: United Kingdom.
+
+------------------------------------------------------------------------------
+unicode-character-database 36  [Qt module: qtbase]
+License: Unicode-3.0
+
+Copyright (C) 1991-2025 Unicode, Inc.
+
+------------------------------------------------------------------------------
+unicode-cldr v48.2  [Qt module: qtbase]
+License: Unicode-3.0
+
+Copyright (C) 2004-2025 Unicode, Inc.
+
+------------------------------------------------------------------------------
+valgrind 3.25.1  [Qt module: qtbase]
+License: BSD-4-Clause
+
+Copyright (C) 2000-2017 Julian Seward
+Copyright (C) 2003-2017 Josef Weidendorfer.
+
+------------------------------------------------------------------------------
+vulkan-xml-spec 1.4.308  [Qt module: qtbase]
+License: Apache-2.0 OR MIT
+
+Copyright (c) 2015-2025 The Khronos Group Inc.
+
+------------------------------------------------------------------------------
+vulkanmemoryallocator 3.2.1  [Qt module: qtbase]
+License: MIT
+
+Copyright (c) 2017-2025 Advanced Micro Devices, Inc. All rights reserved.
+
+------------------------------------------------------------------------------
+webgradients   [Qt module: qtbase]
+License: MIT
+
+Copyright (c) 2017 itmeo
+
+------------------------------------------------------------------------------
+wintab   [Qt module: qtbase]
+License: LicenseRef-Lcs-Telegraphics
+
+Copyright 1991-1998 by LCS/Telegraphics.
+
+------------------------------------------------------------------------------
+xserverhelper   [Qt module: qtbase]
+License: X11 AND HPND
+
+Copyright (c) 1987, 1988 X Consortium
+Copyright 1987, 1988 by Digital Equipment Corporation, Maynard, Massachusetts.
+
+------------------------------------------------------------------------------
+xsvg   [Qt module: qtsvg]
+License: HPND-sell-variant
+
+Copyright 2002 USC/Information Sciences Institute
+
+------------------------------------------------------------------------------
+yoga 2.0.1  [Qt module: qtdeclarative]
+License: MIT
+
+Copyright (c) Facebook, Inc. and its affiliates.
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+------------------------------------------------------------------------------
+ZLIB 1.3.2  [Qt module: qtbase]
+License: Zlib
+
+(C) 1995-2026 Jean-loup Gailly and Mark Adler
+
+==============================================================================
+Texts of the "LicenseRef" licenses used above
+==============================================================================
+
+LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception
+-----------------------------------------------------------------
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+    1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+    2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+    3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+EXEMPTION FOR BINARY LIBRARY-LIKE PACKAGES
+------------------------------------------
+
+The second condition in the BSD licence (covering binary redistributions) does not apply all the way down a chain of software. If binary package A includes PCRE2, it must respect the condition, but if package B is software that includes package A, the condition is not imposed on package B unless it uses PCRE2 independently.
+
+LicenseRef-ICC-License
+----------------------
+For the file sRGB2014.icc:
+
+Copyright International Color Consortium, 2015
+
+This profile is made available by the International Color Consortium, and may be copied,
+distributed, embedded, made, used, and sold without restriction. Altered versions of this
+profile shall have the original identification and copyright information removed and
+shall not be misrepresented as the original profile.
+
+(original source location: http://www.color.org/srgbprofiles.xalter)
+
+LicenseRef-Lcs-Telegraphics
+---------------------------
+The text and information contained in this file may be freely used,
+copied, or distributed without compensation or licensing restrictions.
+
+LicenseRef-SHA1-Public-Domain
+-----------------------------
+100% free public domain implementation of the SHA-1 algorithm
+by Dominik Reichl <dominik.reichl@t-online.de>
+Web: http://www.dominik-reichl.de/

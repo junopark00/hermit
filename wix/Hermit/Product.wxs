@@ -1,0 +1,119 @@
+﻿<?define ShortName = "Hermit" ?>
+<?define FullName = "Hermit Game Streaming Client" ?>
+
+<?define ShortcutName = "$(var.ShortName)" ?>
+<?define ShortcutDesc = "Stream games and other applications from another PC" ?>
+<?define InstallFolder = "Hermit" ?>
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="$(var.FullName)"
+           Language="1033"
+           Version="!(bind.fileVersion.HermitExe)"
+           Manufacturer="Hermit"
+           UpgradeCode="28477bd9-8896-456d-a1e9-fda06cf98350">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." Schedule="afterInstallInitialize" />
+    <MediaTemplate CompressionLevel="high" EmbedCab="yes" />
+
+    <Property Id="APPDATAFOLDER" Value="%LOCALAPPDATA%\Hermit" />
+
+    <!-- There's no way to delete a registry key on uninstall but not major upgrade, so
+        we have to roll our own deletion via custom action -->
+    <CustomAction Id="DeleteRegistryKey"
+                  Directory="ProgramFiles6432Folder"
+                  ExeCommand="reg.exe delete &quot;HKCU\Software\Hermit&quot; /f"
+                  Execute="deferred"
+                  Return="ignore"
+                  Impersonate="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="DeleteRegistryKey"
+              Before="InstallFinalize"
+              Condition="Installed AND REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+    <Component Id="HermitShortcuts" Directory="INSTALLFOLDER">
+      <Shortcut Id="StartMenuShortcut"
+                Name="$(var.ShortcutName)"
+                Description="$(var.ShortcutDesc)"
+                Target="[#HermitExe]"
+                Directory="ApplicationProgramsFolder"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="CleanupStartMenuShortcut"
+                    Directory="ApplicationProgramsFolder"
+                    On="uninstall" />
+      <util:RemoveFolderEx Id="CleanupAppDataFolder"
+                           On="uninstall"
+                           Property="APPDATAFOLDER" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\Hermit"
+                     Name="Installed"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <Component Id="HermitDesktopShortcut" Directory="INSTALLFOLDER" Condition="ADDDESKTOPSHORTCUT=1">
+      <Shortcut Id="DesktopShortcut"
+                Name="$(var.ShortcutName)"
+                Description="$(var.ShortcutDesc)"
+                Target="[#HermitExe]"
+                Directory="DesktopFolder"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="CleanupDesktopShortcut"
+                    Directory="DesktopFolder"
+                    On="uninstall" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\Hermit"
+                     Name="DesktopShortcutInstalled"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <!-- Persist desktop shortcut's installed state to let Bundle.wxs know if
+         the desktop shortcut should installed by default when upgrading the
+         product -->
+    <Component Id="HermitDesktopShortcutState" Directory="INSTALLFOLDER">
+      <RegistryValue Root="HKCU"
+                     Key="Software\Hermit"
+                     Name="DesktopShortcutInstallState"
+                     Type="integer"
+                     Value="[ADDDESKTOPSHORTCUT]"
+                     KeyPath="yes" />
+    </Component>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="Hermit">
+        <File Id="HermitExe"
+              KeyPath="yes"
+              Checksum="yes"
+              Source="$(var.BuildDir)\app\$(var.Configuration)\Hermit.exe">
+          <fire:FirewallException Id="HermitFirewallException"
+                                  Scope="any"
+                                  IgnoreFailure="yes"
+                                  Name="$(var.FullName)" />
+        </File>
+      </Component>
+    </DirectoryRef>
+
+    <ComponentGroup Id="HermitDependencies" Directory="INSTALLFOLDER">
+      <Files Include="$(var.DeployDir)\**" />
+    </ComponentGroup>
+
+    <Feature Id="ProductFeature" Title="Hermit" Level="1" ConfigurableDirectory="INSTALLFOLDER">
+      <ComponentRef Id="Hermit" />
+      <ComponentRef Id="HermitShortcuts" />
+      <ComponentRef Id="HermitDesktopShortcutState" />
+      <ComponentRef Id="HermitDesktopShortcut" />
+      <ComponentGroupRef Id="HermitDependencies" />
+    </Feature>
+
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="$(var.InstallFolder)" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="$(var.InstallFolder)" />
+    </StandardDirectory>
+  </Package>
+</Wix>

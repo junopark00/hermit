@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Hermit
+Comment=Stream games and other applications from another PC running a GameStream host such as Shell
+Exec=hermit
+Icon=hermit
+Terminal=false
+Type=Application
+Categories=Qt;Game;Network;RemoteAccess;
+Keywords=nvidia;gamestream;stream;shell;remote play;

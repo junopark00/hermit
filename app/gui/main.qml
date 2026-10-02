@@ -1,0 +1,513 @@
+import QtQuick 2.9
+import QtQuick.Controls 2.2
+import QtQuick.Layouts 1.3
+import QtQuick.Window 2.2
+import QtQuick.Controls.Material 2.2
+
+import ComputerManager 1.0
+import StreamingPreferences 1.0
+import SystemProperties 1.0
+import SdlGamepadKeyNavigation 1.0
+import HermitTheme 1.0
+
+ApplicationWindow {
+    property bool pollingActive: false
+
+    // Set by SettingsView to force the back operation to pop all
+    // pages except the initial view. This is required when doing
+    // a retranslate() because AppView breaks for some reason.
+    property bool clearOnBack: false
+
+    id: window
+    width: 1280
+    height: 600
+
+    // Hermit: small corner radius everywhere instead of Material 3's pill shapes.
+    Material.roundedScale: Material.ExtraSmallScale
+
+    // This function runs prior to creation of the initial StackView item
+    function doEarlyInit() {
+        // Override the background color for Qt 6.5+ (Material 3) with Hermit's navy
+        // in order to improve contrast between the NVIDIA host's placeholder box art
+        // and the background of the app grid.
+        if (SystemProperties.usesMaterial3Theme) {
+            Material.background = HermitTheme.background
+        }
+
+        SdlGamepadKeyNavigation.enable()
+    }
+
+    Component.onCompleted: {
+        // Show the window according to the user's preferences
+        if (SystemProperties.hasDesktopEnvironment) {
+            if (StreamingPreferences.uiDisplayMode == StreamingPreferences.UI_MAXIMIZED) {
+                window.showMaximized()
+            }
+            else if (StreamingPreferences.uiDisplayMode == StreamingPreferences.UI_FULLSCREEN) {
+                window.showFullScreen()
+            }
+            else {
+                window.show()
+            }
+        } else {
+            window.showFullScreen()
+        }
+
+        // Display any modal dialogs for configuration warnings
+        if (runConfigChecks) {
+            if (SystemProperties.isWow64) {
+                wow64Dialog.open()
+            }
+
+            // Hardware acceleration and unmapped gamepads are checked asynchronously
+            SystemProperties.hasHardwareAccelerationChanged.connect(hasHardwareAccelerationChanged)
+            SystemProperties.unmappedGamepadsChanged.connect(hasUnmappedGamepadsChanged)
+            SystemProperties.startAsyncLoad()
+        }
+    }
+
+    function hasHardwareAccelerationChanged() {
+        if (!SystemProperties.hasHardwareAcceleration && StreamingPreferences.videoDecoderSelection !== StreamingPreferences.VDS_FORCE_SOFTWARE) {
+            if (SystemProperties.isRunningXWayland) {
+                xWaylandDialog.open()
+            }
+            else {
+                noHwDecoderDialog.open()
+            }
+        }
+    }
+
+    function hasUnmappedGamepadsChanged() {
+        if (SystemProperties.unmappedGamepads) {
+            unmappedGamepadDialog.unmappedGamepads = SystemProperties.unmappedGamepads
+            unmappedGamepadDialog.open()
+        }
+    }
+
+    // It would be better to use TextMetrics here, but it always lays out
+    // the text slightly more compactly than real Text does in ToolTip,
+    // causing unexpected line breaks to be inserted
+    Text {
+        id: tooltipTextLayoutHelper
+        visible: false
+        font: ToolTip.toolTip.font
+        text: ToolTip.toolTip.text
+    }
+
+    // This configures the maximum width of the singleton attached QML ToolTip. If left unconstrained,
+    // it will never insert a line break and just extend on forever.
+    ToolTip.toolTip.contentWidth: Math.min(tooltipTextLayoutHelper.width, 400)
+
+    function goBack() {
+        if (clearOnBack) {
+            // Pop all items except the first one
+            stackView.pop(null)
+            clearOnBack = false
+        }
+        else {
+            stackView.pop()
+        }
+    }
+
+    StackView {
+        id: stackView
+        anchors.fill: parent
+        focus: true
+
+        Component.onCompleted: {
+            // Perform our early initialization before constructing
+            // the initial view and pushing it to the StackView
+            doEarlyInit()
+            push(initialView)
+        }
+
+        onCurrentItemChanged: {
+            // Ensure focus travels to the next view when going back
+            if (currentItem) {
+                currentItem.forceActiveFocus()
+            }
+        }
+
+        Keys.onEscapePressed: {
+            if (depth > 1) {
+                goBack()
+            }
+            else {
+                quitConfirmationDialog.open()
+            }
+        }
+
+        Keys.onBackPressed: {
+            if (depth > 1) {
+                goBack()
+            }
+            else {
+                quitConfirmationDialog.open()
+            }
+        }
+
+        Keys.onMenuPressed: {
+            settingsButton.clicked()
+        }
+
+        // This is a keypress we've reserved for letting the
+        // SdlGamepadKeyNavigation object tell us to show settings
+        // when Menu is consumed by a focused control.
+        Keys.onHangupPressed: {
+            settingsButton.clicked()
+        }
+    }
+
+    // This timer keeps us polling for 5 minutes of inactivity
+    // to allow the user to work with Hermit on a second display
+    // while dealing with configuration issues. This will ensure
+    // machines come online even if the input focus isn't on Hermit.
+    Timer {
+        id: inactivityTimer
+        interval: 5 * 60000
+        onTriggered: {
+            if (!active && pollingActive) {
+                ComputerManager.stopPollingAsync()
+                pollingActive = false
+            }
+        }
+    }
+
+    onVisibleChanged: {
+        // When we become invisible while streaming is going on,
+        // stop polling immediately.
+        if (!visible) {
+            inactivityTimer.stop()
+
+            if (pollingActive) {
+                ComputerManager.stopPollingAsync()
+                pollingActive = false
+            }
+        }
+        else if (active) {
+            // When we become visible and active again, start polling
+            inactivityTimer.stop()
+
+            // Restart polling if it was stopped
+            if (!pollingActive) {
+                ComputerManager.startPolling()
+                pollingActive = true
+            }
+        }
+
+        // Poll for gamepad input only when the window is in focus
+        SdlGamepadKeyNavigation.notifyWindowFocus(visible && active)
+    }
+
+    onActiveChanged: {
+        if (active) {
+            // Stop the inactivity timer
+            inactivityTimer.stop()
+
+            // Restart polling if it was stopped
+            if (!pollingActive) {
+                ComputerManager.startPolling()
+                pollingActive = true
+            }
+        }
+        else {
+            // Start the inactivity timer to stop polling
+            // if focus does not return within a few minutes.
+            inactivityTimer.restart()
+        }
+
+        // Poll for gamepad input only when the window is in focus
+        SdlGamepadKeyNavigation.notifyWindowFocus(visible && active)
+    }
+
+    function navigateTo(url, objectType)
+    {
+        var existingItem = stackView.find(function(item, index) {
+            return item instanceof objectType
+        })
+
+        if (existingItem !== null) {
+            // Pop to the existing item
+            stackView.pop(existingItem)
+        }
+        else {
+            // Create a new item
+            stackView.push(url)
+        }
+    }
+
+    header: ToolBar {
+        id: toolBar
+        height: 60
+        anchors.topMargin: 5
+        anchors.bottomMargin: 5
+
+        Label {
+            id: titleLabel
+            visible: toolBar.width > 700
+            anchors.fill: parent
+            text: stackView.currentItem.objectName
+            font.pointSize: 20
+            elide: Label.ElideRight
+            horizontalAlignment: Qt.AlignHCenter
+            verticalAlignment: Qt.AlignVCenter
+        }
+
+        RowLayout {
+            spacing: 10
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            anchors.fill: parent
+
+            NavigableToolButton {
+                // Only make the button visible if the user has navigated somewhere.
+                visible: stackView.depth > 1
+
+                iconSource: "qrc:/res/arrow_left.svg"
+
+                onClicked: goBack()
+
+                Keys.onDownPressed: {
+                    stackView.currentItem.forceActiveFocus(Qt.TabFocus)
+                }
+            }
+
+            // This label will appear when the window gets too small and
+            // we need to ensure the toolbar controls don't collide
+            Label {
+                id: titleRowLabel
+                font.pointSize: titleLabel.font.pointSize
+                elide: Label.ElideRight
+                horizontalAlignment: Qt.AlignHCenter
+                verticalAlignment: Qt.AlignVCenter
+                Layout.fillWidth: true
+
+                // We need this label to always be visible so it can occupy
+                // the remaining space in the RowLayout. To "hide" it, we
+                // just set the text to empty string.
+                text: !titleLabel.visible ? stackView.currentItem.objectName : ""
+            }
+
+            Label {
+                id: versionLabel
+                visible: stackView.currentItem instanceof SettingsView
+                text: qsTr("Version %1").arg(SystemProperties.versionString)
+                font.pointSize: 12
+                horizontalAlignment: Qt.AlignRight
+                verticalAlignment: Qt.AlignVCenter
+            }
+
+            NavigableToolButton {
+                id: addPcButton
+                visible: stackView.currentItem instanceof PcView
+
+                iconSource:  "qrc:/res/ic_add_to_queue_white_48px.svg"
+
+                ToolTip.delay: 1000
+                ToolTip.timeout: 3000
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Add PC manually") + (newPcShortcut.nativeText ? (" ("+newPcShortcut.nativeText+")") : "")
+
+                Shortcut {
+                    id: newPcShortcut
+                    sequence: StandardKey.New
+                    onActivated: addPcButton.clicked()
+                }
+
+                onClicked: {
+                    addPcDialog.open()
+                }
+
+                Keys.onDownPressed: {
+                    stackView.currentItem.forceActiveFocus(Qt.TabFocus)
+                }
+            }
+
+            ProfilesButton {
+                visible: stackView.currentItem instanceof PcView ||
+                         stackView.currentItem instanceof AppView
+
+                Keys.onDownPressed: {
+                    stackView.currentItem.forceActiveFocus(Qt.TabFocus)
+                }
+            }
+
+            NavigableToolButton {
+                id: helpButton
+                visible: SystemProperties.hasBrowser
+
+                iconSource: "qrc:/res/question_mark.svg"
+
+                ToolTip.delay: 1000
+                ToolTip.timeout: 3000
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Help") + (helpShortcut.nativeText ? (" ("+helpShortcut.nativeText+")") : "")
+
+                Shortcut {
+                    id: helpShortcut
+                    sequence: StandardKey.HelpContents
+                    onActivated: helpButton.clicked()
+                }
+
+                // Hermit: the user guide in this repository (not the upstream wiki)
+                // TODO need to make sure browser is brought to foreground.
+                onClicked: Qt.openUrlExternally("https://github.com/junopark00/hermit/blob/main/docs/guide.md");
+
+                Keys.onDownPressed: {
+                    stackView.currentItem.forceActiveFocus(Qt.TabFocus)
+                }
+            }
+
+            NavigableToolButton {
+                // TODO: Implement gamepad mapping then unhide this button
+                visible: false
+
+                ToolTip.delay: 1000
+                ToolTip.timeout: 3000
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Gamepad Mapper")
+
+                iconSource: "qrc:/res/ic_videogame_asset_white_48px.svg"
+
+                onClicked: navigateTo("qrc:/gui/GamepadMapper.qml", GamepadMapper)
+
+                Keys.onDownPressed: {
+                    stackView.currentItem.forceActiveFocus(Qt.TabFocus)
+                }
+            }
+
+            NavigableToolButton {
+                id: settingsButton
+
+                iconSource:  "qrc:/res/settings.svg"
+
+                onClicked: navigateTo("qrc:/gui/SettingsView.qml", SettingsView)
+
+                Keys.onDownPressed: {
+                    stackView.currentItem.forceActiveFocus(Qt.TabFocus)
+                }
+
+                Shortcut {
+                    id: settingsShortcut
+                    sequence: StandardKey.Preferences
+                    onActivated: settingsButton.clicked()
+                }
+
+                ToolTip.delay: 1000
+                ToolTip.timeout: 3000
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Settings") + (settingsShortcut.nativeText ? (" ("+settingsShortcut.nativeText+")") : "")
+            }
+        }
+    }
+
+    ErrorMessageDialog {
+        id: noHwDecoderDialog
+        text: qsTr("No functioning hardware accelerated video decoder was detected by Hermit. " +
+                   "Your streaming performance may be severely degraded in this configuration.")
+    }
+
+    ErrorMessageDialog {
+        id: xWaylandDialog
+        text: qsTr("Hardware acceleration doesn't work on XWayland. Continuing on XWayland may result in poor streaming performance. " +
+                   "Try running with QT_QPA_PLATFORM=wayland or switch to X11.")
+    }
+
+    // Hermit: no download link (upstream's opened its own releases page); Hermit builds x64 only
+    NavigableMessageDialog {
+        id: wow64Dialog
+        standardButtons: Dialog.Ok
+        text: qsTr("This version of Hermit isn't optimized for your PC. Please download the '%1' version of Hermit for the best streaming performance.").arg(SystemProperties.friendlyNativeArchName)
+    }
+
+    ErrorMessageDialog {
+        id: unmappedGamepadDialog
+        property string unmappedGamepads : ""
+        text: qsTr("Hermit detected gamepads without a mapping:") + "\n" + unmappedGamepads
+    }
+
+    // This dialog appears when quitting via keyboard or gamepad button
+    NavigableMessageDialog {
+        id: quitConfirmationDialog
+        standardButtons: Dialog.Yes | Dialog.No
+        text: qsTr("Are you sure you want to quit?")
+        // For keyboard/gamepad navigation
+        onAccepted: Qt.quit()
+    }
+
+    // HACK: This belongs in StreamSegue but keeping a dialog around after the parent
+    // dies can trigger bugs in Qt 5.12 that cause the app to crash. For now, we will
+    // host this dialog in a QML component that is never destroyed.
+    //
+    // To repro: Start a stream, cut the network connection to trigger the "Connection
+    // terminated" dialog, wait until the app grid times out back to the PC grid, then
+    // try to dismiss the dialog.
+    ErrorMessageDialog {
+        id: streamSegueErrorDialog
+
+        property bool quitAfter: false
+
+        onClosed: {
+            if (quitAfter) {
+                Qt.quit()
+            }
+
+            // StreamSegue assumes its dialog will be re-created each time we
+            // start streaming, so fake it by wiping out the text each time.
+            text = ""
+        }
+    }
+
+    NavigableDialog {
+        id: addPcDialog
+        property string label: qsTr("Enter the IP address of your host PC:")
+
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        onOpened: {
+            // Force keyboard focus on the textbox so keyboard navigation works
+            editText.forceActiveFocus()
+        }
+
+        onClosed: {
+            editText.clear()
+        }
+
+        onAccepted: {
+            if (editText.text) {
+                ComputerManager.addNewHostManually(editText.text.trim())
+            }
+        }
+
+        ColumnLayout {
+            Label {
+                text: addPcDialog.label
+                font.bold: true
+            }
+
+            TextField {
+                id: editText
+                Layout.fillWidth: true
+                focus: true
+
+                Keys.onReturnPressed: {
+                    addPcDialog.accept()
+                }
+
+                Keys.onEnterPressed: {
+                    addPcDialog.accept()
+                }
+            }
+        }
+    }
+
+    // Shown by StreamSegue when a stream ends (Settings > "Show a summary after each session").
+    SessionSummaryDialog {
+        id: sessionSummaryDialog
+    }
+
+    // Shown by StreamSegue when the connection drops mid-stream (Settings > "Reconnect automatically").
+    ReconnectDialog {
+        id: reconnectDialog
+    }
+}
