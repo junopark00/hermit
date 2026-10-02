@@ -217,8 +217,8 @@ to sync the clipboard in both directions.
     arrive, or the network fails while it is fetched, it is fetched again the next time you leave
     the stream window (unless you copied something locally since), with one notice for those files.
     Files that come over as one archive (described below) are fetched once more after a network
-    error or timeout; when that fails too, they are not fetched again until the host clipboard
-    changes. After an error on the host (HTTP 500, for example), host files are fetched once more;
+    error or timeout, with a notice of their own also when their list failed before; when that
+    fails too, they are not fetched again until the host clipboard changes. After an error on the host (HTTP 500, for example), host files are fetched once more;
     when that fails too, they are not fetched again until the host clipboard changes.
   - This needs a current Shell host. With older Shell versions, and for folders with paths over 259
     characters, the files come over as one archive when you leave the stream window (256 MB limit) and
@@ -244,11 +244,13 @@ to sync the clipboard in both directions.
     locally after it: then your copy wins and is sent to the host. The same applies to host content
     still on its way when you copy locally, also when Hermit has not handled that copy yet.
   - An empty local clipboard does not count as a copy, nor does a list of host files that Hermit is
-    still putting on the clipboard.
-  - When sync could not be set up at stream start (the host could not be reached, for example) and
+    still putting on the clipboard. What another program copies meanwhile does (an e-mail
+    attachment, for example).
+  - When sync could not be set up (the host could not be reached at stream start, for example) and
     is set up later, Hermit cannot tell whether the host's clipboard changed in between, so the
-    host's content counts as the newer change: what you copied before is not sent, and the host's
-    content comes over when you leave the stream window. Copy again to send yours.
+    host's content counts as a change made at the last attempt that failed: what you copied before
+    that attempt is not sent, and the host's content comes over when you leave the stream window
+    (copy again to send yours); what you copied after it is sent.
 - When another program on the host holds its clipboard at that moment, the host answers that it is
   busy (HTTP 503). Nothing is shown; the content moves the next time you leave or return to the stream
   window. Files dropped on the stream window are not sent again by themselves: the notice says the
@@ -259,10 +261,13 @@ to sync the clipboard in both directions.
   time you return to the stream window; if that fails too, copy them again. When every byte of the
   files was sent but the host did not answer within 5 minutes,
   the files are not sent again: the host most likely took them, and the notice says they may still
-  arrive. When they do, the next new files on the host clipboard are taken for them and not fetched
-  back over your local copy (unless you copied something locally since). When the host cannot be
-  reached at all at that moment, what you copied is sent the next time you return to the stream
-  window (but see above for a setup that failed at stream start).
+  arrive. When they do, they are not fetched back over your local copy. With a Shell host that
+  streams files, Hermit recognizes them by their top-level names and total size, also when they
+  arrive after something newer was copied on either side, and then they replace nothing (other host
+  files come over as usual); with a host that sends an archive, the next new host content is taken
+  for them if it is files and you copied nothing locally since. When the host cannot be reached at
+  all at that moment, what you copied is sent the next time you return to the stream window (but see
+  above for a setup that failed).
 - Network transfer, image conversion and file I/O run on separate threads and never stall the
   stream. Clipboard contents are never logged.
 - **Speed limit**: image and file transfers are rate-limited in both directions, leaving bandwidth for
