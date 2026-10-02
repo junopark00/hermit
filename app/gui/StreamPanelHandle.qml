@@ -4,8 +4,11 @@ import QtQuick.Window
 import HermitTheme 1.0
 
 // Hermit: a narrow chevron handle at the left or right edge of the stream window (the side set in
-// the panel), shown while the mouse is not captured. A click opens the stream panel on that side;
-// press and hold, then drag, to move it up or down. It never takes focus from the stream window.
+// the panel), shown while the pointer can reach it: always in remote desktop mouse mode, in game
+// mouse mode only while the mouse is not captured (StreamPanel::sync()). A click opens the stream
+// panel on that side; press and hold, then drag, to move it up or down. It never takes focus from
+// the stream window. The pointer hidden over the stream shows again here: the MouseArea sets its
+// own cursor (and Qt falls back to the arrow) for this separate window.
 Window {
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     width: 20

@@ -69,11 +69,19 @@ The window title is `<host> - Hermit`, and `Hermit.exe --help` lists the command
 A side panel over the stream changes options without ending the stream, similar to the stream menu
 of other remote desktop clients.
 
-- **Open it** with **Ctrl+Alt+Shift+P**. When the mouse is not captured (windowed mode, or after
-  releasing it with Ctrl+Alt+Shift+Z), you can also click the arrow handle on the edge of the stream
-  window. While the panel is open, the mouse and keyboard go to the panel; closing it (the close
-  button, Esc, or the same shortcut) restores the previous capture state. Switching to another app
-  closes the panel and hides the handle.
+- **Open it** with **Ctrl+Alt+Shift+P**, or click the arrow handle on the edge of the stream window:
+  - With the remote desktop mouse ("Optimize mouse for remote desktop instead of games"), the
+    pointer moves freely, so the handle is always shown while the stream window is active. The
+    pointer is visible over the handle, and hovering or clicking it sends nothing to the host.
+  - With the game mouse, the handle is shown only while the mouse is not captured (windowed mode
+    before you click into the stream, or after releasing the mouse with Ctrl+Alt+Shift+Z). When a
+    stream starts in this mode, a notice under the stream shows both shortcuts for 5 seconds
+    (not when reconnecting).
+
+  While the panel is open, the mouse and keyboard go to the panel; closing it (the close button,
+  Esc, or the same shortcut) restores the previous capture state. Switching to another app or
+  minimizing the stream closes the panel and hides the handle. The handle never takes keyboard
+  focus from the stream, also in full screen.
 - **Handle position**: choose the right or left edge in the panel; the panel opens on that side.
   Press and drag the handle to move it up or down. Position and side are saved.
 - When the panel opens, the bitrate field has keyboard focus. Tabbing through the panel scrolls the

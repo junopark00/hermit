@@ -348,6 +348,7 @@ private:
     QStringList m_DroppedFiles;
     int m_HotkeyHelpSerial;
     uint64_t m_LoopStartMs;
+    bool m_StartHintPending;  // the shortcut hint of a stream started in game mouse mode
     uint64_t m_AutoBitrateRetryMs;
     bool m_ResyncLiveBitrate;   // send the bitrate again once the previous session's request is done
     bool m_ResyncRepeat;        // and once more after that

@@ -15,7 +15,8 @@ class QQuickWindow;
 #define SDL_CODE_NETWORK_WINDOW 109
 
 // Hermit: settings panel shown over the stream (Ctrl+Alt+Shift+P, or the chevron handle at the
-// left or right edge of the stream window while the mouse is not captured). It is a Qt Quick window: Qt event processing is
+// left or right edge of the stream window: always in remote desktop mouse mode, and in game mouse
+// mode while the mouse is not captured). It is a Qt Quick window: Qt event processing is
 // suspended during a stream, so Session::exec() pumps Qt events only while the panel or its handle
 // is visible. Settings that only need the client change at once; resolution, frame rate, bitrate,
 // codec and HDR are applied by reconnecting with the new settings (the host app keeps running).
@@ -92,9 +93,10 @@ public:
     void open();
     void close();
 
-    // Called on every pass of the SDL loop: shows the handle while the mouse is free and the
-    // stream window has focus, and keeps the windows on the stream window.
-    void sync(bool mouseCaptured, bool streamFocused, bool minimized);
+    // Called on every pass of the SDL loop: shows the handle while the stream window has focus
+    // and the pointer can reach the handle (remote desktop mouse mode, where the pointer moves
+    // freely, or a released mouse in game mode), and keeps the windows on the stream window.
+    void sync(bool mouseCaptured, bool absoluteMouse, bool streamFocused, bool minimized);
 
     void setMuted(bool muted);
     bool muted() const { return m_Muted; }

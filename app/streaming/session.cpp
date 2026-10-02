@@ -638,6 +638,7 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_AutoBitrateRunning(false),
       m_HotkeyHelpSerial(0),
       m_LoopStartMs(0),
+      m_StartHintPending(false),
       m_AutoBitrateRetryMs(0),
       m_ResyncLiveBitrate(false),
       m_ResyncRepeat(false),
@@ -2437,6 +2438,7 @@ void Session::exec()
     // because we want to suspend all Qt processing until the stream is over.
     SDL_Event event;
     m_LoopStartMs = SDL_GetTicks64();
+    m_StartHintPending = !m_IsReconnect && !m_InputHandler->isAbsoluteMouseMode();
     // The previous stream's bitrate was uncertain at its end (consumed only by a session that
     // got this far, so a failed connection leaves it for the next one)
     if (s_LiveBitrateInFlight.load() > 0 || s_LastSessionBitrateUncertain) {
@@ -2444,13 +2446,23 @@ void Session::exec()
     }
     s_LastSessionBitrateUncertain = false;
     for (;;) {
+        // Hermit: a stream started in game mouse mode has no handle to click while the mouse is
+        // captured: point out the shortcuts once, a moment after the picture appears (not on
+        // reconnects, and not when the mouse mode was switched meanwhile)
+        if (m_StartHintPending && SDL_GetTicks64() - m_LoopStartMs >= 1000) {
+            m_StartHintPending = false;
+            if (!m_InputHandler->isAbsoluteMouseMode() && (m_Panel == nullptr || !m_Panel->isOpen())) {
+                getOverlayManager().showToast(QCoreApplication::translate("Session", "Ctrl+Alt+Shift+P: stream settings · Ctrl+Alt+Shift+Z: release the mouse"), 5000);
+            }
+        }
+
         // Hermit: the stream panel and its handle are Qt windows. Show the handle while the mouse
-        // is free, and process Qt events (with a short wait) only while one of them is shown.
+        // can reach it, and process Qt events (with a short wait) only while one of them is shown.
         if (m_Panel != nullptr) {
             Uint32 windowFlags = SDL_GetWindowFlags(m_Window);
             bool streamFocused = (windowFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
-            m_Panel->sync(m_InputHandler->isCaptureActive(), streamFocused,
-                          (windowFlags & SDL_WINDOW_MINIMIZED) != 0);
+            m_Panel->sync(m_InputHandler->isCaptureActive(), m_InputHandler->isAbsoluteMouseMode(),
+                          streamFocused, (windowFlags & SDL_WINDOW_MINIMIZED) != 0);
             if (m_Panel->lostFocus(streamFocused)) {
                 // The user switched to another app: do not leave the panel floating over it
                 closeStreamPanel(false);

@@ -340,11 +340,15 @@ void StreamPanel::setMuted(bool muted)
     }
 }
 
-void StreamPanel::sync(bool mouseCaptured, bool streamFocused, bool minimized)
+void StreamPanel::sync(bool mouseCaptured, bool absoluteMouse, bool streamFocused, bool minimized)
 {
     // The handle is only useful while the mouse can reach it, and must not float over other
-    // apps when the stream window is in the background.
-    bool wantHandle = !m_Open && !mouseCaptured && streamFocused && !minimized;
+    // apps when the stream window is in the background. In remote desktop mouse mode the mouse
+    // counts as captured (the cursor is only hidden over the stream window), but the pointer
+    // moves freely and reaches the handle: the handle is a separate window that takes the
+    // pointer from the stream window, so hovering or clicking it sends nothing to the host, and
+    // Qt shows its cursor over it. A click opens the panel, which frees the mouse.
+    bool wantHandle = !m_Open && (!mouseCaptured || absoluteMouse) && streamFocused && !minimized;
     if (wantHandle != m_HandleShown && !m_HandleFailed) {
         if (wantHandle && m_Handle == nullptr) {
             m_Handle = createWindow("StreamPanelHandle.qml");

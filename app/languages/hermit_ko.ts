@@ -471,6 +471,10 @@ Start를 길게 눌러 끄기</translation>
       <translation>연결된 게임패드에 매핑이 없어 사용할 수 없습니다.</translation>
     </message>
     <message>
+      <source>Ctrl+Alt+Shift+P: stream settings · Ctrl+Alt+Shift+Z: release the mouse</source>
+      <translation>Ctrl+Alt+Shift+P: 스트림 설정 · Ctrl+Alt+Shift+Z: 마우스 놓아주기</translation>
+    </message>
+    <message>
       <source>Host software version 3.0 or higher is required for 4K streaming.</source>
       <translation>4K 스트리밍에는 호스트 소프트웨어 3.0 이상이 필요합니다.</translation>
     </message>

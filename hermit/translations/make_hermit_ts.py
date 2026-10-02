@@ -345,6 +345,8 @@ TRANSLATIONS = {
     ('StreamSegue', 'Ctrl+Alt+Shift+P stream settings · Ctrl+Alt+Shift+H shortcut list · Ctrl+Alt+Shift+Q disconnect'):
         'Ctrl+Alt+Shift+P 스트림 설정 · Ctrl+Alt+Shift+H 단축키 목록 · Ctrl+Alt+Shift+Q 연결 끊기',
     ('StreamSegue', 'Gamepad: Start+Select+L1+R1 to disconnect'): '게임패드: Start+Select+L1+R1로 연결 끊기',
+    ('Session', 'Ctrl+Alt+Shift+P: stream settings · Ctrl+Alt+Shift+Z: release the mouse'):
+        'Ctrl+Alt+Shift+P: 스트림 설정 · Ctrl+Alt+Shift+Z: 마우스 놓아주기',
 
     # Settings
     ('SettingsView', 'A Shell host sets its virtual display to this resolution.'): 'Shell 호스트는 가상 디스플레이를 이 해상도로 맞춥니다.',
