@@ -147,12 +147,15 @@ private:
     void pullFileList(quint64 localChanges);
     void pullArchive();
     // Host files not fetched for another reason than those with their own notice: says so, and
-    // leaves the content to be fetched again on the next pull when that may help.
-    void failedHostFiles(int qtError);
+    // leaves the content to be fetched again on the next pull when that may help. Hermit: archive:
+    // the files themselves (large), fetched again once at most after a network error; else their
+    // list (small), fetched again each time, with one notice.
+    void failedHostFiles(int qtError, bool archive);
     // Hermit: a network error without a reply (timeout, connection refused or reset, a transfer cut
-    // off) for host images or files: the content is fetched again on a later pull. True the first
-    // time for this host content, so the caller shows its notice once per content.
-    bool retryAfterNetworkError();
+    // off) for host images or files. True the first time for this host content: the caller shows
+    // its notice, and the content is fetched again on a later pull. once: after that, it is not
+    // fetched again until the host's clipboard changes (large content); else it always is.
+    bool retryAfterNetworkError(bool once);
     // Logs a failed request; a missing endpoint turns sync off, a missing permission turns off
     // that direction only, with a notice.
     void handleFailure(const char* operation, int qtError, Direction direction);

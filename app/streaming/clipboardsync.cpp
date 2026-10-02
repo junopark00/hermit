@@ -1266,12 +1266,17 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 
         }
         else if (m_LastHttpStatus == 0 && error > 0) {
             // Hermit: a network error without a reply (a timeout, connection refused or reset, an
-            // upload cut off) may be passing: sent again on the next trigger, unless the host's
-            // clipboard changes first, with one notice per content.
+            // upload cut off) may be passing: sent once more on the next trigger, unless the host's
+            // clipboard changes first, with one notice. After a second one, not sent again until
+            // it is copied again (up to 32 MB each time), like files.
             handleFailure("image send", error, Direction::Push);
-            localNotSent(localSeq);
             if (firstLocalNetworkError(localSeq)) {
+                localNotSent(localSeq);
                 notify(LocalImageFailed, false);
+            }
+            else {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Sending the clipboard image failed again; not sent again until it is copied again");
             }
         }
         else {
@@ -1623,10 +1628,11 @@ void ClipboardSyncWorker::pull(quint64 localChanges)
             }
             else if (m_LastHttpStatus == 0 && error > 0) {
                 // Hermit: a network error without a reply (a timeout, connection refused or
-                // reset, a transfer cut off) may be passing: fetched again on a later pull (unless
-                // a local change comes first), with one notice per content.
+                // reset, a transfer cut off) may be passing: fetched once more on a later pull
+                // (unless a local change comes first), with one notice. After a second one, not
+                // fetched again until the host's clipboard changes.
                 handleFailure("image fetch", error, Direction::Pull);
-                if (retryAfterNetworkError()) {
+                if (retryAfterNetworkError(true)) {
                     notify(HostImageFailed, true);
                 }
             }
@@ -1711,7 +1717,7 @@ void ClipboardSyncWorker::pullFileList(quint64 localChanges)
         else {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Fetching the host file list failed: %s", qPrintable(m_LastError));
-            failedHostFiles(error);
+            failedHostFiles(error, false);
         }
         return;
     }
@@ -1747,21 +1753,21 @@ void ClipboardSyncWorker::pullFileList(quint64 localChanges)
     deliver(content);
 }
 
-void ClipboardSyncWorker::failedHostFiles(int qtError)
+void ClipboardSyncWorker::failedHostFiles(int qtError, bool archive)
 {
-    if (qtError == QNetworkReply::TimeoutError) {
-        // The host may still be preparing the files (cloud placeholders it has to fetch first,
-        // for example): offered again when the user next leaves the stream window.
-        notify(HostFilesFailed, true);
-        m_Order.hostRetry(m_Order.hostKey());
-        return;
-    }
-    if (m_LastHttpStatus == 0 && qtError > 0) {
-        // Hermit: a network error without a reply (connection refused or reset, a transfer cut
-        // off) may be passing too: fetched again on the next pull. One notice per content, as
-        // such an error can come at once every time.
-        if (retryAfterNetworkError()) {
+    if (qtError == QNetworkReply::TimeoutError || (m_LastHttpStatus == 0 && qtError > 0)) {
+        // A timeout: the host may still be preparing the files (cloud placeholders it has to fetch
+        // first, for example), so they are offered again when the user next leaves the stream
+        // window. Hermit: so are they after a network error without a reply (connection refused
+        // or reset, a transfer cut off), which may be passing too. One notice per content, as
+        // such an error can come every time. The archive (up to 256 MB) is fetched once more at
+        // most, then not until the host's clipboard changes; the list (no file data) each time.
+        if (retryAfterNetworkError(archive)) {
             notify(HostFilesFailed, true);
+        }
+        else if (archive) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files failed again; not fetched again until the host clipboard changes");
         }
         return;
     }
@@ -1784,16 +1790,16 @@ void ClipboardSyncWorker::failedHostFiles(int qtError)
     notify(HostFilesFailed, true);
 }
 
-bool ClipboardSyncWorker::retryAfterNetworkError()
+bool ClipboardSyncWorker::retryAfterNetworkError(bool once)
 {
     const quint64 key = m_Order.hostKey();
-    m_Order.hostRetry(key);
-    if (m_HostNetworkNoticeKeyValid && m_HostNetworkNoticeKey == key) {
-        return false;
+    const bool first = !m_HostNetworkNoticeKeyValid || m_HostNetworkNoticeKey != key;
+    if (first || !once) {
+        m_Order.hostRetry(key);
     }
     m_HostNetworkNoticeKey = key;
     m_HostNetworkNoticeKeyValid = true;
-    return true;
+    return first;
 }
 
 void ClipboardSyncWorker::pullArchive()
@@ -1856,7 +1862,7 @@ void ClipboardSyncWorker::pullArchive()
         else {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Fetching files from host failed: %s", qPrintable(m_LastError));
-            failedHostFiles(error);
+            failedHostFiles(error, true);
         }
         return;
     }
