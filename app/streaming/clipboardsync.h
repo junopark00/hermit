@@ -53,6 +53,7 @@ struct ClipboardHostContent
     ClipboardArchive::RemoteFileList remoteFiles;  // RemoteFiles: host files to offer as virtual files
     quint32 localSeq = 0;  // RemoteFilesReady: local clipboard sequence number once they were offered
     int itemCount = 0;     // RemoteFilesReady: items the user copied on the host
+    quint64 listGeneration = 0;  // RemoteFilesReady: which publish of the virtual files it answers
 };
 
 // Runs every host request on its own thread, so the SDL streaming loop is never blocked by the

@@ -43,6 +43,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <functional>
@@ -885,19 +886,169 @@ private:
     std::shared_ptr<Download> m_Download;
 };
 
+// Data objects the owner thread put on the clipboard that are still alive. One the owner no longer
+// references may still be on the clipboard (released while it was current, for example), so the
+// end of the stream checks all of them, not only the latest.
+class PublishedObjects
+{
+public:
+    void add(IDataObject* object)
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        m_Objects.push_back(object);
+    }
+
+    void remove(IDataObject* object)
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        m_Objects.erase(std::remove(m_Objects.begin(), m_Objects.end(), object), m_Objects.end());
+    }
+
+    int count()
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        return (int)m_Objects.size();
+    }
+
+    // Owner thread: whether one of them is on the clipboard now.
+    bool anyOnClipboard()
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        for (IDataObject* object : m_Objects) {
+            if (OleIsCurrentClipboard(object) == S_OK) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    std::mutex m_Mutex;
+    std::vector<IDataObject*> m_Objects;
+};
+
+// Commands from the main thread to the owner thread. Each publish and release gets the next
+// generation number. The owner thread runs commands only between messages, so a long Read can hold
+// several back; a publish that a later publish or release superseded is then dropped instead of
+// covering newer host content with an older file list.
+class CommandQueue
+{
+public:
+    enum Kind { Publish, Release, Quit };
+
+    struct Command
+    {
+        Kind kind = Quit;
+        quint64 generation = 0;
+        ClipboardArchive::RemoteFileList list;
+    };
+
+    CommandQueue()
+        : m_Latest(0)
+    {
+    }
+
+    CommandQueue(const CommandQueue&) = delete;
+    CommandQueue& operator=(const CommandQueue&) = delete;
+
+    // Main thread. Returns the command's generation (0 for Quit, which supersedes nothing).
+    quint64 post(Kind kind, const ClipboardArchive::RemoteFileList& list = ClipboardArchive::RemoteFileList())
+    {
+        Command command;
+        command.kind = kind;
+        command.list = list;
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        if (kind != Quit) {
+            command.generation = ++m_Latest;
+        }
+        m_Commands.push_back(command);
+        return command.generation;
+    }
+
+    // Whether nothing was published or released after the command with this generation.
+    bool isLatest(quint64 generation) const { return generation == m_Latest.load(); }
+
+    // Owner thread: the queued commands, without the publishes already superseded.
+    std::deque<Command> take()
+    {
+        std::deque<Command> commands;
+        {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            commands.swap(m_Commands);
+        }
+        std::deque<Command> wanted;
+        for (Command& command : commands) {
+            if (command.kind == Publish && !isLatest(command.generation)) {
+                continue;
+            }
+            wanted.push_back(std::move(command));
+        }
+        return wanted;
+    }
+
+private:
+    std::mutex m_Mutex;
+    std::deque<Command> m_Commands;
+    std::atomic<quint64> m_Latest;
+};
+
+// Waits up to ms while still handling this thread's messages, so COM calls into our objects and
+// clipboard messages keep being answered (a plain Sleep would hold up other programs while our
+// window owns the clipboard).
+inline void waitHandlingMessages(DWORD ms)
+{
+    const ULONGLONG end = GetTickCount64() + ms;
+    for (;;) {
+        const ULONGLONG now = GetTickCount64();
+        if (now >= end) {
+            return;
+        }
+        const DWORD woken = MsgWaitForMultipleObjectsEx(0, nullptr, (DWORD)(end - now), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        if (woken != WAIT_OBJECT_0) {
+            return;  // time is up (or the wait failed)
+        }
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
+// OleSetClipboard (nullptr empties the clipboard), tried again for a moment while another program
+// holds the clipboard.
+inline HRESULT setClipboardWithRetry(IDataObject* object)
+{
+    HRESULT result = E_FAIL;
+    for (int attempt = 0; attempt < 20; attempt++) {
+        result = OleSetClipboard(object);
+        if (result != CLIPBRD_E_CANT_OPEN) {
+            break;
+        }
+        waitHandlingMessages(15);
+    }
+    return result;
+}
+
 // The data object on the clipboard: file descriptors, file contents by index, "copy" as the
 // preferred effect, and our marker. Implements IDataObjectAsyncCapability so File Explorer pastes on
 // a background thread with its progress dialog.
 class HostFilesDataObject : public IDataObject, public IDataObjectAsyncCapability
 {
 public:
-    HostFilesDataObject(std::shared_ptr<Hub> hub, const ClipboardArchive::RemoteFileList& list)
+    // published: where the owner thread keeps track of its objects that are still alive
+    HostFilesDataObject(std::shared_ptr<Hub> hub, const ClipboardArchive::RemoteFileList& list,
+                        std::shared_ptr<PublishedObjects> published = nullptr)
         : m_Refs(1),
           m_Hub(std::move(hub)),
           m_List(list),
+          m_Published(std::move(published)),
           m_AsyncMode(TRUE),
           m_InOperation(FALSE)
     {
+        if (m_Published) {
+            m_Published->add(this);
+        }
     }
 
     // IUnknown
@@ -1118,7 +1269,12 @@ public:
     }
 
 private:
-    ~HostFilesDataObject() = default;
+    ~HostFilesDataObject()
+    {
+        if (m_Published) {
+            m_Published->remove(this);
+        }
+    }
 
     HGLOBAL makeDescriptors() const
     {
@@ -1158,6 +1314,7 @@ private:
     std::atomic<ULONG> m_Refs;
     std::shared_ptr<Hub> m_Hub;
     ClipboardArchive::RemoteFileList m_List;
+    std::shared_ptr<PublishedObjects> m_Published;
     std::vector<std::pair<CLIPFORMAT, std::string>> m_Stored;
     BOOL m_AsyncMode;
     BOOL m_InOperation;
@@ -1174,6 +1331,7 @@ public:
           m_Generation(generation),
           m_Wake(CreateEventW(nullptr, FALSE, FALSE, nullptr)),
           m_Done(CreateEventW(nullptr, TRUE, FALSE, nullptr)),
+          m_Published(std::make_shared<PublishedObjects>()),
           m_Current(nullptr)
     {
     }
@@ -1193,32 +1351,27 @@ public:
         std::thread([self]() { self->run(); }).detach();
     }
 
-    // Main thread
-    void publish(const ClipboardArchive::RemoteFileList& list) { post({Command::Publish, list}); }
-    void release() { post({Command::Release, ClipboardArchive::RemoteFileList()}); }
+    // Main thread. Both return the command's generation.
+    quint64 publish(const ClipboardArchive::RemoteFileList& list) { return post(CommandQueue::Publish, list); }
+    quint64 release() { return post(CommandQueue::Release); }
+
+    // Main thread: false once a later publish or release was posted.
+    bool isLatest(quint64 generation) const { return m_Commands.isLatest(generation); }
 
     // Main thread, when the stream ends: clears the clipboard if it still holds our files (their
     // downloads stop with the stream) and ends the thread. Waits at most timeoutMs.
     bool quit(DWORD timeoutMs)
     {
-        post({Command::Quit, ClipboardArchive::RemoteFileList()});
+        post(CommandQueue::Quit);
         return WaitForSingleObject(m_Done, timeoutMs) == WAIT_OBJECT_0;
     }
 
 private:
-    struct Command
+    quint64 post(CommandQueue::Kind kind, const ClipboardArchive::RemoteFileList& list = ClipboardArchive::RemoteFileList())
     {
-        enum Kind { Publish, Release, Quit } kind;
-        ClipboardArchive::RemoteFileList list;
-    };
-
-    void post(const Command& command)
-    {
-        {
-            std::lock_guard<std::mutex> lock(m_Mutex);
-            m_Commands.push_back(command);
-        }
+        const quint64 generation = m_Commands.post(kind, list);
         SetEvent(m_Wake);
+        return generation;
     }
 
     void run()
@@ -1244,7 +1397,7 @@ private:
                 }
             }
             else {
-                releaseCurrent(true);
+                finish(SUCCEEDED(init));
                 running = false;
             }
         }
@@ -1257,41 +1410,33 @@ private:
 
     bool runCommands(bool oleReady)
     {
-        std::deque<Command> commands;
-        {
-            std::lock_guard<std::mutex> lock(m_Mutex);
-            commands.swap(m_Commands);
-        }
-        for (const Command& command : commands) {
+        for (const CommandQueue::Command& command : m_Commands.take()) {
             switch (command.kind) {
-            case Command::Publish:
+            case CommandQueue::Publish:
                 if (oleReady && !m_Hub->stopped()) {
-                    setClipboard(command.list);
+                    setClipboard(command.list, command.generation);
                 }
                 break;
-            case Command::Release:
-                releaseCurrent(false);
+            case CommandQueue::Release:
+                releaseCurrent();
                 break;
-            case Command::Quit:
-                releaseCurrent(true);
+            case CommandQueue::Quit:
+                finish(oleReady);
                 return false;
             }
         }
         return true;
     }
 
-    void setClipboard(const ClipboardArchive::RemoteFileList& list)
+    void setClipboard(const ClipboardArchive::RemoteFileList& list, quint64 generation)
     {
-        auto* object = new HostFilesDataObject(m_Hub, list);
-        HRESULT result = E_FAIL;
-        // Another program may hold the clipboard for a moment.
-        for (int attempt = 0; attempt < 20; attempt++) {
-            result = OleSetClipboard(object);
-            if (result != CLIPBRD_E_CANT_OPEN) {
-                break;
-            }
-            Sleep(15);
+        // An earlier command in this batch may have taken a while (the retry below handles
+        // messages): checked once more right before.
+        if (!m_Commands.isLatest(generation)) {
+            return;
         }
+        auto* object = new HostFilesDataObject(m_Hub, list, m_Published);
+        const HRESULT result = setClipboardWithRetry(object);
         if (FAILED(result)) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files could not be put on the clipboard (0x%08lx)", (unsigned long)result);
@@ -1299,13 +1444,15 @@ private:
             return;
         }
         const DWORD sequence = GetClipboardSequenceNumber();
-        releaseCurrent(false);
+        releaseCurrent();
         m_Current = object;
 
-        // The main thread marks this clipboard content as handled, so it is not sent back.
+        // The main thread marks this clipboard content as handled, so it is not sent back, unless
+        // newer host content superseded this list meanwhile (listGeneration).
         auto* content = new ClipboardHostContent;
         content->kind = ClipboardHostContent::RemoteFilesReady;
         content->generation = m_Generation;
+        content->listGeneration = generation;
         content->localSeq = sequence;
         content->itemCount = list.topLevelCount();
         SDL_Event event = {};
@@ -1317,17 +1464,28 @@ private:
         }
     }
 
-    void releaseCurrent(bool clearIfOurs)
+    // Drops our reference; the clipboard keeps its own while the list is on it.
+    void releaseCurrent()
     {
-        if (m_Current == nullptr) {
-            return;
+        if (m_Current != nullptr) {
+            m_Current->Release();
+            m_Current = nullptr;
         }
-        if (clearIfOurs && OleIsCurrentClipboard(m_Current) == S_OK) {
-            // Emptied rather than flushed: OleFlushClipboard would download every file.
-            OleSetClipboard(nullptr);
+    }
+
+    // End of the stream: empties the clipboard if any list we put there is still on it (their
+    // downloads stop with the stream), then drops our reference. Emptied rather than flushed:
+    // OleFlushClipboard would download every file.
+    void finish(bool oleReady)
+    {
+        if (oleReady && m_Published->anyOnClipboard()) {
+            const HRESULT result = setClipboardWithRetry(nullptr);
+            if (FAILED(result)) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Host files could not be removed from the clipboard (0x%08lx)", (unsigned long)result);
+            }
         }
-        m_Current->Release();
-        m_Current = nullptr;
+        releaseCurrent();
     }
 
     std::shared_ptr<Hub> m_Hub;
@@ -1335,8 +1493,8 @@ private:
     int m_Generation;
     HANDLE m_Wake;
     HANDLE m_Done;
-    std::mutex m_Mutex;
-    std::deque<Command> m_Commands;
+    CommandQueue m_Commands;
+    std::shared_ptr<PublishedObjects> m_Published;
     IDataObject* m_Current;  // owner thread only
 };
 
@@ -1377,12 +1535,15 @@ public:
     VirtualFileClipboard& operator=(const VirtualFileClipboard&) = delete;
 
     // Puts the list on the clipboard (on the owner thread). The main thread then gets a
-    // RemoteFilesReady content event.
-    void publish(const ClipboardArchive::RemoteFileList& list) { m_Owner->publish(list); }
+    // RemoteFilesReady content event with the returned generation.
+    quint64 publish(const ClipboardArchive::RemoteFileList& list) { return m_Owner->publish(list); }
 
-    // Other host content replaced ours on the clipboard: drop our reference. A paste that is
-    // already running keeps its streams.
+    // Other host content replaces ours on the clipboard: drop our reference, and never publish a
+    // list still waiting. A paste that is already running keeps its streams.
     void release() { m_Owner->release(); }
+
+    // False for the generation of a list that newer host content superseded.
+    bool isLatest(quint64 listGeneration) const { return m_Owner->isLatest(listGeneration); }
 
 private:
     std::shared_ptr<Hub> m_Hub;

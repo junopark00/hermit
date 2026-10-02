@@ -7,11 +7,13 @@ Builds and runs Hermit's standalone tests (no app build, no stream, no host need
                          performance overlay text, automatic bitrate, display aspect
                          resolution presets, connection profile property names
   clipboard_archive_test clipboard file archive: streamed upload, throttling, validation,
-                         extraction, cancel (uses a loopback HTTP server); host file lists
+                         extraction, cancel (uses a loopback HTTP server); host file lists,
+                         name length and case folding as on the host
   clipboard_virtual_files_test
                          host files pasted as virtual files: file descriptors, file streams
                          that download while read (resume, seek, refusal, cancel, end of
-                         stream) from a loopback HTTP server; never touches the clipboard
+                         stream) from a loopback HTTP server, superseded owner commands;
+                         never touches the clipboard
   check-qml-members.py   QML uses only members the exposed C++ objects have (a misspelt or
                          removed one fails only when that line runs)
   check-translations.py  Korean translations keep their %1..%9 placeholders

@@ -1502,6 +1502,12 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         return;
     }
     if (owned->kind == ClipboardHostContent::RemoteFilesReady) {
+        if (m_VirtualFiles == nullptr || !m_VirtualFiles->isLatest(owned->listGeneration)) {
+            // Newer host content (or a newer list) came after this list was offered.
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Clipboard files from host superseded before they were offered");
+            return;
+        }
         // The sequence number right after our data object went on the clipboard: not sent back
         m_LocalSeq = owned->localSeq;
         m_LocalSeqValid = true;
@@ -1512,6 +1518,10 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         return;
     }
 #endif
+
+    // Before writing: a host file list still waiting to go on the clipboard must not cover this
+    // newer content.
+    releaseHostFileList();
 
     bool ok = false;
     const char* what = "text";
@@ -1544,7 +1554,6 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         return;
     }
     markLocalHandled();
-    releaseHostFileList();
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Clipboard %s received from host", what);
     if (owned->kind == ClipboardHostContent::Image) {
@@ -1559,7 +1568,7 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
 void ClipboardSync::releaseHostFileList()
 {
 #ifdef Q_OS_WIN32
-    // Newer host content replaced our host file list on the clipboard. A paste that is already
+    // Newer host content replaces our host file list on the clipboard. A paste that is already
     // running keeps its downloads.
     if (m_VirtualFiles != nullptr) {
         m_VirtualFiles->release();

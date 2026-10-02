@@ -178,6 +178,57 @@ int main(int argc, char** argv)
     for (const RemoteFile& e : list.entries) list.totalBytes += e.size;
     CHECK(fitsFileDescriptors(list));
 
+    // ---- Owner thread commands: a publish superseded while the owner was busy (a long Read) is
+    // dropped, so an older file list never covers newer host content
+    {
+        CommandQueue queue;
+        RemoteFileList older = list, newer = list;
+        older.seq = 1;
+        newer.seq = 2;
+        const quint64 first = queue.post(CommandQueue::Publish, older);
+        const quint64 second = queue.post(CommandQueue::Publish, newer);
+        CHECK(first != 0 && second > first);
+        CHECK(!queue.isLatest(first) && queue.isLatest(second));
+        auto batch = queue.take();
+        CHECK(batch.size() == 1 && batch[0].kind == CommandQueue::Publish && batch[0].list.seq == 2);
+        CHECK(queue.take().empty());
+
+        // Publish, then other host content released it: only the release runs
+        const quint64 published = queue.post(CommandQueue::Publish, older);
+        const quint64 released = queue.post(CommandQueue::Release);
+        batch = queue.take();
+        CHECK(batch.size() == 1 && batch[0].kind == CommandQueue::Release && batch[0].generation == released);
+        // Its RemoteFilesReady (had it been sent) would be stale on the main thread
+        CHECK(!queue.isLatest(published) && queue.isLatest(released));
+
+        // Taken in one batch, superseded after: the owner checks again before setting the clipboard
+        const quint64 pending = queue.post(CommandQueue::Publish, newer);
+        batch = queue.take();
+        CHECK(batch.size() == 1 && batch[0].generation == pending && queue.isLatest(pending));
+        queue.post(CommandQueue::Release);
+        CHECK(!queue.isLatest(pending));
+        CHECK(queue.take().size() == 1);
+
+        // Quit never supersedes a publish, and is always run
+        const quint64 last = queue.post(CommandQueue::Publish, newer);
+        CHECK(queue.post(CommandQueue::Quit) == 0);
+        batch = queue.take();
+        CHECK(batch.size() == 2 && batch[0].generation == last && batch[1].kind == CommandQueue::Quit);
+        std::printf("command queue: superseded publishes dropped\n");
+    }
+
+    // ---- Data objects that are still alive are tracked (the end of the stream checks them all)
+    {
+        auto published = std::make_shared<PublishedObjects>();
+        auto* a = new HostFilesDataObject(std::make_shared<Hub>(), list, published);
+        auto* b = new HostFilesDataObject(std::make_shared<Hub>(), list, published);
+        CHECK(published->count() == 2);
+        a->Release();
+        CHECK(published->count() == 1);
+        b->Release();
+        CHECK(published->count() == 0);
+    }
+
     // Download thread with two fetchers: unlimited, and 8 Mbps for the cancel and stop cases
     auto control = std::make_shared<ClipboardTransferControl>();
     QThread fetchThread;
