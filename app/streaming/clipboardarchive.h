@@ -21,6 +21,9 @@ namespace ClipboardArchive {
 constexpr quint64 k_MaxFilesBytes = 256ULL * 1024 * 1024;  // same as the host
 constexpr int k_MaxFileEntries = 1000;
 constexpr qint64 k_MaxArchiveBytes = (qint64)k_MaxFilesBytes + k_MaxFileEntries * 1100LL + 12;
+// Host files that are pasted as virtual files (fetched file by file while pasting, never as one
+// archive) may total more, up to this limit (same as the host).
+constexpr quint64 k_MaxStreamFilesBytes = 4ULL * 1024 * 1024 * 1024;
 
 bool isSafeRelativePath(const QString& path);
 
@@ -135,6 +138,33 @@ private:
     QFile m_File;
     quint64 m_FileRemaining;
 };
+
+// One item of a host file list (GET /actions/clipboard?type=filelist).
+struct RemoteFile
+{
+    bool directory = false;
+    QString path;          // relative, '/' separators
+    quint64 size = 0;      // 0 for directories
+    qint64 modifiedMs = 0; // last write time, Unix milliseconds (0 if unknown)
+};
+
+struct RemoteFileList
+{
+    quint32 seq = 0;       // host clipboard sequence number the list was made at
+    QByteArray snapshot;   // id for GET type=filedata
+    QVector<RemoteFile> entries;
+    quint64 totalBytes = 0;
+
+    // Items without a parent in the list (what the user copied).
+    int topLevelCount() const;
+};
+
+// Parses and fully checks a host file list: header fields, every path (as for archives), sizes,
+// duplicates, that each item's folder is listed before it, and the limits. The format is
+//   seq=<n> | snapshot=<id> | entries=<count> | bytes=<total>   ("key=value" lines, any order)
+//   <f|d> TAB <size> TAB <last write, Unix ms> TAB <path>        (one line per item, in order)
+// Unknown "key=value" lines are ignored so the host can add fields later.
+bool parseFileList(const QByteArray& body, RemoteFileList& list, QString& error);
 
 // Checks a downloaded archive without writing anything: magic, version, entry count, every path,
 // size, duplicate and the overall limits. Fills entries (with data offsets) on success.

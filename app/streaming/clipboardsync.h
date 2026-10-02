@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/nvaddress.h"
+#include "clipboardarchive.h"
 
 #include <QByteArray>
 #include <QList>
@@ -20,8 +21,8 @@ class QIODevice;
 class QThread;
 struct SDL_Window;
 
-namespace ClipboardArchive {
-class ThrottledUploadDevice;
+namespace ClipboardVirtualFiles {
+class VirtualFileClipboard;
 }
 
 // Shared by the main thread (cancel shortcut) and the worker (file and image transfers).
@@ -32,12 +33,16 @@ struct ClipboardTransferControl
     // Why host files were not copied (HostFilesNotice), shown again when the user returns to the
     // stream window: the fetch runs when they switch away, so the first notice is easy to miss.
     std::atomic<int> pendingNotice {0};
+    // Host files being downloaded while File Explorer pastes them (virtual files), and a counter
+    // the cancel shortcut increments to stop those downloads.
+    std::atomic<int> streams {0};
+    std::atomic<int> streamCancel {0};
 };
 
 // Clipboard content fetched from the host, handed to the SDL main thread in an SDL user event.
 struct ClipboardHostContent
 {
-    enum Kind { Text, Image, Files };
+    enum Kind { Text, Image, Files, RemoteFiles, RemoteFilesReady };
 
     int generation = 0;
     Kind kind = Text;
@@ -45,6 +50,9 @@ struct ClipboardHostContent
     QByteArray png;     // Image: PNG bytes
     QByteArray dib;     // Image: CF_DIBV5 block (Windows)
     QStringList files;  // Files: top-level local paths in the staging folder
+    ClipboardArchive::RemoteFileList remoteFiles;  // RemoteFiles: host files to offer as virtual files
+    quint32 localSeq = 0;  // RemoteFilesReady: local clipboard sequence number once they were offered
+    int itemCount = 0;     // RemoteFilesReady: items the user copied on the host
 };
 
 // Runs every host request on its own thread, so the SDL streaming loop is never blocked by the
@@ -91,6 +99,10 @@ private:
     void showTransferProgress(bool upload, qint64 done, qint64 total);
     void showTransferEnd(TransferResult result);
     bool ensureReady();
+    // Host files (Windows): a file list for virtual files when the host can stream files, else
+    // the whole archive.
+    void pullFileList();
+    void pullArchive();
     void handleTextFailure(const char* operation, int qtError);
     void recordHostSequence(const QByteArray& responseBody);
     void deliver(ClipboardHostContent* content);
@@ -115,6 +127,7 @@ private:
 
     Mode m_Mode;
     bool m_HostSeqValid;
+    bool m_HostStreamsFiles;  // "files=stream" in the host's info reply
     quint32 m_HostSeq;
     bool m_HostTextHashValid;
     QByteArray m_HostTextHash;
@@ -131,7 +144,8 @@ private:
 // and whenever the local clipboard changes; files when the stream starts and when the stream
 // window regains focus (not on every copy, since they can be large).
 // Host -> local: when the stream window loses focus, so "copy on the host, switch to a local
-// app, paste" works like RDP.
+// app, paste" works like RDP. Files from a host that can stream them are offered as virtual files
+// and only downloaded while they are pasted (clipboardvirtualfiles.h).
 //
 // Images and files move at most at the configured rate (clipboardRateMbps), so a large
 // transfer does not starve the video stream or the input packets, and can be cancelled with
@@ -167,6 +181,7 @@ public:
 private:
     void markLocalHandled();
     void post(const std::function<void()>& job);
+    void releaseHostFileList();
 
     QThread* m_Thread;
     ClipboardSyncWorker* m_Worker;
@@ -174,6 +189,15 @@ private:
     std::shared_ptr<ClipboardTransferControl> m_Control;
     int m_Generation;
     void* m_WindowHandle;  // HWND on Windows, used as the clipboard owner
+    int m_SdlEventCode;
+
+    // For the downloads of pasted host files (Windows)
+    NvAddress m_Address;
+    uint16_t m_HttpsPort;
+    QSslCertificate m_ServerCert;
+    bool m_UseTrueUid;
+    int m_RateMbps;
+    ClipboardVirtualFiles::VirtualFileClipboard* m_VirtualFiles;
 
     bool m_LocalSeqValid;
     quint32 m_LocalSeq;

@@ -25,9 +25,10 @@ Windows, and also works with other GameStream hosts such as Sunshine and Apollo.
   the picture.
 - **Automatic bitrate.** On Shell hosts, Hermit can lower the bitrate when the network struggles and
   raise it again when it recovers, up to the bitrate you chose.
-- **Clipboard sync.** Copy and paste text between the two PCs; with Shell, images and files (up to
-  256 MB) as well, with a speed limit so transfers do not hurt the stream. You can also drop files onto
-  the stream window to put them on the host's clipboard.
+- **Clipboard sync.** Copy and paste text between the two PCs; with Shell, images and files as well,
+  with a speed limit so transfers do not hurt the stream. Files copied on the host paste at once in File
+  Explorer and download while Explorer copies them (up to 4 GB; 256 MB to the host). You can also drop
+  files onto the stream window to put them on the host's clipboard.
 - **Virtual display that follows the stream.** Shell creates its virtual display at the resolution
   you stream at, resizes it when you reconnect at a new resolution, and hands the desktop back to the
   monitors when one is turned on.

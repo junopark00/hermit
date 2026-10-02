@@ -7,7 +7,11 @@ Builds and runs Hermit's standalone tests (no app build, no stream, no host need
                          performance overlay text, automatic bitrate, display aspect
                          resolution presets, connection profile property names
   clipboard_archive_test clipboard file archive: streamed upload, throttling, validation,
-                         extraction, cancel (uses a loopback HTTP server)
+                         extraction, cancel (uses a loopback HTTP server); host file lists
+  clipboard_virtual_files_test
+                         host files pasted as virtual files: file descriptors, file streams
+                         that download while read (resume, seek, refusal, cancel, end of
+                         stream) from a loopback HTTP server; never touches the clipboard
   check-qml-members.py   QML uses only members the exposed C++ objects have (a misspelt or
                          removed one fails only when that line runs)
   check-translations.py  Korean translations keep their %1..%9 placeholders
@@ -50,7 +54,11 @@ $tests = @(
         "$app\streaming\video\statsoverlay.cpp"); Args = @($repo) },
     @{ Name = 'clipboard_archive_test'; Sources = @(
         "$PSScriptRoot\clipboard_archive_test.cpp",
-        "$app\streaming\clipboardarchive.cpp"); Args = @() }
+        "$app\streaming\clipboardarchive.cpp"); Args = @() },
+    @{ Name = 'clipboard_virtual_files_test'; Sources = @(
+        "$PSScriptRoot\clipboard_virtual_files_test.cpp",
+        "$app\streaming\clipboardarchive.cpp"); Args = @();
+       Libs = @("$repo\libs\windows\lib\x64\SDL2.lib", 'ole32.lib', 'shell32.lib', 'user32.lib') }
 )
 
 # SessionSummary declares a QObject (SessionHistory); run moc on its header for the test build.
@@ -58,7 +66,7 @@ $tests = @(
 if ($LASTEXITCODE -ne 0) { throw 'moc failed' }
 $tests[0].Sources += "$out\moc_sessionsummary.cpp"
 
-$env:PATH = "$QtDir\bin;$env:PATH"
+$env:PATH = "$QtDir\bin;$repo\libs\windows\lib\x64;$env:PATH"
 $failed = @()
 
 # Source checks for mistakes that only show at runtime
@@ -75,8 +83,9 @@ foreach ($t in $tests) {
     $exe = Join-Path $out "$($t.Name).exe"
     Remove-Item -LiteralPath $exe -ErrorAction SilentlyContinue
     $sources = ($t.Sources | ForEach-Object { "`"$_`"" }) -join ' '
+    $libs = (@($t.Libs) | Where-Object { $_ } | ForEach-Object { "`"$_`"" }) -join ' '
     $cmd = "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" x64 >nul 2>nul && cd /d `"$out`" && " +
-           "cl $common $sources /Fe:`"$exe`" /link `"$QtDir\lib\Qt6Core.lib`" `"$QtDir\lib\Qt6Network.lib`""
+           "cl $common $sources /Fe:`"$exe`" /link `"$QtDir\lib\Qt6Core.lib`" `"$QtDir\lib\Qt6Network.lib`" $libs"
     $output = @(cmd /c $cmd 2>&1 | ForEach-Object { "$_" })
     $compile = @($output | Where-Object { $_ -match '\berror\b|warning C(?!4996|4005)' })
     $compile | ForEach-Object { Write-Host "  $_" }

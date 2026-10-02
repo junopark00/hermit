@@ -122,8 +122,12 @@ powershell -ExecutionPolicy Bypass -File hermit\tests\run-tests.ps1
   connection profiles exist.
 - `clipboard_archive_test`: the clipboard file archive: streamed upload (byte-identical to the
   existing format), throttling, validation of received archives (19 kinds of bad paths, sizes and
-  duplicates are rejected), extraction and cancel, and real transfer speed over a loopback HTTP
-  server.
+  duplicates are rejected), extraction and cancel, real transfer speed over a loopback HTTP
+  server, and parsing of host file lists.
+- `clipboard_virtual_files_test`: host files pasted as virtual files: the file descriptors and other
+  formats of the clipboard data object, and file streams that download while they are read from a
+  loopback HTTP server (continuing after a cut, seeking, a refused list, cancel, end of the stream).
+  The data object is called directly; the system clipboard is never used.
 - `check-qml-members.py`: QML uses only members that the exposed C++ objects have (a misspelled or
   removed member fails only when that line runs).
 - `check-translations.py`: Korean translations keep their `%1`…`%9`/`%n` placeholders, and every

@@ -1,5 +1,6 @@
 #include "clipboardsync.h"
 #include "clipboardarchive.h"
+#include "clipboardvirtualfiles.h"
 
 #include "backend/nvcomputer.h"
 #include "backend/nvhttp.h"
@@ -45,16 +46,18 @@ static void showClipboardNotice(const QString& text, int durationMs = 3500)
 }
 
 // Reasons host files were not copied to this computer (ClipboardTransferControl::pendingNotice)
-enum HostFilesNotice { NoNotice = 0, DownloadNotAllowed, OverLimit };
+enum HostFilesNotice { NoNotice = 0, DownloadNotAllowed, OverLimit, OverStreamLimit };
 
 static void showHostFilesNotice(int notice)
 {
     if (notice == DownloadNotAllowed) {
         showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files on the host not copied: the host does not allow file download for this device"), 6000);
     }
-    else if (notice == OverLimit) {
+    else if (notice == OverLimit || notice == OverStreamLimit) {
+        // Files pasted as virtual files (host with file streaming) have the higher limit
+        const quint64 limit = notice == OverStreamLimit ? ClipboardArchive::k_MaxStreamFilesBytes : ClipboardArchive::k_MaxFilesBytes;
         showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files on the host not copied: over %1 MB or %2 items")
-                            .arg(ClipboardArchive::k_MaxFilesBytes / (1024 * 1024)).arg(ClipboardArchive::k_MaxFileEntries), 6000);
+                            .arg(limit / (1024 * 1024)).arg(ClipboardArchive::k_MaxFileEntries), 6000);
     }
 }
 
@@ -83,6 +86,8 @@ namespace {
 
 constexpr int k_InfoTimeoutMs = 5000;
 constexpr int k_TextTimeoutMs = 5000;
+// The host walks the copied folders for a file list (at most 1,000 items, no file data).
+constexpr int k_FileListTimeoutMs = 30000;
 // Images and files have no fixed deadline (a 256 MB transfer at 10 Mbps takes minutes); they
 // fail when no data moves for this long, which also covers the host packing or unpacking.
 constexpr qint64 k_TransferInactivityTimeoutMs = 60000;
@@ -428,6 +433,7 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_ProgressShown(false),
       m_Mode(Mode::Unknown),
       m_HostSeqValid(false),
+      m_HostStreamsFiles(false),
       m_HostSeq(0),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false)
@@ -784,8 +790,11 @@ void ClipboardSyncWorker::init()
         m_Mode = Mode::Extended;
         m_HostSeq = seq;
         m_HostSeqValid = true;
+        QByteArray files;
+        m_HostStreamsFiles = parseField(body, "files", files) && files == "stream";
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Clipboard sync: host supports text, images and files");
+                    "Clipboard sync: host supports text, images and files%s",
+                    m_HostStreamsFiles ? " (files pasted as they download)" : "");
         return;
     }
     if (error == QNetworkReply::NoError || error == QNetworkReply::ProtocolInvalidOperationError) {
@@ -1025,6 +1034,8 @@ void ClipboardSyncWorker::pull()
                     "Unexpected clipboard info from host");
         return;
     }
+    QByteArray files;
+    m_HostStreamsFiles = parseField(body, "files", files) && files == "stream";
     if (m_HostSeqValid && seq == m_HostSeq) {
         return;  // unchanged since we last pushed or pulled
     }
@@ -1092,87 +1103,162 @@ void ClipboardSyncWorker::pull()
         deliver(content);
     }
     else if (type == "files") {
-        const QString stagingRoot = clipboardStagingRoot();
-        if (!QDir().mkpath(stagingRoot)) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "Host files not copied: cannot create the staging folder");
-            return;
+        if (m_HostStreamsFiles) {
+            pullFileList();
         }
-        // Left over if Hermit was closed during a download (removal fails harmlessly while in use).
-        QDir staging(stagingRoot);
-        const QStringList stale = staging.entryList({QStringLiteral("download-*.apcf")}, QDir::Files);
-        for (const QString& name : stale) {
-            QFile::remove(staging.filePath(name));
+        else {
+            pullArchive();
         }
-        // The archive goes to a temporary file (removed when this scope ends), not to memory.
-        QTemporaryFile archiveFile(stagingRoot + QStringLiteral("/download-XXXXXX.apcf"));
-        if (!archiveFile.open()) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "Host files not copied: cannot create a temporary file");
-            return;
-        }
-        ActiveTransfer active(*m_Control);
-        const TransferResult result = transfer(QStringLiteral("files"), nullptr, &archiveFile, k_MaxArchiveBytes, nullptr, error);
-        if (result == TransferResult::Cancelled) {
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                        "Fetching files from the host was cancelled");
-        }
-        if (result == TransferResult::Failed) {
-            if (error == QNetworkReply::AuthenticationRequiredError) {
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "Host files not copied: file download permission is not granted to this device");
-                m_Control->pendingNotice.store(DownloadNotAllowed);
-                showHostFilesNotice(DownloadNotAllowed);
-            }
-            else if (error == QNetworkReply::UnknownContentError) {
-                // 413 from the host
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "Host files not copied: over the %d MB / %d item limit",
-                            (int)(k_MaxFilesBytes / (1024 * 1024)), k_MaxFileEntries);
-                m_Control->pendingNotice.store(OverLimit);
-                showHostFilesNotice(OverLimit);
-            }
-            else {
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "Fetching files from host failed: %s", qPrintable(m_LastError));
-            }
-        }
-        if (result != TransferResult::Done) {
-            showTransferEnd(result);
-            return;
-        }
-        if (!archiveFile.flush() || archiveFile.size() == 0) {
-            return;
-        }
-        // Every path, size and duplicate is checked before the first file is written.
-        QVector<ClipboardArchive::Entry> entries;
-        QString archiveError;
-        if (!ClipboardArchive::validateArchive(archiveFile, entries, archiveError)) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "Host files rejected: %s", qPrintable(archiveError));
-            return;
-        }
-        QStringList topLevel;
-        auto cancelled = [this]() { return stopped() || m_Control->cancel.load(); };
-        if (!ClipboardArchive::extractArchive(archiveFile, entries, stagingRoot, topLevel, archiveError, cancelled)) {
-            if (cancelled()) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "Fetching files from the host was cancelled");
-                showTransferEnd(TransferResult::Cancelled);
-            }
-            else {
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "Host files could not be saved: %s", qPrintable(archiveError));
-            }
-            return;
-        }
-        auto* content = new ClipboardHostContent;
-        content->kind = ClipboardHostContent::Files;
-        content->files = topLevel;
-        deliver(content);
     }
 #endif
 }
+
+#ifdef Q_OS_WIN32
+
+void ClipboardSyncWorker::pullFileList()
+{
+    // Only the list now (names, sizes, times). File Explorer shows its own progress when the user
+    // pastes, and each file is downloaded while it is pasted.
+    QByteArray body;
+    int error = QNetworkReply::NoError;
+    if (!request(QStringLiteral("filelist"), nullptr, k_FileListTimeoutMs, body, error)) {
+        if (error == QNetworkReply::AuthenticationRequiredError) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files not copied: file download permission is not granted to this device");
+            m_Control->pendingNotice.store(DownloadNotAllowed);
+            showHostFilesNotice(DownloadNotAllowed);
+        }
+        else if (error == QNetworkReply::UnknownContentError) {
+            // 413 from the host
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files not copied: over the %d MB / %d item limit",
+                        (int)(ClipboardArchive::k_MaxStreamFilesBytes / (1024 * 1024)), k_MaxFileEntries);
+            m_Control->pendingNotice.store(OverStreamLimit);
+            showHostFilesNotice(OverStreamLimit);
+        }
+        else if (error == QNetworkReply::ContentAccessDenied) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files not copied: host reports no active stream");
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Fetching the host file list failed: %s", qPrintable(m_LastError));
+        }
+        return;
+    }
+    if (body.isEmpty()) {
+        return;  // the host clipboard no longer holds files
+    }
+    auto* content = new ClipboardHostContent;
+    content->kind = ClipboardHostContent::RemoteFiles;
+    QString listError;
+    if (!ClipboardArchive::parseFileList(body, content->remoteFiles, listError)) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host file list rejected: %s", qPrintable(listError));
+        delete content;
+        return;
+    }
+    if (!ClipboardVirtualFiles::fitsFileDescriptors(content->remoteFiles)) {
+        // Explorer's file descriptors hold at most 259 characters per path; such deep folders come
+        // over as one archive instead (within its smaller limit).
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host files have paths over 259 characters; copying them as an archive");
+        delete content;
+        pullArchive();
+        return;
+    }
+    m_HostSeq = content->remoteFiles.seq;
+    m_HostSeqValid = true;
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Host file list received (%d items, %llu KB); files download when pasted",
+                (int)content->remoteFiles.entries.size(), (unsigned long long)(content->remoteFiles.totalBytes / 1024));
+    deliver(content);
+}
+
+void ClipboardSyncWorker::pullArchive()
+{
+    int error = QNetworkReply::NoError;
+    const QString stagingRoot = clipboardStagingRoot();
+    if (!QDir().mkpath(stagingRoot)) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host files not copied: cannot create the staging folder");
+        return;
+    }
+    // Left over if Hermit was closed during a download (removal fails harmlessly while in use).
+    QDir staging(stagingRoot);
+    const QStringList stale = staging.entryList({QStringLiteral("download-*.apcf")}, QDir::Files);
+    for (const QString& name : stale) {
+        QFile::remove(staging.filePath(name));
+    }
+    // The archive goes to a temporary file (removed when this scope ends), not to memory.
+    QTemporaryFile archiveFile(stagingRoot + QStringLiteral("/download-XXXXXX.apcf"));
+    if (!archiveFile.open()) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host files not copied: cannot create a temporary file");
+        return;
+    }
+    ActiveTransfer active(*m_Control);
+    const TransferResult result = transfer(QStringLiteral("files"), nullptr, &archiveFile, k_MaxArchiveBytes, nullptr, error);
+    if (result == TransferResult::Cancelled) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Fetching files from the host was cancelled");
+    }
+    if (result == TransferResult::Failed) {
+        if (error == QNetworkReply::AuthenticationRequiredError) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files not copied: file download permission is not granted to this device");
+            m_Control->pendingNotice.store(DownloadNotAllowed);
+            showHostFilesNotice(DownloadNotAllowed);
+        }
+        else if (error == QNetworkReply::UnknownContentError) {
+            // 413 from the host
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files not copied: over the %d MB / %d item limit",
+                        (int)(k_MaxFilesBytes / (1024 * 1024)), k_MaxFileEntries);
+            m_Control->pendingNotice.store(OverLimit);
+            showHostFilesNotice(OverLimit);
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Fetching files from host failed: %s", qPrintable(m_LastError));
+        }
+    }
+    if (result != TransferResult::Done) {
+        showTransferEnd(result);
+        return;
+    }
+    if (!archiveFile.flush() || archiveFile.size() == 0) {
+        return;
+    }
+    // Every path, size and duplicate is checked before the first file is written.
+    QVector<ClipboardArchive::Entry> entries;
+    QString archiveError;
+    if (!ClipboardArchive::validateArchive(archiveFile, entries, archiveError)) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host files rejected: %s", qPrintable(archiveError));
+        return;
+    }
+    QStringList topLevel;
+    auto cancelled = [this]() { return stopped() || m_Control->cancel.load(); };
+    if (!ClipboardArchive::extractArchive(archiveFile, entries, stagingRoot, topLevel, archiveError, cancelled)) {
+        if (cancelled()) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Fetching files from the host was cancelled");
+            showTransferEnd(TransferResult::Cancelled);
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files could not be saved: %s", qPrintable(archiveError));
+        }
+        return;
+    }
+    auto* content = new ClipboardHostContent;
+    content->kind = ClipboardHostContent::Files;
+    content->files = topLevel;
+    deliver(content);
+}
+
+#endif // Q_OS_WIN32
 
 // ---- Main-thread side ---------------------------------------------------------------------
 
@@ -1183,6 +1269,11 @@ ClipboardSync::ClipboardSync(NvComputer* computer, int sdlEventCode, SDL_Window*
       m_Control(std::make_shared<ClipboardTransferControl>()),
       m_Generation(s_NextGeneration.fetch_add(1)),
       m_WindowHandle(nullptr),
+      m_SdlEventCode(sdlEventCode),
+      m_HttpsPort(0),
+      m_UseTrueUid(true),
+      m_RateMbps(StreamingPreferences::get()->clipboardRateMbps),
+      m_VirtualFiles(nullptr),
       m_LocalSeqValid(false),
       m_LocalSeq(0)
 {
@@ -1211,10 +1302,13 @@ ClipboardSync::ClipboardSync(NvComputer* computer, int sdlEventCode, SDL_Window*
         useTrueUid = !computer->isNvidiaServerSoftware;
     }
 
+    m_Address = address;
+    m_HttpsPort = httpsPort;
+    m_ServerCert = serverCert;
+    m_UseTrueUid = useTrueUid;
     m_Worker = new ClipboardSyncWorker(address, httpsPort, serverCert, useTrueUid,
                                        sdlEventCode, m_Generation, localChangeTracking,
-                                       StreamingPreferences::get()->clipboardRateMbps,
-                                       m_Stopped, m_Control);
+                                       m_RateMbps, m_Stopped, m_Control);
     m_Worker->moveToThread(m_Thread);
     // Both delete themselves once the thread stops, so a long transfer never blocks shutdown.
     QObject::connect(m_Thread, &QThread::finished, m_Worker, &QObject::deleteLater);
@@ -1229,6 +1323,12 @@ ClipboardSync::~ClipboardSync()
     if (s_ActiveSync == this) {
         s_ActiveSync = nullptr;
     }
+#ifdef Q_OS_WIN32
+    // Host files still on the clipboard can no longer be downloaded: removes them from the
+    // clipboard and fails pastes in progress.
+    delete m_VirtualFiles;
+    m_VirtualFiles = nullptr;
+#endif
     // The worker stops starting new work and aborts an image or file transfer; a text request
     // already in flight finishes or times out on its own, and the thread and worker are then
     // deleted.
@@ -1268,7 +1368,8 @@ void ClipboardSync::pushDroppedFiles(const QStringList& paths)
 bool ClipboardSync::cancelActiveTransfer()
 {
     // Called from the keyboard shortcut on the main thread, like every other ClipboardSync call.
-    if (s_ActiveSync == nullptr || !s_ActiveSync->m_Control->active.load()) {
+    if (s_ActiveSync == nullptr ||
+        (!s_ActiveSync->m_Control->active.load() && s_ActiveSync->m_Control->streams.load() == 0)) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "No clipboard file transfer to cancel");
         return false;
@@ -1276,6 +1377,8 @@ bool ClipboardSync::cancelActiveTransfer()
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Cancelling the clipboard file transfer");
     s_ActiveSync->m_Control->cancel.store(true);
+    // Also stops host files being pasted; File Explorer then reports the copy as cancelled.
+    s_ActiveSync->m_Control->streamCancel.fetch_add(1);
     return true;
 }
 
@@ -1302,6 +1405,11 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
     // Each clipboard write bumps the sequence number, so this skips content we already sent
     // and content we just wrote ourselves from the host.
     if (m_LocalSeqValid && GetClipboardSequenceNumber() == m_LocalSeq) {
+        return;
+    }
+    if (IsClipboardFormatAvailable(ClipboardVirtualFiles::markerFormat())) {
+        // Our own list of host files (virtual files): never sent back.
+        markLocalHandled();
         return;
     }
     HWND owner = static_cast<HWND>(m_WindowHandle);
@@ -1378,6 +1486,33 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         return;  // left over from an earlier stream
     }
 
+#ifdef Q_OS_WIN32
+    if (owned->kind == ClipboardHostContent::RemoteFiles) {
+        if (m_VirtualFiles == nullptr) {
+            ClipboardVirtualFiles::Connection connection;
+            connection.address = m_Address;
+            connection.httpsPort = m_HttpsPort;
+            connection.serverCert = m_ServerCert;
+            connection.useTrueUid = m_UseTrueUid;
+            connection.rateBytesPerSecond = m_RateMbps > 0 ? (qint64)m_RateMbps * 1000000 / 8 : 0;
+            m_VirtualFiles = new ClipboardVirtualFiles::VirtualFileClipboard(connection, m_Control, m_SdlEventCode, m_Generation);
+        }
+        // Set on the clipboard by the owner thread, which then sends RemoteFilesReady.
+        m_VirtualFiles->publish(owned->remoteFiles);
+        return;
+    }
+    if (owned->kind == ClipboardHostContent::RemoteFilesReady) {
+        // The sequence number right after our data object went on the clipboard: not sent back
+        m_LocalSeq = owned->localSeq;
+        m_LocalSeqValid = true;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Clipboard files from host ready to paste (%d items)", owned->itemCount);
+        showClipboardNotice(QCoreApplication::translate("ClipboardSync", "%n item(s) from the host are ready to paste", nullptr,
+                                                        owned->itemCount));
+        return;
+    }
+#endif
+
     bool ok = false;
     const char* what = "text";
     switch (owned->kind) {
@@ -1398,10 +1533,9 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
                                  {{CF_HDROP, makeDropFiles(owned->files)}, {dropEffectFormat(), effectBytes}});
         break;
     }
-#else
+#endif
     default:
         break;
-#endif
     }
 
     if (!ok) {
@@ -1410,6 +1544,7 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         return;
     }
     markLocalHandled();
+    releaseHostFileList();
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Clipboard %s received from host", what);
     if (owned->kind == ClipboardHostContent::Image) {
@@ -1419,6 +1554,17 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         showClipboardNotice(QCoreApplication::translate("ClipboardSync", "%n item(s) from the host are ready to paste", nullptr,
                                                         (int)owned->files.size()));
     }
+}
+
+void ClipboardSync::releaseHostFileList()
+{
+#ifdef Q_OS_WIN32
+    // Newer host content replaced our host file list on the clipboard. A paste that is already
+    // running keeps its downloads.
+    if (m_VirtualFiles != nullptr) {
+        m_VirtualFiles->release();
+    }
+#endif
 }
 
 void ClipboardSync::discardHostContent(void* content)

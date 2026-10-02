@@ -373,6 +373,65 @@ int main(int argc, char** argv)
         }
     }
 
+    // ---- Host file list (type=filelist) ----
+    {
+        const QByteArray good =
+            "seq=42\nsnapshot=0123456789abcdef\nentries=5\nbytes=5000000006\n"
+            "f\t300000\t1790922480699\ta.bin\n"
+            "d\t0\t1790922480700\tFolder\n"
+            "f\t4999700005\t0\tFolder/b.txt\n"
+            "d\t0\t1790922480700\tFolder/Sub\n"
+            "f\t1\t1790922480701\t\xED\x95\x9C\xEA\xB8\x80.txt\n";
+        RemoteFileList list;
+        QString err;
+        // 5 GB is over the 4 GB limit
+        CHECK(!parseFileList(good, list, err) && err == "files too large");
+        QByteArray small = good;
+        small.replace("bytes=5000000006", "bytes=300002").replace("4999700005", "1");
+        err.clear();
+        CHECK(parseFileList(small, list, err));
+        std::printf("file list: %s, %d entries, %llu bytes, %d top-level\n", qPrintable(err), (int)list.entries.size(),
+                    (unsigned long long)list.totalBytes, list.topLevelCount());
+        CHECK(list.seq == 42 && list.snapshot == "0123456789abcdef" && list.entries.size() == 5);
+        CHECK(list.totalBytes == 300002 && list.topLevelCount() == 3);
+        CHECK(list.entries[1].directory && list.entries[1].path == "Folder" && list.entries[2].path == "Folder/b.txt");
+        CHECK(list.entries[0].modifiedMs == 1790922480699LL && list.entries[4].path == QString::fromUtf8("\xED\x95\x9C\xEA\xB8\x80.txt"));
+        // CRLF line ends and unknown fields are accepted
+        QByteArray crlf = small;
+        crlf.replace("\n", "\r\n").prepend("future=1\r\n");
+        CHECK(parseFileList(crlf, list, err) && list.entries.size() == 5);
+
+        auto rejects = [&](const QByteArray& from, const QByteArray& to, const char* why) {
+            QByteArray bad = small;
+            bad.replace(from, to);
+            RemoteFileList l;
+            QString e;
+            const bool ok = parseFileList(bad, l, e);
+            if (ok) {
+                std::printf("file list accepted although %s\n", why);
+            }
+            CHECK(!ok);
+        };
+        rejects("entries=5", "entries=6", "the count is wrong");
+        rejects("bytes=300002", "bytes=300003", "the total is wrong");
+        rejects("snapshot=0123456789abcdef", "snapshot=01&x=2", "the snapshot id is unsafe");
+        rejects("snapshot=0123456789abcdef\n", "", "the snapshot is missing");
+        rejects("\tFolder/Sub\n", "\tFolder/../Sub\n", "a path has ..");
+        rejects("\tFolder/Sub\n", "\tC:/Sub\n", "a path has a drive");
+        rejects("\tFolder/Sub\n", "\tfolder/b.TXT\n", "a path is duplicated");
+        rejects("d\t0\t1790922480700\tFolder\n", "f\t0\t1790922480700\tFolder\n", "a file is used as a folder");
+        rejects("d\t0\t1790922480700\tFolder/Sub\n", "d\t0\t1790922480700\tOther/Sub\n", "the parent folder is missing");
+        rejects("d\t0\t1790922480700\tFolder\n", "d\t7\t1790922480700\tFolder\n", "a folder has a size");
+        rejects("f\t1\t1790922480701", "f\tx\t1790922480701", "a size is not a number");
+        rejects("\t1790922480701\t", "\t1790922480701\tx\t", "an entry has five fields");
+        CHECK(!parseFileList(QByteArray(), list, err));
+        QByteArray many = "seq=1\nsnapshot=ab\nentries=1001\nbytes=0\n";
+        for (int i = 0; i < 1001; i++) {
+            many += "f\t0\t0\tfile" + QByteArray::number(i) + "\n";
+        }
+        CHECK(!parseFileList(many, list, err) && err == "too many files");
+    }
+
     std::printf(g_Failures ? "\n%d FAILURE(S)\n" : "\nALL PASSED\n", g_Failures);
     return g_Failures ? 1 : 0;
 }

@@ -58,7 +58,7 @@ Hermit uses its own names and locations, so it can be installed next to Moonligh
 | Settings, paired hosts, client identity | Registry: `HKCU\Software\Hermit\Hermit` |
 | Session history | `%APPDATA%\Hermit\Hermit\session-history.csv` |
 | Log of the current run | `%TEMP%\Hermit-<number>.log` |
-| Clipboard files received from a host | `%TEMP%\HermitClipboard` (the last 5 transfers are kept) |
+| Clipboard files received from a host as an archive | `%TEMP%\HermitClipboard` (the last 5 transfers are kept) |
 | Box art and other caches | `%LOCALAPPDATA%\Hermit\Hermit\cache` |
 | Unpacked single-file exe | `%LOCALAPPDATA%\Hermit\app\<hash>` |
 
@@ -176,16 +176,34 @@ to sync the clipboard in both directions.
 |---|---|---|---|---|
 | Text | Shell, and hosts with the text clipboard extension | At stream start, when you return to the stream window, and immediately on copy | When you leave the stream window | 1 MB |
 | Images | Shell | At stream start, when you return to the stream window, and immediately on copy | When you leave the stream window | PNG, 32 MB, 8192×8192 |
-| Files and folders | Shell | At stream start and when you return to the stream window | When you leave the stream window | 256 MB, 1,000 items |
+| Files and folders | Shell | At stream start and when you return to the stream window | When you leave the stream window (the list; each file downloads while you paste it) | To the host 256 MB, from the host 4 GB; 1,000 items |
 
 - When a clipboard holds both text and an image (for example, copied spreadsheet cells), the text is
   sent. The priority is text, then image, then files.
 - Files can be large, so they are not sent on every copy, only at stream start and when you return to
   the stream window. The host pastes the copy sent at that moment: after editing a file, copy it again
   and click the stream window once to send the new content.
-- Received files are unpacked to a temporary folder (`%TEMP%\HermitClipboard` on the client; Shell
-  uses `%LOCALAPPDATA%\Temp\ShellClipboard` of the user) and placed on the clipboard as "copied", so
-  they can be pasted in File Explorer. The last 5 transfers are kept; older ones are deleted.
+- **Pasting files copied on the host**: when you leave the stream window, Hermit fetches only the
+  list of copied files and folders (names, sizes, times) and puts it on the clipboard at once, like
+  Remote Desktop. When you paste in File Explorer, Explorer shows its own copy progress and each file
+  is downloaded from the host while Explorer copies it, so pasting starts right away and nothing is
+  downloaded unless you paste.
+  - The speed limit applies. Explorer's Cancel stops the download; Ctrl+Alt+Shift+T in the stream
+    window does too, and Explorer then reports the file as cancelled.
+  - Up to 4 GB and 1,000 items. Files can be pasted as often as you like while the stream runs; each
+    paste downloads them again. When the stream ends (or clipboard sync is turned off), Hermit removes
+    them from the clipboard, and a paste still in progress fails.
+  - A file that was changed or deleted on the host after you copied it fails to paste (File Explorer
+    shows an error); copy it again on the host.
+  - A download that stops (network loss, or the host's 5-minute limit per request) continues from
+    where it stopped; it fails after 60 seconds without data.
+  - This needs a current Shell host. With older Shell versions, and for folders with paths over 259
+    characters, the files come over as one archive when you leave the stream window (256 MB limit) and
+    are pasted from a temporary folder, as described next.
+- Files received as an archive are unpacked to a temporary folder (`%TEMP%\HermitClipboard` on the
+  client; Shell uses `%LOCALAPPDATA%\Temp\ShellClipboard` of the user) and placed on the clipboard as
+  "copied", so they can be pasted in File Explorer. The last 5 transfers are kept; older ones are
+  deleted.
 - A received file list is written only after the paths, duplicates and sizes have all been checked.
   Symbolic links and junctions are not followed.
 - Both sides track the clipboard sequence number, so unchanged content is not sent again and a side
@@ -204,7 +222,8 @@ to sync the clipboard in both directions.
     direction for 60 seconds fails.
   - The host protocol is unchanged: one HTTP request carries the same archive format.
 - Transfers that take longer than a second show their progress under the stream every 0.5 seconds,
-  for example "Sending to the host: 45% (12.0 / 26.0 MB)".
+  for example "Sending to the host: 45% (12.0 / 26.0 MB)". Pasting files copied on the host shows File
+  Explorer's progress instead.
 - **Ctrl+Alt+Shift+T** cancels a transfer in progress and deletes partly received data. A cancelled
   transfer is not retried automatically; copy again if you still need it.
 - Other clipboard changes during an image or file transfer (text, for example) are handled in order

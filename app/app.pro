@@ -231,6 +231,7 @@ HEADERS += \
     streaming/input/input.h \
     streaming/clipboardarchive.h \
     streaming/clipboardsync.h \
+    streaming/clipboardvirtualfiles.h \
     streaming/session.h \
     streaming/sessionsummary.h \
     streaming/streampanel.h \

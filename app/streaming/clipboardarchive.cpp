@@ -630,4 +630,130 @@ bool extractArchive(QIODevice& archive, const QVector<Entry>& entries, const QSt
     return true;
 }
 
+int RemoteFileList::topLevelCount() const
+{
+    int count = 0;
+    for (const RemoteFile& entry : entries) {
+        if (!entry.path.contains(QLatin1Char('/'))) {
+            count++;
+        }
+    }
+    return count;
+}
+
+bool parseFileList(const QByteArray& body, RemoteFileList& list, QString& error)
+{
+    list = RemoteFileList();
+    bool haveSeq = false, haveSnapshot = false, haveCount = false, haveBytes = false;
+    quint64 declaredCount = 0, declaredBytes = 0;
+    QSet<QString> seen;
+    QSet<QString> directories;
+
+    const QList<QByteArray> lines = body.split('\n');
+    for (QByteArray line : lines) {
+        if (line.endsWith('\r')) {
+            line.chop(1);
+        }
+        if (line.isEmpty()) {
+            continue;
+        }
+        if (line.size() >= 2 && (line[0] == 'f' || line[0] == 'd') && line[1] == '\t') {
+            // kind, size, time, path; the path is the rest of the line
+            const QList<QByteArray> fields = line.split('\t');
+            if (fields.size() != 4) {
+                error = QStringLiteral("malformed entry");
+                return false;
+            }
+            RemoteFile entry;
+            bool sizeOk = false, timeOk = false;
+            entry.directory = line[0] == 'd';
+            entry.size = fields[1].toULongLong(&sizeOk);
+            entry.modifiedMs = fields[2].toLongLong(&timeOk);
+            entry.path = QString::fromUtf8(fields[3]);
+            if (!sizeOk || !timeOk || entry.modifiedMs < 0 || (entry.directory && entry.size != 0)) {
+                error = QStringLiteral("malformed entry");
+                return false;
+            }
+            if (entry.path.toUtf8() != fields[3] || !isSafeRelativePath(entry.path)) {
+                error = QStringLiteral("unsafe path");
+                return false;
+            }
+            if (list.entries.size() >= k_MaxFileEntries) {
+                error = QStringLiteral("too many files");
+                return false;
+            }
+            if (entry.size > k_MaxStreamFilesBytes || list.totalBytes + entry.size > k_MaxStreamFilesBytes) {
+                error = QStringLiteral("files too large");
+                return false;
+            }
+            const QString key = entry.path.toLower();
+            if (seen.contains(key)) {
+                error = QStringLiteral("duplicate path");
+                return false;
+            }
+            // Paste creates folders in list order, so each folder must come before its contents.
+            const int slash = key.lastIndexOf(QLatin1Char('/'));
+            if (slash >= 0 && !directories.contains(key.left(slash))) {
+                error = QStringLiteral("item listed before its folder");
+                return false;
+            }
+            seen.insert(key);
+            if (entry.directory) {
+                directories.insert(key);
+            }
+            list.totalBytes += entry.size;
+            list.entries.append(entry);
+            continue;
+        }
+
+        const int eq = line.indexOf('=');
+        if (eq <= 0) {
+            error = QStringLiteral("malformed line");
+            return false;
+        }
+        const QByteArray key = line.left(eq);
+        const QByteArray value = line.mid(eq + 1);
+        bool ok = true;
+        if (key == "seq") {
+            list.seq = value.toUInt(&ok);
+            haveSeq = ok;
+        }
+        else if (key == "snapshot") {
+            // Goes into request URLs: short and alphanumeric only.
+            ok = !value.isEmpty() && value.size() <= 64;
+            for (char c : value) {
+                ok = ok && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'));
+            }
+            list.snapshot = value;
+            haveSnapshot = ok;
+        }
+        else if (key == "entries") {
+            declaredCount = value.toULongLong(&ok);
+            haveCount = ok;
+        }
+        else if (key == "bytes") {
+            declaredBytes = value.toULongLong(&ok);
+            haveBytes = ok;
+        }
+        if (!ok) {
+            error = QStringLiteral("malformed field ") + QString::fromLatin1(key);
+            return false;
+        }
+    }
+
+    if (!haveSeq || !haveSnapshot || !haveCount || !haveBytes) {
+        error = QStringLiteral("missing field");
+        return false;
+    }
+    if (list.entries.isEmpty()) {
+        error = QStringLiteral("empty list");
+        return false;
+    }
+    if (declaredCount != (quint64)list.entries.size() || declaredBytes != list.totalBytes) {
+        error = QStringLiteral("incomplete list");
+        return false;
+    }
+    return true;
+}
+
 }  // namespace ClipboardArchive
