@@ -158,7 +158,8 @@ int SystemProperties::getRefreshRate(int displayIndex)
     return monitorRefreshRates.value(displayIndex);
 }
 
-QVariantList SystemProperties::getDisplayAspectResolutions(int screenWidth, int screenHeight, bool include2160)
+QVariantList SystemProperties::getDisplayAspectResolutions(int screenWidth, int screenHeight, bool include2160,
+                                                           const QStringList& existing)
 {
     QList<QSize> natives;
     for (const QRect& rect : std::as_const(monitorNativeResolutions)) {
@@ -167,7 +168,9 @@ QVariantList SystemProperties::getDisplayAspectResolutions(int screenWidth, int 
 
     const QSize display = ResolutionPresets::matchDisplay(natives, QSize(screenWidth, screenHeight));
     QVariantList result;
-    for (const QSize& size : ResolutionPresets::forDisplay(display, include2160)) {
+    const QList<QSize> sizes = ResolutionPresets::withoutNearDuplicates(ResolutionPresets::forDisplay(display, include2160),
+                                                                        ResolutionPresets::parseSizes(existing));
+    for (const QSize& size : sizes) {
         result.append(size);
     }
     return result;

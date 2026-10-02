@@ -220,16 +220,19 @@ Flickable {
                             // Hermit: presets with the aspect ratio of the display this window is on
                             // (the primary display if unknown), for 21:9, 16:10, 3:2 and other
                             // displays. 2160 lines only if 4K is offered; sizes already in the list
-                            // and sizes over the decoder's maximum are left out.
+                            // (or within 1% of one) and sizes over the decoder's maximum are left out.
                             var offers4K = false
+                            var existingSizes = []
                             for (var k = 0; k < resolutionListModel.count; k++) {
-                                if (resolutionListModel.get(k).video_width === "3840" && resolutionListModel.get(k).video_height === "2160") {
+                                var entry = resolutionListModel.get(k)
+                                existingSizes.push(entry.video_width + "x" + entry.video_height)
+                                if (entry.video_width === "3840" && entry.video_height === "2160") {
                                     offers4K = true
                                 }
                             }
                             var aspectSizes = SystemProperties.getDisplayAspectResolutions(Math.round(Screen.width * Screen.devicePixelRatio),
                                                                                            Math.round(Screen.height * Screen.devicePixelRatio),
-                                                                                           offers4K)
+                                                                                           offers4K, existingSizes)
                             for (var a = 0; a < aspectSizes.length; a++) {
                                 var size = aspectSizes[a]
                                 if (max_pixels <= 0 || size.width * size.height <= max_pixels) {

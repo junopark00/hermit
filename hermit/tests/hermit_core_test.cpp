@@ -273,12 +273,13 @@ static void testResolutionPresets()
     // 16:9: the standard presets themselves (the UI leaves out sizes it already has)
     CHECK_EQ(sizesText(forDisplay(QSize(1920, 1080), true)), QString("1280x720 1920x1080 2560x1440 3840x2160"));
     CHECK_EQ(sizesText(forDisplay(QSize(1366, 768), true)), QString("1280x720 1920x1080 2560x1440 3840x2160"));
-    // 21:9 ultrawides, widths rounded to a multiple of 8
-    CHECK_EQ(sizesText(forDisplay(QSize(3440, 1440), true)), QString("1720x720 2584x1080 3440x1440 5160x2160"));
+    // 21:9 ultrawides: exact even widths as they are, others rounded to a multiple of 8
+    CHECK_EQ(sizesText(forDisplay(QSize(3440, 1440), true)), QString("1720x720 2580x1080 3440x1440 5160x2160"));
     CHECK_EQ(sizesText(forDisplay(QSize(2560, 1080), true)), QString("1704x720 2560x1080 3416x1440 5120x2160"));
+    CHECK_EQ(sizesText(forDisplay(QSize(2340, 1080), true)), QString("1560x720 2340x1080 3120x1440 4680x2160"));
     // 16:10 and 3:2
     CHECK_EQ(sizesText(forDisplay(QSize(1920, 1200), true)), QString("1152x720 1728x1080 2304x1440 3456x2160"));
-    CHECK_EQ(sizesText(forDisplay(QSize(2256, 1504), true)), QString("1080x720 1624x1080 2160x1440 3240x2160"));
+    CHECK_EQ(sizesText(forDisplay(QSize(2256, 1504), true)), QString("1080x720 1620x1080 2160x1440 3240x2160"));
     // 2160 lines only when 4K is offered; nothing wider than 7680
     CHECK_EQ(sizesText(forDisplay(QSize(1920, 1200), false)), QString("1152x720 1728x1080 2304x1440"));
     CHECK_EQ(sizesText(forDisplay(QSize(5120, 1440), true)), QString("2560x720 3840x1080 5120x1440 7680x2160"));
@@ -286,6 +287,19 @@ static void testResolutionPresets()
     // Portrait: the standard values are the width
     CHECK_EQ(sizesText(forDisplay(QSize(1200, 1920), true)), QString("720x1152 1080x1728 1440x2304 2160x3456"));
     CHECK(forDisplay(QSize(), true).isEmpty());
+
+    // Sizes in the list already, or within 1% of an entry of the same height, are not offered
+    using ResolutionPresets::parseSizes;
+    using ResolutionPresets::withoutNearDuplicates;
+    const QList<QSize> standard = parseSizes({"1280x720", "1920x1080", "2560x1440", "3840x2160", "Custom", "x", ""});
+    CHECK_EQ(standard.size(), 4);
+    CHECK_EQ(sizesText(forDisplay(QSize(1360, 768), true)), QString("1272x720 1912x1080 2550x1440 3824x2160"));
+    CHECK(withoutNearDuplicates(forDisplay(QSize(1360, 768), true), standard).isEmpty());
+    CHECK(withoutNearDuplicates(forDisplay(QSize(1920, 1080), true), standard).isEmpty());
+    CHECK_EQ(sizesText(withoutNearDuplicates(forDisplay(QSize(3440, 1440), true), standard + parseSizes({"3440x1440"}))),
+             QString("1720x720 2580x1080 5160x2160"));
+    CHECK_EQ(sizesText(withoutNearDuplicates(forDisplay(QSize(2560, 1600), true), standard)),
+             QString("1152x720 1728x1080 2304x1440 3456x2160"));
 
     // The display: the native resolution near the screen size, else the screen size, else the
     // first (primary) display

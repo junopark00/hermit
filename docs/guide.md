@@ -365,20 +365,23 @@ The standard resolution presets (720p, 1080p, 1440p, 4K) are 16:9. On a display 
 such as a 21:9 ultrawide, a 16:10 laptop or a 3:2 tablet, Hermit also offers presets with the aspect
 ratio of that display, labeled "(display aspect)", in Settings and in the stream panel.
 
-- They use the display Hermit's window is on (in the stream panel, the display the stream is on),
-  or the primary display if that is unknown.
+- They use the display Hermit's window is on, or the primary display if that is unknown. In the
+  stream panel they use the display the stream is on, at its desktop resolution, so a full screen
+  mode of another shape does not change them.
 - For the heights 720, 1080, 1440 and, when 4K is offered, 2160, the width is the height times the
-  display's aspect ratio, rounded to a multiple of 8 (or to an even number, if a multiple of 8 would
-  change the aspect by more than 1%). Portrait displays use these values for the width instead.
-- Sizes that are already in the list (the 16:9 presets or the native resolution) are not repeated,
-  so a 16:9 display shows nothing new. Sizes larger than the video decoder supports are left out,
-  as with the other presets.
+  display's aspect ratio. A width that comes out as an even whole number is used as is; otherwise
+  it is rounded to a multiple of 8 (or to an even number, if a multiple of 8 would change the
+  aspect by more than 1%). Portrait displays use these values for the width instead.
+- Sizes that are already in the list (the 16:9 presets or the native resolution), or within 1% of
+  the width of an entry with the same height, are not repeated, so a 16:9 display (or one close to
+  it, such as 1360x768) shows nothing new. Sizes larger than the video decoder supports are left
+  out, as with the other presets.
 
 | Display | Presets added |
 |---|---|
-| 3440x1440 (21:9) | 1720x720, 2584x1080, 5160x2160, and 3440x1440 in the stream panel (Settings lists it as the native resolution) |
+| 3440x1440 (21:9) | 1720x720, 2580x1080, 5160x2160, and 3440x1440 in the stream panel (Settings lists it as the native resolution) |
 | 1920x1200 (16:10) | 1152x720, 1728x1080, 2304x1440, 3456x2160 |
-| 2256x1504 (3:2) | 1080x720, 1624x1080, 2160x1440, 3240x2160 |
+| 2256x1504 (3:2) | 1080x720, 1620x1080, 2160x1440, 3240x2160 |
 | 1920x1080 (16:9) | none |
 
 The chosen size is saved like any other resolution and selected again the next time Settings

@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QRect>
 #include <QString>
+#include <QStringList>
+#include <QVariantList>
 
 #include <SDL.h>
 
@@ -55,6 +57,8 @@ class StreamPanel : public QObject
     Q_PROPERTY(bool absoluteMouse READ absoluteMouse NOTIFY absoluteMouseChanged)
     // Edge of the stream window with the handle, where the panel opens too: 0 right, 1 left
     Q_PROPERTY(int handleSide READ handleSide WRITE setHandleSide NOTIFY handleSideChanged)
+    // SDL display index of the stream window (changes when it moves to another monitor)
+    Q_PROPERTY(int streamDisplay MEMBER m_StreamDisplay NOTIFY streamDisplayChanged)
 
 public:
     enum Action {
@@ -153,6 +157,12 @@ public:
     Q_INVOKABLE void toggleMute() { post(ActionToggleMute); }
     Q_INVOKABLE void showHotkeys() { post(ActionShowHotkeys); }
 
+    // Resolution presets with the aspect ratio of the stream window's display (its desktop mode,
+    // not an exclusive full screen mode), leaving out the sizes ("WxH") of existing and those
+    // within 1% of them (settings/resolutionpresets.h). display is streamDisplay, passed so that
+    // QML bindings follow it. Returns sizes.
+    Q_INVOKABLE QVariantList aspectResolutions(int display, const QStringList& existing) const;
+
     int handleSide() const { return m_HandleSide; }
     void setHandleSide(int side);
     // Moving the handle up or down (held, then dragged); follows the mouse pointer
@@ -197,6 +207,7 @@ signals:
     void mutedChanged();
     void absoluteMouseChanged();
     void handleSideChanged();
+    void streamDisplayChanged();
     void liveBitrateChanged();
 
 private:
@@ -247,6 +258,7 @@ private:
     bool m_HandleFailed = false;   // the handle's QML could not be created; do not retry
     qreal m_LastDpr = 0;
     int m_HandleSide = 0;          // 0 right, 1 left
+    int m_StreamDisplay = -1;
     double m_HandleY = 0.5;        // the handle's centre, 0 top to 1 bottom of the stream window
     bool m_HandleDragging = false;
     int m_HandleGrabOffset = 0;    // pointer to handle centre while dragging, physical pixels

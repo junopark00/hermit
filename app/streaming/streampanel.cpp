@@ -1,6 +1,8 @@
 #include "streampanel.h"
 
+#include "settings/resolutionpresets.h"
 #include "settings/streamingpreferences.h"
+#include "streaming/streamutils.h"
 
 #include <QCursor>
 #include <QQmlComponent>
@@ -340,8 +342,30 @@ void StreamPanel::setMuted(bool muted)
     }
 }
 
+QVariantList StreamPanel::aspectResolutions(int display, const QStringList& existing) const
+{
+    QVariantList result;
+    SDL_DisplayMode mode;
+    SDL_Rect safeArea;
+    if (display < 0 || !StreamUtils::getNativeDesktopMode(display, &mode, &safeArea)) {
+        return result;
+    }
+    const QList<QSize> sizes = ResolutionPresets::withoutNearDuplicates(
+        ResolutionPresets::forDisplay(QSize(mode.w, mode.h), true), ResolutionPresets::parseSizes(existing));
+    for (const QSize& size : sizes) {
+        result.append(size);
+    }
+    return result;
+}
+
 void StreamPanel::sync(bool mouseCaptured, bool absoluteMouse, bool streamFocused, bool minimized)
 {
+    const int display = SDL_GetWindowDisplayIndex(m_StreamWindow);
+    if (display >= 0 && display != m_StreamDisplay) {
+        m_StreamDisplay = display;
+        emit streamDisplayChanged();
+    }
+
     // The handle is only useful while the mouse can reach it, and must not float over other
     // apps when the stream window is in the background. In remote desktop mouse mode the mouse
     // counts as captured (the cursor is only hidden over the stream window), but the pointer

@@ -356,17 +356,14 @@ Window {
                         property var landscapePresets: ["1280x720", "1920x1080", "2560x1440", "3840x2160"]
                         property var portraitPresets: ["720x1280", "1080x1920"]
                         // Hermit: sizes with the aspect ratio of the display the stream is on, for
-                        // 21:9, 16:10, 3:2 and other displays (none for a 16:9 display)
+                        // 21:9, 16:10, 3:2 and other displays (none for a 16:9 display). Taken from
+                        // the stream window's display and its desktop mode, so that an exclusive
+                        // full screen mode of another shape does not change them.
                         property var aspectPresets: {
-                            var sizes = SystemProperties.getDisplayAspectResolutions(Math.round(Screen.width * Screen.devicePixelRatio),
-                                                                                     Math.round(Screen.height * Screen.devicePixelRatio),
-                                                                                     true)
+                            var sizes = panel.aspectResolutions(panel.streamDisplay, landscapePresets.concat(portraitPresets))
                             var list = []
                             for (var i = 0; i < sizes.length; i++) {
-                                var size = sizes[i].width + "x" + sizes[i].height
-                                if (landscapePresets.indexOf(size) < 0 && portraitPresets.indexOf(size) < 0) {
-                                    list.push(qsTr("%1x%2 (display aspect)").arg(sizes[i].width).arg(sizes[i].height))
-                                }
+                                list.push(qsTr("%1x%2 (display aspect)").arg(sizes[i].width).arg(sizes[i].height))
                             }
                             return list
                         }

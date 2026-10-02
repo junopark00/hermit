@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QRect>
+#include <QStringList>
 #include <QVariantList>
 
 #include "SDL_compat.h"
@@ -41,8 +42,10 @@ public:
 
     // Hermit: resolution presets with the aspect ratio of the display a window is on
     // (settings/resolutionpresets.h). screenWidth x screenHeight is that screen's approximate size
-    // in physical pixels (0 x 0: the primary display). Returns a list of sizes.
-    Q_INVOKABLE QVariantList getDisplayAspectResolutions(int screenWidth, int screenHeight, bool include2160);
+    // in physical pixels (0 x 0: the primary display); existing are the sizes ("WxH") the list
+    // already has, which are not offered again, nor sizes within 1% of them. Returns sizes.
+    Q_INVOKABLE QVariantList getDisplayAspectResolutions(int screenWidth, int screenHeight, bool include2160,
+                                                         const QStringList& existing);
 
     Q_INVOKABLE void startAsyncLoad();
     Q_INVOKABLE void waitForAsyncLoad();
