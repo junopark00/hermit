@@ -58,7 +58,8 @@ struct ClipboardHostContent
     QStringList files;  // Files: top-level local paths in the staging folder
     ClipboardArchive::RemoteFileList remoteFiles;  // RemoteFiles: host files to offer as virtual files
     // RemoteFilesReady: local clipboard sequence number once they were offered; LocalNotSent: that
-    // of the local content the host could not take yet (its clipboard was busy)
+    // of the local content the host could not take yet (its clipboard was busy, or Hermit: a
+    // network error)
     quint32 localSeq = 0;
     int itemCount = 0;     // RemoteFilesReady: items the user copied on the host
     quint64 listGeneration = 0;  // RemoteFilesReady/Failed: which publish of the virtual files it answers
@@ -88,7 +89,8 @@ public:
     void init();
 
     // localSeq: the local clipboard sequence number of the content (Windows), handed back in a
-    // LocalNotSent event when the host's clipboard was busy, so the next trigger sends it again
+    // LocalNotSent event when the host's clipboard was busy (Hermit: or a network error stopped
+    // it), so the next trigger sends it again
     void pushText(const QByteArray& utf8, quint32 localSeq = 0);
     void pushImage(const QByteArray& data, bool isDib, quint32 localSeq = 0);
     // dropped: files dropped on the stream window, so every outcome is announced
@@ -144,9 +146,13 @@ private:
     void deliver(ClipboardHostContent* content);
     // 503 on the last request: another program held the host's clipboard
     bool hostClipboardBusy() const { return m_LastHttpStatus == 503; }
-    // Local content the host's busy clipboard could not take: the main thread sends it again on
-    // the next trigger.
+    // Local content the host's busy clipboard could not take (Hermit: or that a network error
+    // stopped): the main thread sends it again on the next trigger.
     void localNotSent(quint32 localSeq);
+    // Hermit: local image or files not sent after a network error without a reply: sent again on
+    // the next trigger. True the first time for this local sequence, so the caller shows its
+    // notice once per content.
+    bool resendAfterNetworkError(quint32 localSeq);
     // A 422 for host files: a notice for the reason the host gave.
     void notifyHostFilesRefused();
     bool stopped() const { return m_Stopped->load(); }
@@ -175,6 +181,8 @@ private:
     quint32 m_HostFilesErrorSeq;
     bool m_HostNetworkNoticeSeqValid;  // Hermit: host image or files of m_HostNetworkNoticeSeq had a network error notice
     quint32 m_HostNetworkNoticeSeq;
+    bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error notice
+    quint32 m_LocalNetworkNoticeSeq;
     bool m_HostTextHashValid;
     QByteArray m_HostTextHash;
     bool m_WarnedTextOnly;

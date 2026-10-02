@@ -546,6 +546,8 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_HostFilesErrorSeq(0),
       m_HostNetworkNoticeSeqValid(false),
       m_HostNetworkNoticeSeq(0),
+      m_LocalNetworkNoticeSeqValid(false),
+      m_LocalNetworkNoticeSeq(0),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -1007,6 +1009,17 @@ void ClipboardSyncWorker::localNotSent(quint32 localSeq)
     deliver(content);
 }
 
+bool ClipboardSyncWorker::resendAfterNetworkError(quint32 localSeq)
+{
+    localNotSent(localSeq);
+    if (m_LocalNetworkNoticeSeqValid && m_LocalNetworkNoticeSeq == localSeq) {
+        return false;
+    }
+    m_LocalNetworkNoticeSeq = localSeq;
+    m_LocalNetworkNoticeSeqValid = true;
+    return true;
+}
+
 void ClipboardSyncWorker::notifyHostFilesRefused()
 {
     switch (ClipboardArchive::parseRefusal(m_LastErrorBody)) {
@@ -1127,7 +1140,9 @@ void ClipboardSyncWorker::pushText(const QByteArray& utf8, quint32 localSeq)
     int error = QNetworkReply::NoError;
     if (!request(QStringLiteral("text"), &utf8, k_TextTimeoutMs, body, error)) {
         handleFailure("send", error, Direction::Push);
-        if (hostClipboardBusy()) {
+        if (hostClipboardBusy() || (m_LastHttpStatus == 0 && error > 0)) {
+            // Hermit: also after a network error without a reply (a timeout, connection refused
+            // or reset), which may be passing: sent again on the next trigger.
             localNotSent(localSeq);
         }
         return;
@@ -1208,6 +1223,15 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Clipboard image not sent: the host could not convert it");
             notify(LocalImageUnsupported, false);
+        }
+        else if (m_LastHttpStatus == 0 && error > 0) {
+            // Hermit: a network error without a reply (a timeout, connection refused or reset, an
+            // upload cut off) may be passing: sent again on the next trigger, with one notice per
+            // content.
+            handleFailure("image send", error, Direction::Push);
+            if (resendAfterNetworkError(localSeq)) {
+                notify(LocalImageFailed, false);
+            }
         }
         else {
             handleFailure("image send", error, Direction::Push);
@@ -1340,6 +1364,18 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
                 showTransferEnd(result, error);
                 break;
             }
+        }
+        return;
+    }
+    if (result == TransferResult::Failed && !dropped && m_LastHttpStatus == 0 && error > 0) {
+        // Hermit: copied files hit by a network error without a reply (a timeout, connection
+        // refused or reset, an upload cut off) are sent again when the user next returns to the
+        // stream window, with one notice per content. Dropped files keep their notice and are not
+        // sent again by themselves.
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Sending files to host failed: %s; sent again on the next return", qPrintable(m_LastError));
+        if (resendAfterNetworkError(localSeq)) {
+            showTransferEnd(result, error);
         }
         return;
     }
@@ -2001,8 +2037,8 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         return;  // left over from an earlier stream
     }
     if (owned->kind == ClipboardHostContent::LocalNotSent) {
-        // The host clipboard was busy: sent again on the next trigger, unless the local clipboard
-        // changed (or was handled) since.
+        // The host clipboard was busy (Hermit: or a network error stopped it): sent again on the
+        // next trigger, unless the local clipboard changed (or was handled) since.
         if (m_LocalSeqValid && m_LocalSeq == owned->localSeq) {
             m_LocalSeqValid = false;
         }
