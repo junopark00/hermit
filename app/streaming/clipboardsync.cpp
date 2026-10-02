@@ -1422,11 +1422,10 @@ void ClipboardSyncWorker::pull()
     if (type == "text") {
         if (!request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
             handleFailure("fetch", error, Direction::Pull);
-            if (!hostClipboardBusy() && error != QNetworkReply::AuthenticationRequiredError &&
-                error != QNetworkReply::ContentAccessDenied && error != QNetworkReply::ContentNotFoundError) {
+            if (m_LastHttpStatus >= 500 && !hostClipboardBusy()) {
                 // The host could not read its text (500, for example): said once, and this
-                // content is not fetched again on every focus change. Busy (503) and no active
-                // stream (403) are retried.
+                // content is not fetched again on every focus change. Busy (503), no active
+                // stream (403) and network errors without a reply (a timeout) are retried.
                 m_HostSeq = seq;
                 m_HostSeqValid = true;
                 m_HostTextHashValid = false;
