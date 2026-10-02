@@ -422,6 +422,152 @@ static void testClipboardChangeOrder()
     }
 }
 
+// Clipboard sync: what the worker and the main thread feed into the rule above (round 10).
+static void testClipboardChangeInputs()
+{
+    using HC = ClipboardChangeOrder::HostContent;
+    using LC = ClipboardLocalChanges::Content;
+
+    // Setup at stream start: the host's content is from before the stream, not a change.
+    {
+        ClipboardChangeOrder o;
+        o.hostSetUp(100, true, 0);
+        CHECK(o.hostSeen(100, 1) == HC::Unchanged);
+        CHECK(o.localMayReplaceHost(1));
+    }
+    // Setup that failed at stream start and succeeds later, in the job sending the local content
+    // from stream start again: the host's content may have changed meanwhile, so that stale
+    // content no longer overwrites it, and the next pull fetches it (round 10, 1).
+    {
+        ClipboardChangeOrder o;
+        const quint64 startCopy = 1;
+        o.hostSetUp(100, false, startCopy);
+        CHECK(!o.localMayReplaceHost(startCopy));
+        CHECK(o.hostSeen(100, startCopy) == HC::Fetch);
+        CHECK(o.hostSeen(100, startCopy) == HC::Unchanged);
+        CHECK(o.localMayReplaceHost(startCopy + 1));  // a newer local copy still wins
+    }
+    // ...set up late by a pull: fetched by that pull; a local copy made before the next pull wins.
+    {
+        ClipboardChangeOrder o;
+        o.hostSetUp(100, false, 2);
+        CHECK(o.hostSeen(100, 2) == HC::Fetch);
+        ClipboardChangeOrder p;
+        p.hostSetUp(100, false, 2);
+        CHECK(p.hostSeen(100, 3) == HC::Superseded);
+        CHECK(p.localMayReplaceHost(3));
+    }
+    // Text-only hosts set up late: the same with the key of the text.
+    {
+        ClipboardChangeOrder o;
+        o.hostSetUp(0xA, false, 1);
+        CHECK(!o.localMayReplaceHost(1));
+        CHECK(o.hostSeen(0xA, 1) == HC::Fetch);
+    }
+
+    // Files sent in full without the host's confirmation (no reply within 5 minutes): the next new
+    // host files are ours, not fetched back over the local copy (round 10, 2).
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        CHECK(o.unconfirmedUpload());
+        CHECK(!o.hostIsUnconfirmedUpload(100, false, 1));  // not placed yet: still waiting
+        CHECK(o.unconfirmedUpload());
+        CHECK(o.hostIsUnconfirmedUpload(101, true, 1));
+        CHECK(o.hostSeen(101, 1) == HC::Unchanged);
+        CHECK(!o.unconfirmedUpload());
+        CHECK(o.hostSeen(102, 1) == HC::Fetch);  // files copied on the host later still come
+    }
+    // ...unless a local change came after them: then they are fetched like any host change...
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        CHECK(!o.hostIsUnconfirmedUpload(101, true, 2));
+        CHECK(o.hostSeen(101, 2) == HC::Fetch);
+    }
+    // ...or other host content came first, which ends the wait.
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(1);
+        CHECK(!o.hostIsUnconfirmedUpload(101, false, 1));
+        CHECK(o.hostSeen(101, 1) == HC::Fetch);
+        CHECK(!o.hostIsUnconfirmedUpload(102, true, 1));
+        CHECK(o.hostSeen(102, 1) == HC::Fetch);
+    }
+    // A later confirmed send ends the wait too; the unconfirmed files hold back older local content.
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSentUnconfirmed(2);
+        CHECK(!o.localMayReplaceHost(1));
+        CHECK(o.localMayReplaceHost(3));
+        o.localSent(true, 101, 3);
+        CHECK(!o.unconfirmedUpload());
+        CHECK(!o.hostIsUnconfirmedUpload(102, true, 3));
+        CHECK(o.hostSeen(102, 3) == HC::Fetch);
+    }
+
+    // What the local clipboard holds: our marker, an empty clipboard, and our list while the
+    // owner thread is still putting it there are no local copy (round 10, 5).
+    {
+        auto classify = [](bool handled, bool marker, bool descriptor, bool publishing, bool ownerPublishes, int formats) {
+            ClipboardLocalChanges::View view;
+            view.handled = handled;
+            view.marker = marker;
+            view.descriptor = descriptor;
+            view.publishing = publishing;
+            view.ownerPublishes = ownerPublishes;
+            view.formats = formats;
+            return ClipboardLocalChanges::classify(view);
+        };
+        CHECK(classify(false, false, false, false, false, 3) == LC::Copy);
+        CHECK(classify(true, false, false, false, false, 3) == LC::Handled);
+        CHECK(classify(false, true, true, false, false, 4) == LC::OwnHostFiles);
+        CHECK(classify(false, true, false, false, false, 1) == LC::OwnHostFiles);  // marker set first
+        CHECK(classify(false, false, false, false, false, 0) == LC::Empty);
+        CHECK(classify(false, false, false, true, false, 0) == LC::Empty);
+        // Partly set while a publish runs: file descriptors without the marker yet, or any format
+        // put there by our owner thread
+        CHECK(classify(false, false, true, true, false, 1) == LC::OwnHostFiles);
+        CHECK(classify(false, false, false, true, true, 1) == LC::OwnHostFiles);
+        // File descriptors copied by another program (an e-mail attachment) are a copy
+        CHECK(classify(false, false, true, false, false, 2) == LC::Copy);
+        // A copy by another program while our publish waited for the clipboard
+        CHECK(classify(false, false, false, true, false, 2) == LC::Copy);
+    }
+
+    // Host content arriving while a local copy's clipboard update is still queued behind it: the
+    // copy counts first and wins (round 10, 4).
+    {
+        ClipboardLocalChanges l;
+        CHECK(l.observe(5) == 1);
+        const quint64 hostOrder = l.count();  // a pull posted now
+        bool isNew = true;
+        CHECK(l.hostMayReplace(hostOrder, LC::Handled, 5, &isNew));
+        CHECK(!isNew);
+        CHECK(!l.hostMayReplace(hostOrder, LC::Copy, 7, &isNew));
+        CHECK(isNew);
+        CHECK(l.count() == 2);
+        CHECK(l.observe(7, &isNew) == 2);  // its trigger then sends it under the same order
+        CHECK(!isNew);
+    }
+    {
+        ClipboardLocalChanges l;
+        l.observe(5);
+        CHECK(l.hostMayReplace(1, LC::Empty, 8));
+        CHECK(l.hostMayReplace(1, LC::OwnHostFiles, 9));
+        CHECK(l.count() == 1);
+        // A copy observed before the pull was posted (files, not sent on a clipboard change)
+        CHECK(l.observe(10) == 2);
+        bool isNew = true;
+        CHECK(l.hostMayReplace(2, LC::Copy, 10, &isNew));
+        CHECK(!isNew && l.count() == 2);
+    }
+}
+
 static QString sizesText(const QList<QSize>& sizes)
 {
     QStringList parts;
@@ -519,6 +665,7 @@ int main(int argc, char** argv)
     testStatsOverlay();
     testAutoBitrate();
     testClipboardChangeOrder();
+    testClipboardChangeInputs();
     testResolutionPresets();
     testProfileProperties(repo);
 

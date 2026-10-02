@@ -5,7 +5,8 @@ Builds and runs Hermit's standalone tests (no app build, no stream, no host need
 .DESCRIPTION
   hermit_core_test       branding translator, session summary maths and history file,
                          performance overlay text, automatic bitrate, which clipboard
-                         change wins (local or host, retries), display aspect
+                         change wins (local or host, retries, a late setup, unconfirmed
+                         uploads, what counts as a local copy), display aspect
                          resolution presets, connection profile property names
   clipboard_archive_test clipboard file archive: streamed upload, throttling, validation,
                          extraction, cancel (uses a loopback HTTP server); host file lists,
