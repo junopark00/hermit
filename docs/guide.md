@@ -223,8 +223,10 @@ to sync the clipboard in both directions.
   never receives back what it wrote itself.
 - When another program on the host holds its clipboard at that moment, the host answers that it is
   busy (HTTP 503). Nothing is shown; the content moves the next time you leave or return to the stream
-  window. When the host refuses content (HTTP 422), it names the reason (names it can't create, only
-  links, an image it can't convert), and the notice says which.
+  window. Files dropped on the stream window are not sent again by themselves: the notice says the
+  host clipboard is busy, and you drop them again. When the host refuses content (HTTP 422), it names
+  the reason (names it can't create, only links, an image it can't convert), and the notice says
+  which.
 - Network transfer, image conversion and file I/O run on separate threads and never stall the
   stream. Clipboard contents are never logged.
 - **Speed limit**: image and file transfers are rate-limited in both directions, leaving bandwidth for
@@ -280,7 +282,8 @@ to sync the clipboard in both directions.
 - It uses the same path as clipboard sync (Shell host, clipboard and file upload permissions for
   this device), with the same 256 MB limit, speed limit and cancel shortcut (Ctrl+Alt+Shift+T).
 - The result is shown over the stream: the number of items and their size, or that clipboard sync is
-  off, permission is missing, or the limit was exceeded.
+  off, permission is missing, the limit was exceeded, or the host clipboard was busy (another program
+  on the host held it; drop the files again).
 - This works best in windowed mode. In full screen, minimize with Ctrl+Alt+Shift+D or switch to a
   window with Ctrl+Alt+Shift+X to reach File Explorer.
 

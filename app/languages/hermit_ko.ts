@@ -86,6 +86,10 @@
       <translation>호스트의 파일을 가져오지 못했습니다: %1MB 또는 %2개 항목을 넘었습니다</translation>
     </message>
     <message>
+      <source>The host clipboard is busy; drop the files again</source>
+      <translation>호스트 클립보드가 사용 중입니다. 파일을 다시 끌어 놓으세요</translation>
+    </message>
+    <message>
       <source>Host files can't be copied: unsupported or duplicate names</source>
       <translation>호스트의 파일을 가져올 수 없습니다: 지원하지 않거나 중복된 이름이 있습니다</translation>
     </message>

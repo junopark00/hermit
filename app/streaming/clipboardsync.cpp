@@ -1309,7 +1309,10 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
     if (result == TransferResult::Failed && hostClipboardBusy()) {
         handleFailure("files send", error, Direction::Push);
         if (dropped) {
-            showTransferEnd(result, error);  // a drop announces every outcome
+            // A drop announces every outcome, and is not tried again by itself
+            if (!stopped()) {
+                showClipboardNotice(QCoreApplication::translate("ClipboardSync", "The host clipboard is busy; drop the files again"), 5000);
+            }
         }
         else {
             localNotSent(localSeq);

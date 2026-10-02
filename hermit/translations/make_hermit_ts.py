@@ -229,6 +229,8 @@ TRANSLATIONS = {
         '호스트의 파일을 가져오지 못했습니다: %1MB 또는 %2개 항목을 넘었습니다',
     ('Session', 'Turn on clipboard sync to send dropped files to the host'):
         '끌어 놓은 파일을 호스트로 보내려면 클립보드 동기화를 켜세요',
+    ('ClipboardSync', 'The host clipboard is busy; drop the files again'):
+        '호스트 클립보드가 사용 중입니다. 파일을 다시 끌어 놓으세요',
 
     # Clipboard content that did not move, and permissions per direction
     ('ClipboardSync', "Host files can't be copied: unsupported or duplicate names"):
