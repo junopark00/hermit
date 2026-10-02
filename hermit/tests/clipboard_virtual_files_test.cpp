@@ -347,7 +347,10 @@ int main(int argc, char** argv)
                         (unsigned long)hr, (long long)got.size(), (long long)big.size(), (long long)t.elapsed(), (int)requests.size(),
                         (long long)requests.value(0).second, (long long)requests.value(1).second);
             CHECK(hr == S_OK && got == big);
-            CHECK(requests.size() == 2 && requests.value(0).second == 0 && requests.value(1).second == 1024 * 1024);
+            // Qt may drop the last few hundred bytes of a reply cut by a network error, so the
+            // download may continue a little before the cut; got == big checks the bytes
+            CHECK(requests.size() == 2 && requests.value(0).second == 0 && requests.value(1).second > 0 &&
+                  requests.value(1).second <= 1024 * 1024);
             ULARGE_INTEGER pos;
             LARGE_INTEGER zero = {};
             CHECK(stream->Seek(zero, STREAM_SEEK_CUR, &pos) == S_OK && pos.QuadPart == (ULONGLONG)big.size());
