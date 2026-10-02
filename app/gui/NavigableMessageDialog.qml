@@ -18,6 +18,8 @@ NavigableDialog {
     property string actionText
     signal actionClicked()
 
+    onActionTextChanged: dialogButtonBox.syncActionButton()
+
     onOpened: {
         // Force keyboard focus on the last button so keyboard navigation works
         // (Hermit: the last visible one, as the action button may be hidden)
@@ -27,6 +29,24 @@ NavigableDialog {
                 button.forceActiveFocus(Qt.TabFocus)
                 break
             }
+        }
+    }
+
+    // Hermit: the action button, created only while actionText is set. The button box keeps a
+    // slot for every item it holds, visible or not, so an idle button would leave an empty gap.
+    Component {
+        id: actionButtonComponent
+
+        Button {
+            flat: true
+            text: dialog.actionText
+            // No accept role: accepting would close the dialog
+            DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+            Keys.onReturnPressed: clicked()
+            Keys.onEnterPressed: clicked()
+            Keys.onRightPressed: nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocus)
+            Keys.onLeftPressed: nextItemInFocusChain(false).forceActiveFocus(Qt.TabFocus)
+            onClicked: dialog.actionClicked()
         }
     }
 
@@ -80,18 +100,23 @@ NavigableDialog {
             Keys.onLeftPressed: nextItemInFocusChain(false).forceActiveFocus(Qt.TabFocus)
         }
 
-        Button {
-            visible: dialog.actionText !== ""
-            flat: true
-            text: dialog.actionText
-            // No accept role: accepting would close the dialog
-            DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
-            Keys.onReturnPressed: clicked()
-            Keys.onEnterPressed: clicked()
-            Keys.onRightPressed: nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocus)
-            Keys.onLeftPressed: nextItemInFocusChain(false).forceActiveFocus(Qt.TabFocus)
-            onClicked: dialog.actionClicked()
+        // Hermit: the action button is in the box only while it has a text (see actionButtonComponent)
+        property Item actionButton: null
+
+        function syncActionButton() {
+            var wanted = dialog.actionText !== ""
+            if (wanted && actionButton === null) {
+                actionButton = actionButtonComponent.createObject(dialogButtonBox)
+                addItem(actionButton)
+            }
+            else if (!wanted && actionButton !== null) {
+                // removeItem destroys the button; it is created again when a text is set
+                removeItem(actionButton)
+                actionButton = null
+            }
         }
+
+        Component.onCompleted: syncActionButton()
 
         onHelpRequested: {
             Qt.openUrlExternally(helpUrl)
