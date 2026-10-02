@@ -532,8 +532,9 @@ Hermit.exe quit <host>           Quit the running app on a host
   instead.
 - **"Unable to connect to the specified PC."** Check that the host software is running, that the
   address is correct, and that the host's firewall allows the GameStream ports (TCP 47984, 47989,
-  48010 and UDP 47998 to 48000, 48002 and 48010 by default). Over the Internet, the host's router must forward
-  these ports, or both sides must be on the same VPN.
+  48010 and UDP 47998 to 48000 by default; never forward the web UI port 47990). Over the Internet,
+  the host's router must forward these ports, or both sides must be on the same VPN such as Tailscale
+  (see [Shell's remote access guide](https://github.com/junopark00/hermit-shell/blob/main/docs/remote-access.md)).
 - **"No video received from host."** The connection was set up but video packets never arrived:
   usually a firewall or port forwarding problem for the UDP ports listed in the message.
 - **"Starting ... failed" or the connection ends during a stream.** Check that the host is running
