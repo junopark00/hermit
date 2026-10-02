@@ -65,6 +65,14 @@
       <source>Files not sent: the host does not allow file upload for this device</source>
       <translation>파일을 보내지 못했습니다: 호스트가 이 기기의 파일 업로드를 허용하지 않습니다</translation>
     </message>
+    <message>
+      <source>Files on the host not copied: the host does not allow file download for this device</source>
+      <translation>호스트의 파일을 가져오지 못했습니다: 호스트가 이 기기의 파일 다운로드를 허용하지 않습니다</translation>
+    </message>
+    <message>
+      <source>Files on the host not copied: over %1 MB or %2 items</source>
+      <translation>호스트의 파일을 가져오지 못했습니다: %1MB 또는 %2개 항목을 넘었습니다</translation>
+    </message>
   </context>
   <context>
     <name>ReconnectDialog</name>

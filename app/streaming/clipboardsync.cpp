@@ -44,6 +44,20 @@ static void showClipboardNotice(const QString& text, int durationMs = 3500)
     }
 }
 
+// Reasons host files were not copied to this computer (ClipboardTransferControl::pendingNotice)
+enum HostFilesNotice { NoNotice = 0, DownloadNotAllowed, OverLimit };
+
+static void showHostFilesNotice(int notice)
+{
+    if (notice == DownloadNotAllowed) {
+        showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files on the host not copied: the host does not allow file download for this device"), 6000);
+    }
+    else if (notice == OverLimit) {
+        showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files on the host not copied: over %1 MB or %2 items")
+                            .arg(ClipboardArchive::k_MaxFilesBytes / (1024 * 1024)).arg(ClipboardArchive::k_MaxFileEntries), 6000);
+    }
+}
+
 static QString formatTransferSize(qint64 bytes)
 {
     if (bytes >= 1024 * 1024) {
@@ -1105,12 +1119,16 @@ void ClipboardSyncWorker::pull()
             if (error == QNetworkReply::AuthenticationRequiredError) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "Host files not copied: file download permission is not granted to this device");
+                m_Control->pendingNotice.store(DownloadNotAllowed);
+                showHostFilesNotice(DownloadNotAllowed);
             }
             else if (error == QNetworkReply::UnknownContentError) {
                 // 413 from the host
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                             "Host files not copied: over the %d MB / %d item limit",
                             (int)(k_MaxFilesBytes / (1024 * 1024)), k_MaxFileEntries);
+                m_Control->pendingNotice.store(OverLimit);
+                showHostFilesNotice(OverLimit);
             }
             else {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -1273,6 +1291,10 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         return;
     }
     ClipboardSyncWorker* worker = m_Worker;
+
+    if (trigger == Trigger::FocusGained) {
+        showHostFilesNotice(m_Control->pendingNotice.exchange(NoNotice));
+    }
 
 #ifdef Q_OS_WIN32
     // Each clipboard write bumps the sequence number, so this skips content we already sent

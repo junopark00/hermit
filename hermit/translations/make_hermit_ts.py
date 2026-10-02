@@ -219,6 +219,10 @@ TRANSLATIONS = {
         '파일을 보내지 못했습니다: %1MB 또는 %2개 항목을 넘었거나 읽을 수 없는 파일이 있습니다',
     ('ClipboardSync', 'Files not sent: the host does not allow file upload for this device'):
         '파일을 보내지 못했습니다: 호스트가 이 기기의 파일 업로드를 허용하지 않습니다',
+    ('ClipboardSync', 'Files on the host not copied: the host does not allow file download for this device'):
+        '호스트의 파일을 가져오지 못했습니다: 호스트가 이 기기의 파일 다운로드를 허용하지 않습니다',
+    ('ClipboardSync', 'Files on the host not copied: over %1 MB or %2 items'):
+        '호스트의 파일을 가져오지 못했습니다: %1MB 또는 %2개 항목을 넘었습니다',
     ('Session', 'Turn on clipboard sync to send dropped files to the host'):
         '끌어 놓은 파일을 호스트로 보내려면 클립보드 동기화를 켜세요',
 

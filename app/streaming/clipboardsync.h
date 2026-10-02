@@ -29,6 +29,9 @@ struct ClipboardTransferControl
 {
     std::atomic<bool> active {false};
     std::atomic<bool> cancel {false};
+    // Why host files were not copied (HostFilesNotice), shown again when the user returns to the
+    // stream window: the fetch runs when they switch away, so the first notice is easy to miss.
+    std::atomic<int> pendingNotice {0};
 };
 
 // Clipboard content fetched from the host, handed to the SDL main thread in an SDL user event.
