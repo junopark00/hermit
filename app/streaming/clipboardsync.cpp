@@ -929,7 +929,7 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped)
     if (!ClipboardArchive::planUpload(paths, entries, archiveSize, packError)) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Local files not sent to host: %s", qPrintable(packError));
-        if (dropped) {
+        if (!stopped()) {
             showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files not sent: over %1 MB or %2 items, or a file cannot be read")
                                     .arg(k_MaxFilesBytes / (1024 * 1024)).arg(k_MaxFileEntries), 5000);
         }
@@ -951,7 +951,9 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped)
         if (error == QNetworkReply::AuthenticationRequiredError) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Files not sent: file upload permission is not granted to this device on the host");
-            if (dropped && !stopped()) {
+            // Copied files are sent when the user returns to the stream window, so the notice is
+            // seen there just like for dropped files
+            if (!stopped()) {
                 showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files not sent: the host does not allow file upload for this device"), 5000);
                 return;
             }
