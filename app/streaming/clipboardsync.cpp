@@ -544,8 +544,8 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_HostSeq(0),
       m_HostFilesErrorSeqValid(false),
       m_HostFilesErrorSeq(0),
-      m_HostFilesNetworkSeqValid(false),
-      m_HostFilesNetworkSeq(0),
+      m_HostNetworkNoticeSeqValid(false),
+      m_HostNetworkNoticeSeq(0),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -1458,7 +1458,7 @@ void ClipboardSyncWorker::pull()
     }
 
     // For images and files, remember the sequence even on failure so the same content is not
-    // retried on every focus change.
+    // retried on every focus change (Hermit: except after a busy host or a network error).
     m_HostSeq = seq;
     m_HostSeqValid = true;
     m_HostTextHashValid = false;
@@ -1493,6 +1493,15 @@ void ClipboardSyncWorker::pull()
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "Host clipboard image ignored: the host could not convert it");
                 notify(HostImageUnreadable, true);
+            }
+            else if (m_LastHttpStatus == 0 && error > 0) {
+                // Hermit: a network error without a reply (a timeout, connection refused or
+                // reset, a transfer cut off) may be passing: fetched again on the next pull, with
+                // one notice per content.
+                handleFailure("image fetch", error, Direction::Pull);
+                if (retryAfterNetworkError()) {
+                    notify(HostImageFailed, true);
+                }
             }
             else {
                 handleFailure("image fetch", error, Direction::Pull);
@@ -1623,10 +1632,7 @@ void ClipboardSyncWorker::failedHostFiles(int qtError)
         // Hermit: a network error without a reply (connection refused or reset, a transfer cut
         // off) may be passing too: fetched again on the next pull. One notice per content, as
         // such an error can come at once every time.
-        m_HostSeqValid = false;
-        if (!m_HostFilesNetworkSeqValid || m_HostFilesNetworkSeq != m_HostSeq) {
-            m_HostFilesNetworkSeq = m_HostSeq;
-            m_HostFilesNetworkSeqValid = true;
+        if (retryAfterNetworkError()) {
             notify(HostFilesFailed, true);
         }
         return;
@@ -1648,6 +1654,17 @@ void ClipboardSyncWorker::failedHostFiles(int qtError)
         return;
     }
     notify(HostFilesFailed, true);
+}
+
+bool ClipboardSyncWorker::retryAfterNetworkError()
+{
+    m_HostSeqValid = false;
+    if (m_HostNetworkNoticeSeqValid && m_HostNetworkNoticeSeq == m_HostSeq) {
+        return false;
+    }
+    m_HostNetworkNoticeSeq = m_HostSeq;
+    m_HostNetworkNoticeSeqValid = true;
+    return true;
 }
 
 void ClipboardSyncWorker::pullArchive()

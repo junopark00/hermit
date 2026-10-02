@@ -130,6 +130,10 @@ private:
     // Host files not fetched for another reason than those with their own notice: says so, and
     // leaves the content to be fetched again on the next pull when that may help.
     void failedHostFiles(int qtError);
+    // Hermit: a network error without a reply (timeout, connection refused or reset, a transfer cut
+    // off) for host images or files: the content is fetched again on the next pull. True the first
+    // time for this host clipboard sequence, so the caller shows its notice once per content.
+    bool retryAfterNetworkError();
     // Logs a failed request; a missing endpoint turns sync off, a missing permission turns off
     // that direction only, with a notice.
     void handleFailure(const char* operation, int qtError, Direction direction);
@@ -169,8 +173,8 @@ private:
     quint32 m_HostSeq;
     bool m_HostFilesErrorSeqValid;  // Hermit: host files of m_HostFilesErrorSeq failed once with a host error
     quint32 m_HostFilesErrorSeq;
-    bool m_HostFilesNetworkSeqValid;  // Hermit: host files of m_HostFilesNetworkSeq had a network error notice
-    quint32 m_HostFilesNetworkSeq;
+    bool m_HostNetworkNoticeSeqValid;  // Hermit: host image or files of m_HostNetworkNoticeSeq had a network error notice
+    quint32 m_HostNetworkNoticeSeq;
     bool m_HostTextHashValid;
     QByteArray m_HostTextHash;
     bool m_WarnedTextOnly;
