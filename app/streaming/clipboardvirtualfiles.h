@@ -64,6 +64,11 @@ constexpr qint64 k_ReplyBufferBytes = 256 * 1024;          // what Qt may hold p
 constexpr qint64 k_InactivityTimeoutMs = 5 * 60000;
 constexpr int k_TickMs = 10;
 constexpr int k_MaxAttemptsWithoutProgress = 2;
+// Hermit: a host still serving an earlier read of the same file answers 503 (clipboard-busy);
+// the same offset is asked again after this wait, a little longer each time.
+constexpr qint64 k_BusyRetryMs = 1000;
+constexpr qint64 k_BusyRetryStepMs = 250;
+constexpr qint64 k_BusyRetryMaxMs = 2000;
 constexpr qint64 k_PasteIdleMs = 2000;  // a paste is over (for the log) after this long without files
 constexpr DWORD k_ReadWaitSliceMs = 1000;
 constexpr DWORD k_QuitWaitMs = 1000;
@@ -351,6 +356,7 @@ public:
         Job job;
         job.download = download;
         job.cancelEpoch = m_Control->streamCancel.load();
+        job.lastDataMs = m_Clock.elapsed();
         m_Control->streams.fetch_add(1);
         m_Jobs.push_back(job);
         sendRequest(m_Jobs.back());
@@ -373,6 +379,9 @@ private:
         quint64 attemptStart = 0;  // bytes received when the current request started
         int attemptsWithoutProgress = 0;
         qint64 lastActivityMs = 0;
+        qint64 lastDataMs = 0;     // when bytes last arrived (or the job started)
+        qint64 resendAtMs = -1;    // >= 0: waiting to ask a busy host again, with no reply
+        int busyAnswers = 0;       // 503s in a row
         int cancelEpoch = 0;
         bool checkedLength = false;
     };
@@ -443,6 +452,29 @@ private:
         return true;
     }
 
+    // Hermit: the host is still serving an earlier read of this file (503): ask for the same
+    // offset again shortly. Not an attempt without progress; it gives up only after
+    // k_InactivityTimeoutMs without data, like a stalled response.
+    bool waitForBusyHost(Job& job, qint64 now)
+    {
+        if (now - job.lastDataMs > k_InactivityTimeoutMs) {
+            failJob(job, HRESULT_FROM_WIN32(ERROR_UNEXP_NET_ERR),
+                    QStringLiteral("host busy, no data for %1 s").arg(k_InactivityTimeoutMs / 1000));
+            return false;
+        }
+        dropReply(job);
+        const qint64 wait = qMin(k_BusyRetryMs + k_BusyRetryStepMs * job.busyAnswers, k_BusyRetryMaxMs);
+        job.busyAnswers++;
+        job.resendAtMs = now + wait;
+        if (job.busyAnswers == 1) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host file %d: host busy with an earlier read at %llu of %llu bytes; asking again",
+                        job.download->index, (unsigned long long)job.download->received(),
+                        (unsigned long long)job.download->expected());
+        }
+        return true;
+    }
+
     // False when the job is over (complete, failed, cancelled or no longer wanted).
     bool serviceJob(Job& job, qint64 now)
     {
@@ -455,6 +487,13 @@ private:
             failJob(job, HRESULT_FROM_WIN32(ERROR_CANCELLED), QStringLiteral("cancelled"));
             return false;
         }
+        if (job.resendAtMs >= 0) {
+            if (now < job.resendAtMs) {
+                return true;
+            }
+            job.resendAtMs = -1;
+            sendRequest(job);
+        }
         QNetworkReply* reply = job.reply;
         if (reply == nullptr) {
             return false;
@@ -463,6 +502,9 @@ private:
         const QVariant status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
         if (status.isValid()) {
             const int code = status.toInt();
+            if (code == 503) {
+                return waitForBusyHost(job, now);
+            }
             if (code != 200) {
                 failJob(job, resultForHttpStatus(code), QStringLiteral("host answered %1").arg(code));
                 return false;
@@ -492,6 +534,8 @@ private:
                 m_Limiter.consume(n);
                 download.append(m_Chunk.constData(), n);
                 job.lastActivityMs = now;
+                job.lastDataMs = now;
+                job.busyAnswers = 0;
             }
             if (download.received() >= download.expected()) {
                 dropReply(job);
@@ -509,6 +553,7 @@ private:
         }
         if (download.space() <= 0) {
             job.lastActivityMs = now;  // Explorer is not reading (paused, or a slow disk): not a stall
+            job.lastDataMs = now;
         }
         else if (now - job.lastActivityMs > k_InactivityTimeoutMs) {
             return retryOrFail(job, QStringLiteral("no data for %1 s").arg(k_InactivityTimeoutMs / 1000));

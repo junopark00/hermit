@@ -44,6 +44,8 @@ struct FakeHost
     QByteArray snapshot = "abc123";
     qint64 cutAt = -1;             // the first request for cutIndex ends after this many body bytes
     int cutIndex = -1;
+    int busyIndex = -1;            // the next busyAnswers requests for busyIndex get 503
+    int busyAnswers = 0;
     std::mutex mutex;
     QList<QPair<int, qint64>> requests;  // (index, offset)
 
@@ -81,11 +83,21 @@ struct FakeHost
         const int index = query.queryItemValue("index").toInt();
         const qint64 offset = query.queryItemValue("offset").toLongLong();
         bool firstForIndex;
+        bool busy = false;
         {
             std::lock_guard<std::mutex> lock(mutex);
             firstForIndex = true;
             for (const auto& r : requests) firstForIndex = firstForIndex && r.first != index;
             requests.append({index, offset});
+            if (index == busyIndex && busyAnswers > 0) {
+                busyAnswers--;
+                busy = true;
+            }
+        }
+        if (busy) {
+            // Like Shell while an earlier read of the same file is still stalled
+            reply(sock, 503, "clipboard-busy\nan earlier read of this file is still running");
+            return;
         }
         if (query.queryItemValue("type") != "filedata" || query.queryItemValue("snapshot").toLatin1() != snapshot) {
             reply(sock, 410, "unknown file list");
@@ -379,6 +391,33 @@ int main(int argc, char** argv)
             to.QuadPart = 0;
             CHECK(stream->Seek(to, STREAM_SEEK_SET, &pos) == S_OK && pos.QuadPart == 0);
             CHECK(readAll(stream, got, 333) == S_OK && got == smallData);
+            stream->Release();
+        }
+        // ---- The host is busy with an earlier read of the file (503 twice): the same offset is
+        // asked again after a short wait, and the paste completes
+        {
+            {
+                std::lock_guard<std::mutex> lock(host.mutex);
+                host.requests.clear();
+                host.busyIndex = 3;
+                host.busyAnswers = 2;
+            }
+            IStream* stream = openContents(object, 3);
+            CHECK(stream != nullptr);
+            LARGE_INTEGER to;
+            to.QuadPart = 200;
+            CHECK(stream->Seek(to, STREAM_SEEK_SET, nullptr) == S_OK);
+            QByteArray got;
+            QElapsedTimer t;
+            t.start();
+            const HRESULT hr = readAll(stream, got, 4096);
+            const auto requests = host.requestsFor(3);
+            std::printf("busy host: hr=0x%08lx, %lld bytes in %lld ms, %d request(s)\n",
+                        (unsigned long)hr, (long long)got.size(), (long long)t.elapsed(), (int)requests.size());
+            CHECK(hr == S_OK && got == smallData.mid(200));
+            CHECK(requests.size() == 3);
+            for (const auto& r : requests) CHECK(r.second == 200);
+            CHECK(t.elapsed() >= 2000);  // waited 1 s, then 1.25 s
             stream->Release();
         }
         // ---- A list the host no longer knows (410): the read fails instead of waiting
