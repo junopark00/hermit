@@ -43,7 +43,9 @@ struct ClipboardTransferControl
 // Clipboard content fetched from the host, handed to the SDL main thread in an SDL user event.
 struct ClipboardHostContent
 {
-    enum Kind { Text, Image, Files, RemoteFiles, RemoteFilesReady, RemoteFilesFailed, LocalNotSent };
+    // RemoteFilesSuperseded: a superseded host file list went on the clipboard over host content
+    // written just before it and was emptied again, taking that content with it
+    enum Kind { Text, Image, Files, RemoteFiles, RemoteFilesReady, RemoteFilesFailed, RemoteFilesSuperseded, LocalNotSent };
 
     int generation = 0;
     Kind kind = Text;
@@ -243,4 +245,10 @@ private:
 
     bool m_LocalSeqValid;
     quint32 m_LocalSeq;
+
+    // Hermit: the host content last written to the local clipboard (its host sequence number, and
+    // its text for Legacy hosts), forgotten again if a superseded host file list removed it
+    bool m_LastHostContentValid = false;
+    quint32 m_LastHostSeq = 0;
+    QByteArray m_LastHostText;
 };

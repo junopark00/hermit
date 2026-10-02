@@ -2003,6 +2003,20 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         post([worker, seq]() { worker->forgetHostContent(seq); });
         return;
     }
+    if (owned->kind == ClipboardHostContent::RemoteFilesSuperseded) {
+        // The host content written last may have been removed together with a superseded file
+        // list: forgotten, so the next pull fetches it again. Harmless when it was not: the
+        // worker forgets only content it still holds as current, and fetches the same again.
+        if (m_LastHostContentValid) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host content may have been removed with superseded host files; fetched again on the next pull");
+            ClipboardSyncWorker* worker = m_Worker;
+            const quint32 seq = m_LastHostSeq;
+            const QByteArray text = m_LastHostText;
+            post([worker, seq, text]() { worker->forgetHostContent(seq, text); });
+        }
+        return;
+    }
 #endif
 
     // Before writing: a host file list still waiting to go on the clipboard must not cover this
@@ -2047,6 +2061,9 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         return;
     }
     markLocalHandled();
+    m_LastHostContentValid = true;
+    m_LastHostSeq = owned->hostSeq;
+    m_LastHostText = owned->kind == ClipboardHostContent::Text ? owned->text : QByteArray();
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Clipboard %s received from host", what);
     if (owned->kind == ClipboardHostContent::Image) {

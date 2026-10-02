@@ -1489,8 +1489,23 @@ private:
             // clipboard open on every attempt: newer content written meanwhile stays.
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files superseded as they went on the clipboard; removed again");
-            emptyClipboardIfOurs([object]() { return OleIsCurrentClipboard(object) == S_OK; });
+            bool covered = false;
+            const bool settled = emptyClipboardIfOurs([object, &covered]() {
+                covered = OleIsCurrentClipboard(object) == S_OK;
+                return covered;
+            });
             releaseCurrent();
+            if (covered || !settled) {
+                // Hermit: newer host content the main thread wrote just before went with this list
+                // (or may still be under it): the main thread forgets it, so the next pull fetches
+                // it again instead of counting it as delivered.
+                auto* superseded = new ClipboardHostContent;
+                superseded->kind = ClipboardHostContent::RemoteFilesSuperseded;
+                superseded->generation = m_Generation;
+                superseded->listGeneration = generation;
+                superseded->hostSeq = list.seq;
+                pushContent(superseded);
+            }
             return;
         }
 
