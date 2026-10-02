@@ -14,6 +14,9 @@
 #define REQUEST_TIMEOUT_MS 5000
 // Hermit: Shell closes getservercert after 300 s without a PIN; an error this late is that
 #define PIN_WINDOW_ENDED_MS 290000
+// Hermit: getservercert gives up just before Shell closes it. Qt silently sends a GET again when
+// the host closes the connection without a reply, which would open a new 5-minute PIN window.
+#define PIN_WAIT_TIMEOUT_MS 295000
 #define ABANDON_TIMEOUT_MS 3000
 
 NvPairingManager::NvPairingManager(NvComputer* computer) :
@@ -269,7 +272,7 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
     QByteArray aesKey = QCryptographicHash::hash(saltedPin, hashAlgo).constData();
     aesKey.truncate(16);
 
-    // Hermit: this request waits for the PIN to be entered on the host, without a timeout
+    // Hermit: this request waits for the PIN to be entered on the host, up to PIN_WAIT_TIMEOUT_MS
     QElapsedTimer pinWait;
     pinWait.start();
     QString getCert;
@@ -278,9 +281,9 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
                                                 "pair",
                                                 "devicename=roth&updateState=1&phrase=getservercert&salt=" +
                                                 salt.toHex() + "&clientcert=" + IdentityManager::get()->getCertificate().toHex(),
-                                                0);
+                                                PIN_WAIT_TIMEOUT_MS);
     } catch (const QtNetworkReplyException& e) {
-        // Hermit: Shell drops the connection when no PIN was entered within 5 minutes
+        // Hermit: our timeout, or Shell dropped the connection: no PIN was entered within 5 minutes
         if (e.getError() != QNetworkReply::OperationCanceledError && e.getHttpStatus() == 0 &&
                 pinWait.elapsed() >= PIN_WINDOW_ENDED_MS) {
             qWarning() << "No PIN entered on the host after" << pinWait.elapsed() / 1000 << "s:" << e.toQString();

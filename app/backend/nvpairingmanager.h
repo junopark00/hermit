@@ -15,7 +15,9 @@ public:
         PIN_WRONG,
         FAILED,
         ALREADY_IN_PROGRESS,
-        PIN_NOT_ENTERED  // Hermit: the host ended the wait for its PIN (5 minutes on Shell)
+        // Hermit: the wait for the PIN ended (5 minutes on Shell). The host may still hold the
+        // session (it ends it a few seconds later): call abandonPairing().
+        PIN_NOT_ENTERED
     };
 
     explicit NvPairingManager(NvComputer* computer);
@@ -30,7 +32,7 @@ public:
     void
     setCancelCheck(std::function<bool()> cancelled);
 
-    // Hermit: after a cancelled pair(): tells the host to drop the unfinished pairing session
+    // Hermit: after a cancelled pair() or PIN_NOT_ENTERED: tells the host to drop the unfinished pairing session
     // (no longer cancellable, short timeout), so a PIN entered on the host later is not handed
     // to it. Failures are only logged.
     void

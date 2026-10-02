@@ -624,6 +624,12 @@ private:
                emit pairingCompleted(m_Computer, tr("Another pairing attempt is already in progress."), m_Attempt);
                break;
            case NvPairingManager::PairState::PIN_NOT_ENTERED:
+               // Hermit: Hermit gave up a few seconds before the host does; a PIN entered on the
+               // host meanwhile must not be accepted. Not when a newer attempt superseded it.
+               if (computerManager->isCurrentPairingAttempt(attempt) || computerManager->isPairingIdle()) {
+                   qInfo() << "Pairing attempt" << attempt << "got no PIN: asking the host to drop its pairing session";
+                   pairingManager.abandonPairing();
+               }
                emit pairingCompleted(m_Computer, tr("No PIN was entered on the host within 5 minutes. Start pairing again."), m_Attempt);
                break;
            case NvPairingManager::PairState::PAIRED:
