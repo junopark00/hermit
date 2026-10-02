@@ -97,6 +97,9 @@ the folder `%APPDATA%\Hermit`.
    **+** button and enter its IP address or host name.
 2. Select the host. Hermit shows a four-digit PIN.
 3. Enter the PIN in the host's web UI (for Shell, the pairing page at `https://<host address>:47990`).
+   **Open Shell pairing page** in the PIN dialog opens it in your browser with the PIN and this PC's
+   name already filled in; accept the self-signed certificate warning and sign in with the web UI
+   password.
 4. Pick an app or the desktop and start streaming. Press **Ctrl+Alt+Shift+H** during a stream to see
    all keyboard shortcuts, and **Ctrl+Alt+Shift+Q** to disconnect.
 

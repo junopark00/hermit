@@ -36,6 +36,10 @@ public:
 
     Q_INVOKABLE void pairComputer(int computerIndex, QString pin);
 
+    // Hermit: opens the host's web UI pairing page (Shell: https://<address>:<web UI port>/pin) in
+    // the default browser with the PIN and this PC's name in the URL fragment, which the browser
+    // keeps to itself. The PC is named by its uuid (computerUuid()) like the power actions.
+    Q_INVOKABLE void openPairingPage(QString uuid, QString pin);
 
     Q_INVOKABLE void wakeComputer(int computerIndex);
 

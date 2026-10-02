@@ -13,10 +13,20 @@ NavigableDialog {
     property string helpUrl : "https://github.com/junopark00/hermit/blob/main/docs/guide.md"
     property string helpTextSeparator : " "
 
+    // Hermit: an optional extra button, shown when actionText is set. It emits actionClicked
+    // and leaves the dialog open.
+    property string actionText
+    signal actionClicked()
+
     onOpened: {
-        // Force keyboard focus on the label so keyboard navigation works
-        if (dialogButtonBox.count > 0) {
-            dialogButtonBox.itemAt(dialogButtonBox.count - 1).forceActiveFocus(Qt.TabFocus)
+        // Force keyboard focus on the last button so keyboard navigation works
+        // (Hermit: the last visible one, as the action button may be hidden)
+        for (var i = dialogButtonBox.count - 1; i >= 0; i--) {
+            var button = dialogButtonBox.itemAt(i)
+            if (button && button.visible) {
+                button.forceActiveFocus(Qt.TabFocus)
+                break
+            }
         }
     }
 
@@ -68,6 +78,19 @@ NavigableDialog {
             Keys.onEnterPressed: clicked()
             Keys.onRightPressed: nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocus)
             Keys.onLeftPressed: nextItemInFocusChain(false).forceActiveFocus(Qt.TabFocus)
+        }
+
+        Button {
+            visible: dialog.actionText !== ""
+            flat: true
+            text: dialog.actionText
+            // No accept role: accepting would close the dialog
+            DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+            Keys.onReturnPressed: clicked()
+            Keys.onEnterPressed: clicked()
+            Keys.onRightPressed: nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocus)
+            Keys.onLeftPressed: nextItemInFocusChain(false).forceActiveFocus(Qt.TabFocus)
+            onClicked: dialog.actionClicked()
         }
 
         onHelpRequested: {

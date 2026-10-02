@@ -1212,6 +1212,14 @@ Start를 길게 눌러 끄기</translation>
       <source>Enter the PIN in the Shell web UI on the host PC (https://&lt;host address&gt;:47990).</source>
       <translation>호스트 PC의 Shell 웹 UI(https://&lt;호스트 주소&gt;:47990)에서 PIN을 입력하세요.</translation>
     </message>
+    <message>
+      <source>Open Shell pairing page fills in the PIN and this PC's name for you. The browser warns about the host's self-signed certificate and asks for the web UI password.</source>
+      <translation>Shell 페어링 페이지 열기를 누르면 PIN과 이 PC의 이름이 미리 채워집니다. 브라우저가 호스트의 자체 서명 인증서를 경고하고 웹 UI 비밀번호를 묻습니다.</translation>
+    </message>
+    <message>
+      <source>Open Shell pairing page</source>
+      <translation>Shell 페어링 페이지 열기</translation>
+    </message>
   </context>
   <context>
     <name>StreamSegue</name>

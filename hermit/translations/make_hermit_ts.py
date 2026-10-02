@@ -325,6 +325,9 @@ TRANSLATIONS = {
     # Upstream messages that name tools or hosts other than Shell, reworded for Hermit.
     ('PcView', 'Enter the PIN in the Shell web UI on the host PC (https://<host address>:47990).'):
         '호스트 PC의 Shell 웹 UI(https://<호스트 주소>:47990)에서 PIN을 입력하세요.',
+    ('PcView', "Open Shell pairing page fills in the PIN and this PC's name for you. The browser warns about the host's self-signed certificate and asks for the web UI password."):
+        'Shell 페어링 페이지 열기를 누르면 PIN과 이 PC의 이름이 미리 채워집니다. 브라우저가 호스트의 자체 서명 인증서를 경고하고 웹 UI 비밀번호를 묻습니다.',
+    ('PcView', 'Open Shell pairing page'): 'Shell 페어링 페이지 열기',
     ('SettingsView', 'This unlocks extremely high video bitrates for use with Shell hosts. It should only be used when streaming over an Ethernet LAN connection.'):
         'Shell 호스트에서 쓸 수 있는 매우 높은 비트레이트를 허용합니다. 유선 LAN으로 스트리밍할 때만 쓰세요.',
     ('SettingsView', 'Text you copy locally is sent to the host while streaming, and what you copy on the host is brought back when you switch away from the stream window. With a Shell host, images and files are synced too. Files you copy locally (up to 256 MB) are sent when the stream starts and when you switch back to the stream window. Files copied on the host (up to 4 GB) are offered on the clipboard when you leave the stream window and downloaded while you paste them; they are removed from the clipboard when the stream ends. Older Shell hosts send files up to 256 MB, fetched when you leave the window. Each direction needs its permission on the host: Clipboard Read, Clipboard Set, and File Download or File Upload for files.'):

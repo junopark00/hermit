@@ -1,6 +1,10 @@
 #include "computermodel.h"
 
+#include <QDesktopServices>
+#include <QHostAddress>
+#include <QHostInfo>
 #include <QThreadPool>
+#include <QUrl>
 
 ComputerModel::ComputerModel(QObject* object)
     : QAbstractListModel(object) {}
@@ -308,6 +312,50 @@ void ComputerModel::pairComputer(int computerIndex, QString pin)
     Q_ASSERT(computerIndex < m_Computers.count());
 
     m_ComputerManager->pairHost(m_Computers[computerIndex], pin);
+}
+
+void ComputerModel::openPairingPage(QString uuid, QString pin)
+{
+    NvComputer* computer = findComputer(uuid);
+    if (computer == nullptr) {
+        qWarning() << "Pairing page: PC" << uuid << "is no longer in the list";
+        return;
+    }
+
+    QString host;
+    uint16_t webUiPort;
+    {
+        QReadLocker lock(&computer->lock);
+        NvAddress address = computer->activeAddress;
+        if (address.isNull()) {
+            qWarning() << "Pairing page: no active address for" << computer->name;
+            return;
+        }
+
+        // IPv6 literals go in brackets, as NvAddress::toString() does
+        host = QHostAddress(address.address()).protocol() == QAbstractSocket::IPv6Protocol ?
+                    "[" + address.address() + "]" : address.address();
+
+        // Sunshine convention: HTTPS = base - 5, HTTP = base, web UI = base + 1. The active
+        // address carries the HTTP (base) port; fall back to the default when it is unknown.
+        webUiPort = address.port() != 0 ? address.port() + 1 : DEFAULT_HTTP_PORT + 1;
+    }
+
+    // The name Shell shows for this device. The pairing request itself carries the upstream
+    // "roth" placeholder, so the host takes the name from the web UI form.
+    QString deviceName = QHostInfo::localHostName();
+    if (deviceName.isEmpty()) {
+        deviceName = "Hermit";
+    }
+
+    // The PIN and name stay in the fragment: browsers never send it to the server
+    QUrl url(QString("https://%1:%2/pin").arg(host).arg(webUiPort));
+    url.setFragment("pin=" + pin + "&name=" + QString::fromLatin1(QUrl::toPercentEncoding(deviceName)),
+                    QUrl::TolerantMode);
+
+    if (!QDesktopServices::openUrl(url)) {
+        qWarning() << "Pairing page: couldn't open" << url.toString(QUrl::RemoveFragment);
+    }
 }
 
 void ComputerModel::handlePairingCompleted(NvComputer*, QString error)

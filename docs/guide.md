@@ -34,7 +34,11 @@ else works with any GameStream host, such as Sunshine or Apollo.
    automatically. To add a host by address, click **Add PC manually** (the + button) and enter its IP address
    or host name.
 2. Select the host. Hermit shows a PIN; enter it in the host's web UI (for Shell, the pairing page at
-   `https://<host address>:47990`; Sunshine and Apollo have an equivalent PIN page).
+   `https://<host address>:47990`; Sunshine and Apollo have an equivalent PIN page). **Open Shell
+   pairing page** in the PIN dialog opens that page in your browser with the PIN and this PC's name
+   filled in (the PIN travels in the URL fragment, which the browser does not send to the host). The
+   browser warns about the host's self-signed certificate and asks for the web UI password; the
+   PIN dialog stays open until pairing completes.
 3. Once paired, pick an app or the desktop to start streaming.
 
 **Settings from Moonlight.** On its first run, if Hermit has no settings yet and Moonlight is
@@ -478,6 +482,8 @@ Hermit.exe quit <host>           Quit the running app on a host
   drops point to the network; lower the bitrate or turn on automatic bitrate on Shell hosts. Long queue
   delays point to frame pacing; try turning it off.
 - **Pairing fails.** Make sure the PIN was entered on the right host and that the host's pairing page
-  was open before the PIN dialog timed out.
+  was open before the PIN dialog timed out. **Open Shell pairing page** uses the address Hermit
+  reached the host at and the host's web UI port (HTTP port + 1, normally 47990); if the host's web
+  UI listens elsewhere, open it yourself and enter the PIN.
 - **Logs.** Each run writes `%TEMP%\Hermit-<number>.log`. Attach the log of the affected run when
   reporting a problem (it contains host names and addresses, but no clipboard contents).

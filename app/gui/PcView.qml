@@ -236,6 +236,7 @@ CenteredGridView {
 
                     // Display the pairing dialog
                     pairDialog.pin = pin
+                    pairDialog.pcUuid = computerModel.computerUuid(index)
                     pairDialog.open()
                 }
             } else if (!model.online) {
@@ -286,9 +287,17 @@ CenteredGridView {
 
         // don't allow edits to the rest of the window while open
         property string pin : "0000"
+        // Hermit: the PC by uuid, for the pairing page button (the list can be re-sorted meanwhile)
+        property string pcUuid : ""
         text:qsTr("Please enter %1 on your host PC. This dialog will close when pairing is completed.").arg(pin)+"\n\n"+
-             qsTr("Enter the PIN in the Shell web UI on the host PC (https://<host address>:47990).")
+             qsTr("Enter the PIN in the Shell web UI on the host PC (https://<host address>:47990).")+"\n\n"+
+             qsTr("Open Shell pairing page fills in the PIN and this PC's name for you. The browser warns about the host's self-signed certificate and asks for the web UI password.")
         standardButtons: Dialog.Cancel
+        // Hermit: opens the host's pairing page in the browser; the dialog stays open until pairing completes
+        actionText: qsTr("Open Shell pairing page")
+        onActionClicked: {
+            computerModel.openPairingPage(pcUuid, pin)
+        }
         onRejected: {
             // FIXME: We should interrupt pairing here
         }
