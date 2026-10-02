@@ -1291,11 +1291,16 @@ public:
         if (direction != DATADIR_GET) {
             return E_NOTIMPL;
         }
+        // Hermit: the marker first. OleSetClipboard offers the formats one by one (delayed
+        // rendering) in this order, as far as is known (Wine's ole32 does; Microsoft does not
+        // document the order), and the main thread may look at the clipboard in between: with the
+        // marker first, a partly set list already shows it is ours. The main thread also knows
+        // when a publish is in progress (Owner::publishSteps), in case the order differs.
         FORMATETC list[] = {
+            {markerFormat(), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL},
             {descriptorFormat(), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL},
             {contentsFormat(), nullptr, DVASPECT_CONTENT, -1, TYMED_ISTREAM},
             {preferredEffectFormat(), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL},
-            {markerFormat(), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL},
         };
         return SHCreateStdEnumFmtEtc((UINT)(sizeof(list) / sizeof(list[0])), list, formats);
     }
@@ -1436,6 +1441,14 @@ public:
     // Main thread: false once a later publish or release was posted.
     bool isLatest(quint64 generation) const { return m_Commands.isLatest(generation); }
 
+    // Hermit, main thread: counts up when this thread starts putting a list on the clipboard and
+    // again when it is done (odd while in progress), so a look at the clipboard can tell whether
+    // a publish ran meanwhile.
+    quint64 publishSteps() const { return m_PublishSteps.load(); }
+    // Hermit: this thread's id (0 until it runs); the clipboard's owner window is OLE's window on
+    // this thread while it sets our list.
+    DWORD threadId() const { return m_ThreadId.load(); }
+
     // Main thread, when the stream ends: clears the clipboard if it still holds our files (their
     // downloads stop with the stream) and ends the thread. Waits at most timeoutMs.
     bool quit(DWORD timeoutMs)
@@ -1454,6 +1467,7 @@ private:
 
     void run()
     {
+        m_ThreadId.store(GetCurrentThreadId());
         // OleSetClipboard needs OLE, which makes this thread a single-threaded apartment.
         const HRESULT init = OleInitialize(nullptr);
         if (FAILED(init)) {
@@ -1512,7 +1526,11 @@ private:
         // messages while it waits: checked before every attempt, so a list that newer host
         // content superseded is not put on the clipboard.
         auto* object = new HostFilesDataObject(m_Hub, list, m_Published);
+        // Hermit: while the formats go on the clipboard one by one, the main thread does not take
+        // the partly set list for a local copy (publishSteps).
+        m_PublishSteps.fetch_add(1);
         const HRESULT result = setClipboardWithRetry(object, [this, generation]() { return m_Commands.isLatest(generation); });
+        m_PublishSteps.fetch_add(1);
         if (result == E_ABORT) {
             object->Release();
             return;
@@ -1617,6 +1635,8 @@ private:
     CommandQueue m_Commands;
     std::shared_ptr<PublishedObjects> m_Published;
     IDataObject* m_Current;  // owner thread only
+    std::atomic<quint64> m_PublishSteps {0};
+    std::atomic<DWORD> m_ThreadId {0};
 };
 
 // Main-thread side, created when the first host file list arrives and deleted when the stream (or
@@ -1665,6 +1685,11 @@ public:
 
     // False for the generation of a list that newer host content superseded.
     bool isLatest(quint64 listGeneration) const { return m_Owner->isLatest(listGeneration); }
+
+    // Hermit: odd while a list is being put on the clipboard; changes with every publish
+    quint64 publishSteps() const { return m_Owner->publishSteps(); }
+    // Hermit: the thread that puts our lists on the clipboard
+    DWORD ownerThreadId() const { return m_Owner->threadId(); }
 
 private:
     std::shared_ptr<Hub> m_Hub;

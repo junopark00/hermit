@@ -277,6 +277,9 @@ private:
     // Hermit: the order of the local change at local clipboard sequence seq, a real copy: the next
     // one the first time this sequence is seen, the same one when it is handled again
     quint64 observeLocalChange(quint32 seq);
+    // Hermit (Windows): what the local clipboard holds now, without sending anything; seq: its
+    // sequence number, read before the content
+    ClipboardLocalChanges::Content localClipboard(quint32& seq) const;
     void post(const std::function<void()>& job);
     void releaseHostFileList();
 
@@ -301,9 +304,7 @@ private:
 
     // Hermit: local changes observed so far (ClipboardChangeOrder), and the local clipboard
     // sequence number of the last one
-    quint64 m_LocalChanges = 0;
-    bool m_ObservedLocalSeqValid = false;
-    quint32 m_ObservedLocalSeq = 0;
+    ClipboardLocalChanges m_Local;
 
     // Hermit: the host content last written to the local clipboard (its ClipboardHostContent
     // hostKey), forgotten again if a superseded host file list removed it

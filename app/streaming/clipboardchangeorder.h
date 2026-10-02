@@ -178,3 +178,82 @@ private:
     bool m_Unconfirmed = false;
     uint64_t m_UnconfirmedOrder = 0;
 };
+
+// Hermit: the main thread's side: which local clipboard content is a local change, and the count
+// of local changes observed (the order ClipboardChangeOrder puts changes in).
+class ClipboardLocalChanges
+{
+public:
+    enum class Content {
+        Handled,       // its sequence number was handled already (sent, or written by us)
+        OwnHostFiles,  // our own list of host files (virtual files), also while it is being set
+        Empty,         // nothing: we empty it ourselves, and a failed write of host content leaves it empty
+        Copy,          // a copy made locally
+    };
+
+    // What the local clipboard holds, read without opening it.
+    struct View {
+        bool handled = false;     // its sequence number is the one handled last
+        bool marker = false;      // our marker format is on it
+        bool descriptor = false;  // file descriptors (FILEDESCRIPTORW) are on it
+        // Our owner thread is putting a host file list on the clipboard (OleSetClipboard), or was
+        // while the clipboard was read: the formats appear one by one, the marker possibly not yet
+        bool publishing = false;
+        bool ownerPublishes = false;  // the clipboard's owner window belongs to our owner thread
+        int formats = 0;          // formats on it
+    };
+
+    static Content classify(const View& view)
+    {
+        if (view.handled) {
+            return Content::Handled;
+        }
+        // Never a local copy: sending it would echo the host's files back, and counting it as a
+        // copy would release the list (the owner thread then empties the clipboard).
+        if (view.marker || (view.publishing && (view.descriptor || view.ownerPublishes))) {
+            return Content::OwnHostFiles;
+        }
+        if (view.formats == 0) {
+            return Content::Empty;
+        }
+        return Content::Copy;
+    }
+
+    // A copy at local clipboard sequence number seq: its order, the next one the first time this
+    // sequence number is seen and the same one when it is seen again. isNew: whether it was new.
+    uint64_t observe(uint32_t seq, bool* isNew = nullptr)
+    {
+        const bool fresh = !m_SeqValid || m_Seq != seq;
+        if (fresh) {
+            m_Seq = seq;
+            m_SeqValid = true;
+            m_Count++;
+        }
+        if (isNew != nullptr) {
+            *isNew = fresh;
+        }
+        return m_Count;
+    }
+
+    // Host content of hostOrder arrives while the local clipboard holds current at seq: whether
+    // it may replace it. A copy there not observed yet (its clipboard update notice still queued
+    // behind this content) counts first, and then wins. isNew: whether such a copy was observed now.
+    bool hostMayReplace(uint64_t hostOrder, Content current, uint32_t seq, bool* isNew = nullptr)
+    {
+        if (isNew != nullptr) {
+            *isNew = false;
+        }
+        if (current == Content::Copy) {
+            observe(seq, isNew);
+        }
+        return ClipboardChangeOrder::hostMayReplaceLocal(hostOrder, m_Count);
+    }
+
+    // Local changes observed so far
+    uint64_t count() const { return m_Count; }
+
+private:
+    uint64_t m_Count = 0;
+    bool m_SeqValid = false;
+    uint32_t m_Seq = 0;
+};

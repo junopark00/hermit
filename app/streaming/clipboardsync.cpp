@@ -2010,7 +2010,7 @@ void ClipboardSync::pushDroppedFiles(const QStringList& paths)
     ClipboardSyncWorker* worker = m_Worker;
     // Hermit: on the host, newer than every local change so far (not a local change itself: the
     // local clipboard did not change)
-    const quint64 order = m_LocalChanges;
+    const quint64 order = m_Local.count();
     post([worker, paths, order]() { worker->pushFiles(paths, true, 0, order); });
 }
 
@@ -2041,16 +2041,43 @@ void ClipboardSync::markLocalHandled()
 
 quint64 ClipboardSync::observeLocalChange(quint32 seq)
 {
-    if (!m_ObservedLocalSeqValid || m_ObservedLocalSeq != seq) {
-        m_ObservedLocalSeq = seq;
-        m_ObservedLocalSeqValid = true;
-        m_LocalChanges++;
+    bool isNew = false;
+    const quint64 order = m_Local.observe(seq, &isNew);
+    if (isNew) {
         // Newer than host content still on its way: a host file list waiting to go on the
         // clipboard must not cover this copy (other host content is dropped in onHostContent).
         releaseHostFileList();
     }
-    return m_LocalChanges;
+    return order;
 }
+
+#ifdef Q_OS_WIN32
+ClipboardLocalChanges::Content ClipboardSync::localClipboard(quint32& seq) const
+{
+    // Read before the content, so a copy made while it is read is handled on its own trigger.
+    seq = GetClipboardSequenceNumber();
+    ClipboardLocalChanges::View view;
+    view.handled = m_LocalSeqValid && seq == m_LocalSeq;
+    if (view.handled) {
+        return ClipboardLocalChanges::classify(view);
+    }
+    // Hermit: our owner thread may be putting a host file list on the clipboard right now, its
+    // formats appearing one by one (the marker possibly not yet). Asked before and after the
+    // formats are read, so a publish that starts or ends in between counts too.
+    const quint64 publishBefore = m_VirtualFiles != nullptr ? m_VirtualFiles->publishSteps() : 0;
+    view.marker = IsClipboardFormatAvailable(ClipboardVirtualFiles::markerFormat()) != FALSE;
+    view.descriptor = IsClipboardFormatAvailable(ClipboardVirtualFiles::descriptorFormat()) != FALSE;
+    view.formats = CountClipboardFormats();
+    if (m_VirtualFiles != nullptr) {
+        const HWND clipboardOwner = GetClipboardOwner();
+        view.ownerPublishes = clipboardOwner != nullptr &&
+                              GetWindowThreadProcessId(clipboardOwner, nullptr) == m_VirtualFiles->ownerThreadId();
+        const quint64 publishAfter = m_VirtualFiles->publishSteps();
+        view.publishing = (publishBefore & 1) != 0 || publishAfter != publishBefore;
+    }
+    return ClipboardLocalChanges::classify(view);
+}
+#endif
 
 void ClipboardSync::pushLocalToHost(Trigger trigger)
 {
@@ -2067,20 +2094,22 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
     // Each clipboard write bumps the sequence number, so this skips content we already sent
     // and content we just wrote ourselves from the host. Read once, before the content, so a
     // copy made while it is read is handled on its own trigger.
-    const quint32 localSeq = GetClipboardSequenceNumber();
-    if (m_LocalSeqValid && localSeq == m_LocalSeq) {
+    quint32 localSeq = 0;
+    const ClipboardLocalChanges::Content content = localClipboard(localSeq);
+    if (content == ClipboardLocalChanges::Content::Handled) {
         return;
     }
     auto markHandled = [this, localSeq]() {
         m_LocalSeq = localSeq;
         m_LocalSeqValid = true;
     };
-    if (IsClipboardFormatAvailable(ClipboardVirtualFiles::markerFormat())) {
-        // Our own list of host files (virtual files): never sent back.
+    if (content == ClipboardLocalChanges::Content::OwnHostFiles) {
+        // Our own list of host files (virtual files): never sent back. Hermit: also while the
+        // owner thread is still putting it on the clipboard, not counted as a local copy.
         markHandled();
         return;
     }
-    if (CountClipboardFormats() == 0) {
+    if (content == ClipboardLocalChanges::Content::Empty) {
         // Hermit: an empty clipboard is not a copy. We empty it ourselves (a superseded host file
         // list), and a failed write of host content leaves it empty: host content waiting to be
         // fetched again must still come.
@@ -2158,7 +2187,7 @@ void ClipboardSync::pullHostToLocal()
     }
     ClipboardSyncWorker* worker = m_Worker;
     // Hermit: host changes this pull sees are newer than the local changes observed by now
-    const quint64 localChanges = m_LocalChanges;
+    const quint64 localChanges = m_Local.count();
     post([worker, localChanges]() { worker->pull(localChanges); });
 }
 
@@ -2178,12 +2207,26 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
     }
     const bool hostContent = owned->kind == ClipboardHostContent::Text || owned->kind == ClipboardHostContent::Image ||
                              owned->kind == ClipboardHostContent::Files || owned->kind == ClipboardHostContent::RemoteFiles;
-    if (hostContent && !ClipboardChangeOrder::hostMayReplaceLocal(owned->changeOrder, m_LocalChanges)) {
-        // Hermit: the user copied something locally while this was on its way: the newer local
-        // copy stays (and is sent to the host).
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Clipboard content from host dropped: newer content was copied locally");
-        return;
+    if (hostContent) {
+        // Hermit: the local clipboard is looked at first (as pushLocalToHost does, without sending):
+        // a copy whose clipboard update is still queued behind this event counts as a local change
+        // now, before host content (or a host file list to publish) could cover it.
+        ClipboardLocalChanges::Content current = ClipboardLocalChanges::Content::Handled;
+        quint32 seq = 0;
+#ifdef Q_OS_WIN32
+        current = localClipboard(seq);
+#endif
+        bool newCopy = false;
+        if (!m_Local.hostMayReplace(owned->changeOrder, current, seq, &newCopy)) {
+            // The user copied something locally while this was on its way: the newer local copy
+            // stays (and is sent to the host on its trigger).
+            if (newCopy) {
+                releaseHostFileList();
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Clipboard content from host dropped: newer content was copied locally");
+            return;
+        }
     }
 
 #ifdef Q_OS_WIN32

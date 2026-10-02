@@ -331,6 +331,8 @@ int main(int argc, char** argv)
             ULONG count = 0;
             formats->Next(8, got, &count);
             CHECK(count == 4);
+            // Hermit: the marker first, so a partly set list already shows it is ours
+            CHECK(count > 0 && got[0].cfFormat == markerFormat());
             formats->Release();
 
             IDataObjectAsyncCapability* async = nullptr;
