@@ -30,8 +30,9 @@ struct ClipboardTransferControl
 {
     std::atomic<bool> active {false};
     std::atomic<bool> cancel {false};
-    // Why host files were not copied (HostFilesNotice), shown again when the user returns to the
-    // stream window: the fetch runs when they switch away, so the first notice is easy to miss.
+    // Why clipboard content did not move (ClipboardNotice), shown again when the user returns to
+    // the stream window: host content is fetched when they switch away, and local content may be
+    // sent while they work in another app, so the first notice is easy to miss.
     std::atomic<int> pendingNotice {0};
     // Host files being downloaded while File Explorer pastes them (virtual files), and a counter
     // the cancel shortcut increments to stop those downloads.
@@ -75,7 +76,8 @@ public:
     void run(const std::function<void()>& job);
 
     // Detects the host protocol (Shell extensions or the text-only clipboard endpoint) and records
-    // the host's current clipboard state without transferring it.
+    // the host's current clipboard state without transferring it. The host grants reading its
+    // clipboard (GET) and setting it (POST) separately, so either direction may be refused alone.
     void init();
 
     void pushText(const QByteArray& utf8);
@@ -88,6 +90,7 @@ public:
 
 private:
     enum class Mode { Unknown, Extended, Legacy, Disabled };
+    enum class Direction { Pull, Push };
     enum class TransferResult { Done, Failed, Cancelled, Stopped };
 
     NvHTTP* http();
@@ -98,13 +101,22 @@ private:
     TransferResult transfer(const QString& type, ClipboardArchive::ThrottledUploadDevice* upload,
                             QIODevice* sink, qint64 sinkLimit, QByteArray* response, int& qtError);
     void showTransferProgress(bool upload, qint64 done, qint64 total);
-    void showTransferEnd(TransferResult result);
+    // A cancelled transfer, or one that failed without a more specific notice.
+    void showTransferEnd(TransferResult result, int qtError);
     bool ensureReady();
+    // A Shell host, asked in a way that needs no clipboard permission (when reading its clipboard
+    // is refused, the clipboard itself cannot tell).
+    bool hostIsShell();
     // Host files (Windows): a file list for virtual files when the host can stream files, else
     // the whole archive.
     void pullFileList();
     void pullArchive();
-    void handleTextFailure(const char* operation, int qtError);
+    // Logs a failed request; a missing endpoint turns sync off, a missing permission turns off
+    // that direction only, with a notice.
+    void handleFailure(const char* operation, int qtError, Direction direction);
+    void denyDirection(Direction direction);
+    // Shows a ClipboardNotice now; repeat: also once more when the user returns to the stream window.
+    void notify(int notice, bool repeat);
     void recordHostSequence(const QByteArray& responseBody);
     void deliver(ClipboardHostContent* content);
     bool stopped() const { return m_Stopped->load(); }
@@ -123,7 +135,6 @@ private:
 
     bool m_Busy;
     QList<std::function<void()>> m_Pending;
-    bool m_ProgressShown;
     QByteArray m_ReadBuffer;
 
     Mode m_Mode;
@@ -133,7 +144,11 @@ private:
     bool m_HostTextHashValid;
     QByteArray m_HostTextHash;
     bool m_WarnedTextOnly;
+    bool m_PullDenied;    // 401 on GET: this device may not read the host clipboard
+    bool m_PushDenied;    // 401 on POST: this device may not set the host clipboard
+    bool m_PushAccepted;  // a POST succeeded, so a later 401 on files means no file upload permission
     QString m_LastError;
+    int m_LastHttpStatus;  // of the last failed request, 0 if none
 };
 
 // Clipboard sync with hosts that have the /actions/clipboard extension.
@@ -151,6 +166,10 @@ private:
 // Images and files move at most at the configured rate (clipboardRateMbps), so a large
 // transfer does not starve the video stream or the input packets, and can be cancelled with
 // Ctrl+Alt+Shift+T.
+//
+// The host allows reading its clipboard and setting it separately (and file transfers on top), so
+// a refused direction stops alone, with a notice. Content that does not move (too large,
+// unsupported, refused by the host) gets a short notice over the stream as well.
 //
 // All public methods must be called on the SDL main thread.
 class ClipboardSync

@@ -16,6 +16,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QImage>
+#include <QImageReader>
 #include <QMetaObject>
 #include <QNetworkReply>
 #include <QPair>
@@ -45,20 +46,89 @@ static void showClipboardNotice(const QString& text, int durationMs = 3500)
     }
 }
 
-// Reasons host files were not copied to this computer (ClipboardTransferControl::pendingNotice)
-enum HostFilesNotice { NoNotice = 0, DownloadNotAllowed, OverLimit, OverStreamLimit };
+constexpr int k_MaxTextBytes = 1024 * 1024;
+constexpr int k_MaxImageBytes = 32 * 1024 * 1024;       // encoded PNG, same as the host
+constexpr qint64 k_MaxRawImageBytes = 64LL * 1024 * 1024; // local PNG/DIB before conversion
+constexpr int k_MaxImageSide = 8192;                     // the host's limit is this many pixels squared
+constexpr quint64 k_MaxImagePixels = (quint64)k_MaxImageSide * k_MaxImageSide;
 
-static void showHostFilesNotice(int notice)
+// Why clipboard content did not move (ClipboardTransferControl::pendingNotice)
+enum ClipboardNotice {
+    NoNotice = 0,
+    // Host files
+    DownloadNotAllowed, OverLimit, OverStreamLimit, HostFilesUnsupported, HostFilesFailed,
+    // Other host content
+    HostImageTooLarge, HostImageUnreadable, HostImageFailed, HostTextTooLarge,
+    // Local content
+    LocalImageTooLarge, LocalImageUnsupported, LocalImageFailed, LocalTextTooLarge,
+    // Permissions for a whole direction
+    ReadNotAllowed, WriteNotAllowed, ReadWriteNotAllowed,
+};
+
+static void showNotice(int notice)
 {
-    if (notice == DownloadNotAllowed) {
-        showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files on the host not copied: the host does not allow file download for this device"), 6000);
-    }
-    else if (notice == OverLimit || notice == OverStreamLimit) {
+    QString text;
+    int durationMs = 6000;
+    switch (notice) {
+    case DownloadNotAllowed:
+        text = QCoreApplication::translate("ClipboardSync", "Files on the host not copied: the host does not allow file download for this device");
+        break;
+    case OverLimit:
+    case OverStreamLimit: {
         // Files pasted as virtual files (host with file streaming) have the higher limit
         const quint64 limit = notice == OverStreamLimit ? ClipboardArchive::k_MaxStreamFilesBytes : ClipboardArchive::k_MaxFilesBytes;
-        showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files on the host not copied: over %1 MB or %2 items")
-                            .arg(limit / (1024 * 1024)).arg(ClipboardArchive::k_MaxFileEntries), 6000);
+        text = QCoreApplication::translate("ClipboardSync", "Files on the host not copied: over %1 MB or %2 items")
+                   .arg(limit / (1024 * 1024)).arg(ClipboardArchive::k_MaxFileEntries);
+        break;
     }
+    case HostFilesUnsupported:
+        text = QCoreApplication::translate("ClipboardSync", "Host files can't be copied: unsupported or duplicate names");
+        break;
+    case HostFilesFailed:
+        text = QCoreApplication::translate("ClipboardSync", "Host files could not be copied");
+        break;
+    case HostImageTooLarge:
+        text = QCoreApplication::translate("ClipboardSync", "Image on the host not copied: over %1 MB or %2x%2 pixels")
+                   .arg(k_MaxImageBytes / (1024 * 1024)).arg(k_MaxImageSide);
+        break;
+    case HostImageUnreadable:
+        text = QCoreApplication::translate("ClipboardSync", "Image on the host not copied: it could not be read");
+        break;
+    case HostImageFailed:
+        text = QCoreApplication::translate("ClipboardSync", "Image on the host could not be copied");
+        break;
+    case HostTextTooLarge:
+        text = QCoreApplication::translate("ClipboardSync", "Text on the host not copied: over %1 MB").arg(k_MaxTextBytes / (1024 * 1024));
+        break;
+    case LocalImageTooLarge:
+        text = QCoreApplication::translate("ClipboardSync", "Image not sent to the host: over %1 MB or %2x%2 pixels")
+                   .arg(k_MaxImageBytes / (1024 * 1024)).arg(k_MaxImageSide);
+        break;
+    case LocalImageUnsupported:
+        text = QCoreApplication::translate("ClipboardSync", "Image not sent to the host: too large or in a format that can't be sent");
+        break;
+    case LocalImageFailed:
+        text = QCoreApplication::translate("ClipboardSync", "Image could not be sent to the host");
+        break;
+    case LocalTextTooLarge:
+        text = QCoreApplication::translate("ClipboardSync", "Text not sent to the host: over %1 MB").arg(k_MaxTextBytes / (1024 * 1024));
+        break;
+    case ReadNotAllowed:
+        text = QCoreApplication::translate("ClipboardSync", "Clipboard: the host does not allow reading its clipboard for this device. Allow Clipboard Read in the host's device permissions.");
+        durationMs = 8000;
+        break;
+    case WriteNotAllowed:
+        text = QCoreApplication::translate("ClipboardSync", "Clipboard: the host does not allow sending to its clipboard for this device. Allow Clipboard Set in the host's device permissions.");
+        durationMs = 8000;
+        break;
+    case ReadWriteNotAllowed:
+        text = QCoreApplication::translate("ClipboardSync", "Clipboard: the host does not allow clipboard sync for this device. Allow Clipboard Read and Clipboard Set in the host's device permissions.");
+        durationMs = 8000;
+        break;
+    default:
+        return;
+    }
+    showClipboardNotice(text, durationMs);
 }
 
 static QString formatTransferSize(qint64 bytes)
@@ -95,11 +165,6 @@ constexpr int k_TransferTickMs = 10;
 constexpr qint64 k_ProgressDelayMs = 1000;
 constexpr qint64 k_ProgressIntervalMs = 500;
 constexpr int k_ProgressToastMs = 1500;
-
-constexpr int k_MaxTextBytes = 1024 * 1024;
-constexpr int k_MaxImageBytes = 32 * 1024 * 1024;       // encoded PNG, same as the host
-constexpr qint64 k_MaxRawImageBytes = 64LL * 1024 * 1024; // local PNG/DIB before conversion
-constexpr quint64 k_MaxImagePixels = 8192ULL * 8192ULL;
 
 std::atomic<int> s_NextGeneration {1};
 
@@ -161,6 +226,33 @@ bool parseSeq(const QByteArray& body, quint32& seq)
     }
     seq = value.toUInt(&ok);
     return ok;
+}
+
+// Pixels in an image (PNG, or a packed DIB on Windows) from its header, without decoding it; 0 if
+// the header cannot be read.
+quint64 imagePixels(const QByteArray& data, bool isDib)
+{
+#ifdef Q_OS_WIN32
+    if (isDib) {
+        BITMAPINFOHEADER header;
+        if (data.size() < (qsizetype)sizeof(header)) {
+            return 0;
+        }
+        memcpy(&header, data.constData(), sizeof(header));
+        if (header.biSize < sizeof(BITMAPINFOHEADER)) {
+            return 0;
+        }
+        return (quint64)qAbs((qint64)header.biWidth) * (quint64)qAbs((qint64)header.biHeight);
+    }
+#else
+    Q_UNUSED(isDib);
+#endif
+    QBuffer buffer;
+    buffer.setData(data);
+    buffer.open(QIODevice::ReadOnly);
+    QImageReader reader(&buffer);
+    const QSize size = reader.size();
+    return size.isValid() ? (quint64)size.width() * (quint64)size.height() : 0;
 }
 
 #ifdef Q_OS_WIN32
@@ -430,13 +522,16 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_Control(std::move(control)),
       m_Http(nullptr),
       m_Busy(false),
-      m_ProgressShown(false),
       m_Mode(Mode::Unknown),
       m_HostSeqValid(false),
       m_HostStreamsFiles(false),
       m_HostSeq(0),
       m_HostTextHashValid(false),
-      m_WarnedTextOnly(false)
+      m_WarnedTextOnly(false),
+      m_PullDenied(false),
+      m_PushDenied(false),
+      m_PushAccepted(false),
+      m_LastHttpStatus(0)
 {
 }
 
@@ -468,6 +563,7 @@ NvHTTP* ClipboardSyncWorker::http()
 
 bool ClipboardSyncWorker::request(const QString& type, const QByteArray* postBody, int timeoutMs, QByteArray& body, int& qtError)
 {
+    m_LastHttpStatus = 0;
     try {
         body = http()->clipboardRequest(type, postBody, timeoutMs);
         qtError = QNetworkReply::NoError;
@@ -475,6 +571,7 @@ bool ClipboardSyncWorker::request(const QString& type, const QByteArray* postBod
     }
     catch (const QtNetworkReplyException& e) {
         qtError = e.getError();
+        m_LastHttpStatus = e.getHttpStatus();
         m_LastError = e.toQString();
     }
     catch (const HostHttpResponseException& e) {
@@ -493,7 +590,7 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
     const bool isUpload = upload != nullptr;
     qtError = QNetworkReply::NoError;
     m_LastError.clear();
-    m_ProgressShown = false;
+    m_LastHttpStatus = 0;
 
     // Uploads are throttled by the body device itself.
     ClipboardArchive::RateLimiter limiter(isUpload ? 0 : m_RateBytesPerSecond);
@@ -631,6 +728,7 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
         return TransferResult::Failed;
     case State::TooLarge:
         qtError = QNetworkReply::UnknownContentError;  // what the host answers with 413
+        m_LastHttpStatus = 413;
         m_LastError = QStringLiteral("over the size limit");
         return TransferResult::Failed;
     case State::WriteFailed:
@@ -656,7 +754,13 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
         }
         else {
             qtError = reply->error();
+            m_LastHttpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
             m_LastError = reply->errorString();
+            // The host says why in the body (a name it cannot copy, for example)
+            const QByteArray reason = reply->readAll().left(200).trimmed();
+            if (!reason.isEmpty()) {
+                m_LastError += QStringLiteral(": ") + QString::fromUtf8(reason);
+            }
         }
         return TransferResult::Failed;
     }
@@ -672,6 +776,7 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
     switch (state) {
     case State::TooLarge:
         qtError = QNetworkReply::UnknownContentError;
+        m_LastHttpStatus = 413;
         m_LastError = QStringLiteral("over the size limit");
         return TransferResult::Failed;
     case State::WriteFailed:
@@ -707,10 +812,9 @@ void ClipboardSyncWorker::showTransferProgress(bool upload, qint64 done, qint64 
     text += QStringLiteral(" · ") + QCoreApplication::translate("ClipboardSync", "Ctrl+Alt+Shift+T to cancel");
     // Outlives the update interval, so the notice stays up until the next update or the end.
     showClipboardNotice(text, k_ProgressToastMs);
-    m_ProgressShown = true;
 }
 
-void ClipboardSyncWorker::showTransferEnd(TransferResult result)
+void ClipboardSyncWorker::showTransferEnd(TransferResult result, int qtError)
 {
     if (stopped()) {
         return;
@@ -718,13 +822,59 @@ void ClipboardSyncWorker::showTransferEnd(TransferResult result)
     if (result == TransferResult::Cancelled) {
         showClipboardNotice(QCoreApplication::translate("ClipboardSync", "File transfer cancelled"));
     }
-    else if (result == TransferResult::Failed && m_ProgressShown) {
-        // Only after a progress notice; quick failures are just logged as before.
+    else if (result == TransferResult::Failed && qtError != QNetworkReply::ContentAccessDenied) {
+        // 403 is left out: the host no longer sees our stream, which is ending anyway.
         showClipboardNotice(QCoreApplication::translate("ClipboardSync", "File transfer failed"));
     }
 }
 
-void ClipboardSyncWorker::handleTextFailure(const char* operation, int qtError)
+void ClipboardSyncWorker::notify(int notice, bool repeat)
+{
+    if (stopped()) {
+        return;
+    }
+    if (repeat) {
+        // Both directions refused, one after the other: one notice says so.
+        auto isPermission = [](int n) { return n == ReadNotAllowed || n == WriteNotAllowed || n == ReadWriteNotAllowed; };
+        int pending = m_Control->pendingNotice.load();
+        int merged;
+        do {
+            merged = notice;
+            if (isPermission(notice) && isPermission(pending) && pending != notice) {
+                merged = ReadWriteNotAllowed;
+            }
+        } while (!m_Control->pendingNotice.compare_exchange_weak(pending, merged));
+    }
+    showNotice(notice);
+}
+
+void ClipboardSyncWorker::denyDirection(Direction direction)
+{
+    if (direction == Direction::Pull) {
+        if (m_PullDenied) {
+            return;
+        }
+        m_PullDenied = true;
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Clipboard from the host turned off: this device lacks the clipboard read permission on the host");
+    }
+    else {
+        if (m_PushDenied) {
+            return;
+        }
+        m_PushDenied = true;
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Clipboard to the host turned off: this device lacks the clipboard set permission on the host");
+    }
+    if (m_PullDenied && m_PushDenied) {
+        notify(ReadWriteNotAllowed, true);
+    }
+    else {
+        notify(direction == Direction::Pull ? ReadNotAllowed : WriteNotAllowed, true);
+    }
+}
+
+void ClipboardSyncWorker::handleFailure(const char* operation, int qtError, Direction direction)
 {
     switch (qtError) {
     case QNetworkReply::ContentNotFoundError:
@@ -734,10 +884,9 @@ void ClipboardSyncWorker::handleTextFailure(const char* operation, int qtError)
         m_Mode = Mode::Disabled;
         break;
     case QNetworkReply::AuthenticationRequiredError:
-        // 401: this device lacks the clipboard permission on the host.
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "Clipboard sync disabled: clipboard permission not granted on the host");
-        m_Mode = Mode::Disabled;
+        // 401: this device lacks the permission for this direction (read or set) on the host;
+        // the other direction keeps working.
+        denyDirection(direction);
         break;
     case QNetworkReply::ContentAccessDenied:
         // 403: the host does not see an active stream for us yet (or any more). Transient.
@@ -797,6 +946,16 @@ void ClipboardSyncWorker::init()
                     m_HostStreamsFiles ? " (files pasted as they download)" : "");
         return;
     }
+    if (error == QNetworkReply::AuthenticationRequiredError) {
+        // This device may not read the host clipboard, so its reply cannot tell which protocol
+        // the host speaks; sending to it may still be allowed.
+        denyDirection(Direction::Pull);
+        m_Mode = hostIsShell() ? Mode::Extended : Mode::Legacy;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Clipboard sync: sending only, %s",
+                    m_Mode == Mode::Extended ? "text, images and files" : "text");
+        return;
+    }
     if (error == QNetworkReply::NoError || error == QNetworkReply::ProtocolInvalidOperationError) {
         // 400 (or a reply without a sequence number): a host that only understands type=text.
         m_Mode = Mode::Legacy;
@@ -806,9 +965,26 @@ void ClipboardSyncWorker::init()
             m_HostTextHash = hashOf(body);
             m_HostTextHashValid = true;
         }
+        else if (error == QNetworkReply::AuthenticationRequiredError) {
+            denyDirection(Direction::Pull);
+        }
         return;
     }
-    handleTextFailure("setup", error);
+    handleFailure("setup", error, Direction::Pull);
+}
+
+bool ClipboardSyncWorker::hostIsShell()
+{
+    // The power query answers every paired device (with whether it may use it); other hosts have
+    // no such endpoint.
+    try {
+        const QByteArray body = http()->powerRequest(QStringLiteral("query"), false, k_InfoTimeoutMs);
+        QByteArray value;
+        return parseField(body, "supported", value);
+    }
+    catch (const std::exception&) {
+        return false;
+    }
 }
 
 bool ClipboardSyncWorker::ensureReady()
@@ -824,13 +1000,14 @@ bool ClipboardSyncWorker::ensureReady()
 
 void ClipboardSyncWorker::pushText(const QByteArray& utf8)
 {
-    if (utf8.isEmpty() || !ensureReady()) {
+    if (utf8.isEmpty() || !ensureReady() || m_PushDenied) {
         return;
     }
     if (utf8.size() > k_MaxTextBytes) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Local clipboard text not sent: %d bytes exceeds the %d byte limit",
                     (int)utf8.size(), k_MaxTextBytes);
+        notify(LocalTextTooLarge, false);
         return;
     }
 
@@ -845,9 +1022,10 @@ void ClipboardSyncWorker::pushText(const QByteArray& utf8)
     QByteArray body;
     int error = QNetworkReply::NoError;
     if (!request(QStringLiteral("text"), &utf8, k_TextTimeoutMs, body, error)) {
-        handleTextFailure("send", error);
+        handleFailure("send", error, Direction::Push);
         return;
     }
+    m_PushAccepted = true;
     m_HostTextHash = hash;
     m_HostTextHashValid = true;
     recordHostSequence(body);
@@ -857,7 +1035,7 @@ void ClipboardSyncWorker::pushText(const QByteArray& utf8)
 
 void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib)
 {
-    if (!ensureReady()) {
+    if (!ensureReady() || m_PushDenied) {
         return;
     }
     if (m_Mode != Mode::Extended) {
@@ -869,21 +1047,31 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib)
         return;
     }
 
+    // The host takes at most 8192x8192 pixels; checked from the header before converting.
+    const quint64 pixels = imagePixels(data, isDib);
+    if (pixels > k_MaxImagePixels) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Local clipboard image not sent: %llu pixels exceeds the %dx%d limit",
+                    (unsigned long long)pixels, k_MaxImageSide, k_MaxImageSide);
+        notify(LocalImageTooLarge, false);
+        return;
+    }
 #ifdef Q_OS_WIN32
     const QByteArray png = isDib ? dibToPng(data) : data;
 #else
-    Q_UNUSED(isDib);
     const QByteArray png = data;
 #endif
     if (png.isEmpty()) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Local clipboard image could not be converted");
+        notify(LocalImageUnsupported, false);
         return;
     }
     if (png.size() > k_MaxImageBytes) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Local clipboard image not sent: %d KB exceeds the %d MB limit",
                     (int)(png.size() / 1024), k_MaxImageBytes / (1024 * 1024));
+        notify(LocalImageTooLarge, false);
         return;
     }
 
@@ -893,17 +1081,31 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib)
     ClipboardArchive::BufferUploadDevice device(png, m_RateBytesPerSecond);
     device.open(QIODevice::ReadOnly | QIODevice::Unbuffered);
     const TransferResult result = transfer(QStringLiteral("image"), &device, nullptr, 0, &body, error);
-    if (result != TransferResult::Done) {
-        if (result == TransferResult::Cancelled) {
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                        "Sending the clipboard image to the host was cancelled");
-        }
-        else if (result == TransferResult::Failed) {
-            handleTextFailure("image send", error);
-        }
-        showTransferEnd(result);
+    if (result == TransferResult::Cancelled) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Sending the clipboard image to the host was cancelled");
+        showTransferEnd(result, error);
         return;
     }
+    if (result == TransferResult::Failed) {
+        if (m_LastHttpStatus == 413) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Clipboard image not sent: the host refused it as too large");
+            notify(LocalImageTooLarge, false);
+        }
+        else {
+            handleFailure("image send", error, Direction::Push);
+            if (error != QNetworkReply::AuthenticationRequiredError && error != QNetworkReply::ContentAccessDenied &&
+                error != QNetworkReply::ContentNotFoundError) {
+                notify(LocalImageFailed, false);
+            }
+        }
+        return;
+    }
+    if (result != TransferResult::Done) {
+        return;
+    }
+    m_PushAccepted = true;
     recordHostSequence(body);
     m_HostTextHashValid = false;
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -917,6 +1119,12 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib)
 void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped)
 {
     const bool ready = ensureReady();
+    if (ready && m_PushDenied) {
+        if (dropped) {
+            notify(WriteNotAllowed, false);
+        }
+        return;
+    }
     if ((!ready || m_Mode != Mode::Extended) && dropped && !stopped()) {
         showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Sending files needs a Shell host that allows clipboard and file transfer for this device"), 5000);
     }
@@ -956,18 +1164,32 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Sending files to the host was cancelled");
     }
-    if (result == TransferResult::Failed) {
-        if (error == QNetworkReply::AuthenticationRequiredError) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "Files not sent: file upload permission is not granted to this device on the host");
-            // Copied files are sent when the user returns to the stream window, so the notice is
-            // seen there just like for dropped files
-            if (!stopped()) {
-                showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files not sent: the host does not allow file upload for this device"), 5000);
-                return;
-            }
+    if (result == TransferResult::Failed && error == QNetworkReply::AuthenticationRequiredError) {
+        // Files need the clipboard set permission and the file upload one. A 401 after the host
+        // already took something from us means the file upload permission is missing.
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Files not sent: %s is not granted to this device on the host",
+                    m_PushAccepted ? "the file upload permission" : "the clipboard set or file upload permission");
+        // Copied files are sent when the user returns to the stream window, so the notice is
+        // seen there just like for dropped files
+        if (!stopped()) {
+            showClipboardNotice(m_PushAccepted
+                                    ? QCoreApplication::translate("ClipboardSync", "Files not sent: the host does not allow file upload for this device")
+                                    : QCoreApplication::translate("ClipboardSync", "Files not sent: the host does not allow sending to its clipboard or file upload for this device. Check Clipboard Set and File Upload in the host's device permissions."),
+                                6000);
         }
-        else if (error == QNetworkReply::ContentAccessDenied) {
+        return;
+    }
+    if (result == TransferResult::Failed && m_LastHttpStatus == 422) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Files not sent: the host refused them: %s", qPrintable(m_LastError));
+        if (!stopped()) {
+            showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files not sent: the host can't take these names"), 5000);
+        }
+        return;
+    }
+    if (result == TransferResult::Failed) {
+        if (error == QNetworkReply::ContentAccessDenied) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Files not sent: host reports no active stream");
         }
@@ -977,9 +1199,10 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped)
         }
     }
     if (result != TransferResult::Done) {
-        showTransferEnd(result);
+        showTransferEnd(result, error);
         return;
     }
+    m_PushAccepted = true;
     recordHostSequence(body);
     m_HostTextHashValid = false;
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -997,7 +1220,7 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped)
 
 void ClipboardSyncWorker::pull()
 {
-    if (!ensureReady()) {
+    if (!ensureReady() || m_PullDenied) {
         return;
     }
 
@@ -1006,7 +1229,7 @@ void ClipboardSyncWorker::pull()
 
     if (m_Mode == Mode::Legacy) {
         if (!request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
-            handleTextFailure("fetch", error);
+            handleFailure("fetch", error, Direction::Pull);
             return;
         }
         const QByteArray hash = hashOf(body);
@@ -1014,7 +1237,13 @@ void ClipboardSyncWorker::pull()
         m_HostTextHash = hash;
         m_HostTextHashValid = true;
         // Empty means the host has no text; leave the local clipboard alone.
-        if (changed && !body.isEmpty() && body.size() <= k_MaxTextBytes) {
+        if (changed && body.size() > k_MaxTextBytes) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host clipboard text ignored: %d bytes exceeds the %d byte limit",
+                        (int)body.size(), k_MaxTextBytes);
+            notify(HostTextTooLarge, true);
+        }
+        else if (changed && !body.isEmpty()) {
             auto* content = new ClipboardHostContent;
             content->kind = ClipboardHostContent::Text;
             content->text = body;
@@ -1024,7 +1253,7 @@ void ClipboardSyncWorker::pull()
     }
 
     if (!request(QStringLiteral("info"), nullptr, k_InfoTimeoutMs, body, error)) {
-        handleTextFailure("check", error);
+        handleFailure("check", error, Direction::Pull);
         return;
     }
     quint32 seq = 0;
@@ -1042,14 +1271,20 @@ void ClipboardSyncWorker::pull()
 
     if (type == "text") {
         if (!request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
-            handleTextFailure("fetch", error);
+            handleFailure("fetch", error, Direction::Pull);
             return;
         }
         m_HostSeq = seq;
         m_HostSeqValid = true;
         m_HostTextHash = hashOf(body);
         m_HostTextHashValid = true;
-        if (!body.isEmpty() && body.size() <= k_MaxTextBytes) {
+        if (body.size() > k_MaxTextBytes) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host clipboard text ignored: %d bytes exceeds the %d byte limit",
+                        (int)body.size(), k_MaxTextBytes);
+            notify(HostTextTooLarge, true);
+        }
+        else if (!body.isEmpty()) {
             auto* content = new ClipboardHostContent;
             content->kind = ClipboardHostContent::Text;
             content->text = body;
@@ -1072,28 +1307,43 @@ void ClipboardSyncWorker::pull()
         ActiveTransfer active(*m_Control);
         const TransferResult result = transfer(QStringLiteral("image"), nullptr, &buffer, k_MaxImageBytes, nullptr, error);
         buffer.close();
-        if (result != TransferResult::Done) {
-            if (result == TransferResult::Cancelled) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "Fetching the host clipboard image was cancelled");
-            }
-            else if (result == TransferResult::Failed && error == QNetworkReply::UnknownContentError) {
-                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "Host clipboard image ignored: over the %d MB limit", k_MaxImageBytes / (1024 * 1024));
-            }
-            else if (result == TransferResult::Failed) {
-                handleTextFailure("image fetch", error);
-            }
-            showTransferEnd(result);
+        if (result == TransferResult::Cancelled) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Fetching the host clipboard image was cancelled");
+            showTransferEnd(result, error);
             return;
         }
-        if (body.isEmpty()) {
+        if (result == TransferResult::Failed) {
+            if (m_LastHttpStatus == 413) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Host clipboard image ignored: over the %d MB limit", k_MaxImageBytes / (1024 * 1024));
+                notify(HostImageTooLarge, true);
+            }
+            else {
+                handleFailure("image fetch", error, Direction::Pull);
+                if (error != QNetworkReply::AuthenticationRequiredError && error != QNetworkReply::ContentAccessDenied &&
+                    error != QNetworkReply::ContentNotFoundError) {
+                    notify(HostImageFailed, true);
+                }
+            }
+            return;
+        }
+        if (result != TransferResult::Done || body.isEmpty()) {
+            return;  // empty: no image any more, or over the host's own limit
+        }
+        const quint64 pixels = imagePixels(body, false);
+        if (pixels > k_MaxImagePixels) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host clipboard image ignored: %llu pixels exceeds the %dx%d limit",
+                        (unsigned long long)pixels, k_MaxImageSide, k_MaxImageSide);
+            notify(HostImageTooLarge, true);
             return;
         }
         QByteArray dib = pngToDibV5(body);
         if (dib.isEmpty()) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Host clipboard image could not be decoded");
+            notify(HostImageUnreadable, true);
             return;
         }
         auto* content = new ClipboardHostContent;
@@ -1123,18 +1373,22 @@ void ClipboardSyncWorker::pullFileList()
     int error = QNetworkReply::NoError;
     if (!request(QStringLiteral("filelist"), nullptr, k_FileListTimeoutMs, body, error)) {
         if (error == QNetworkReply::AuthenticationRequiredError) {
+            // The clipboard info just came through, so reading the clipboard is allowed and this
+            // is the file download permission.
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files not copied: file download permission is not granted to this device");
-            m_Control->pendingNotice.store(DownloadNotAllowed);
-            showHostFilesNotice(DownloadNotAllowed);
+            notify(DownloadNotAllowed, true);
         }
-        else if (error == QNetworkReply::UnknownContentError) {
-            // 413 from the host
+        else if (m_LastHttpStatus == 413) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files not copied: over the %d MB / %d item limit",
                         (int)(ClipboardArchive::k_MaxStreamFilesBytes / (1024 * 1024)), k_MaxFileEntries);
-            m_Control->pendingNotice.store(OverStreamLimit);
-            showHostFilesNotice(OverStreamLimit);
+            notify(OverStreamLimit, true);
+        }
+        else if (m_LastHttpStatus == 422) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files not copied: the host cannot list them (unsupported or duplicate names)");
+            notify(HostFilesUnsupported, true);
         }
         else if (error == QNetworkReply::ContentAccessDenied) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1143,6 +1397,7 @@ void ClipboardSyncWorker::pullFileList()
         else {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Fetching the host file list failed: %s", qPrintable(m_LastError));
+            notify(HostFilesFailed, true);
         }
         return;
     }
@@ -1156,6 +1411,8 @@ void ClipboardSyncWorker::pullFileList()
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Host file list rejected: %s", qPrintable(listError));
         delete content;
+        notify(listError == QLatin1String("unsafe path") || listError == QLatin1String("duplicate path")
+                   ? HostFilesUnsupported : HostFilesFailed, true);
         return;
     }
     if (!ClipboardVirtualFiles::fitsFileDescriptors(content->remoteFiles)) {
@@ -1182,6 +1439,7 @@ void ClipboardSyncWorker::pullArchive()
     if (!QDir().mkpath(stagingRoot)) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Host files not copied: cannot create the staging folder");
+        notify(HostFilesFailed, true);
         return;
     }
     // Left over if Hermit was closed during a download (removal fails harmlessly while in use).
@@ -1195,6 +1453,7 @@ void ClipboardSyncWorker::pullArchive()
     if (!archiveFile.open()) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Host files not copied: cannot create a temporary file");
+        notify(HostFilesFailed, true);
         return;
     }
     ActiveTransfer active(*m_Control);
@@ -1202,29 +1461,38 @@ void ClipboardSyncWorker::pullArchive()
     if (result == TransferResult::Cancelled) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Fetching files from the host was cancelled");
+        showTransferEnd(result, error);
+        return;
     }
     if (result == TransferResult::Failed) {
         if (error == QNetworkReply::AuthenticationRequiredError) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files not copied: file download permission is not granted to this device");
-            m_Control->pendingNotice.store(DownloadNotAllowed);
-            showHostFilesNotice(DownloadNotAllowed);
+            notify(DownloadNotAllowed, true);
         }
-        else if (error == QNetworkReply::UnknownContentError) {
-            // 413 from the host
+        else if (m_LastHttpStatus == 413) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files not copied: over the %d MB / %d item limit",
                         (int)(k_MaxFilesBytes / (1024 * 1024)), k_MaxFileEntries);
-            m_Control->pendingNotice.store(OverLimit);
-            showHostFilesNotice(OverLimit);
+            notify(OverLimit, true);
+        }
+        else if (m_LastHttpStatus == 422) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files not copied: %s", qPrintable(m_LastError));
+            notify(HostFilesUnsupported, true);
+        }
+        else if (error == QNetworkReply::ContentAccessDenied) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files not copied: host reports no active stream");
         }
         else {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Fetching files from host failed: %s", qPrintable(m_LastError));
+            notify(HostFilesFailed, true);
         }
+        return;
     }
     if (result != TransferResult::Done) {
-        showTransferEnd(result);
         return;
     }
     if (!archiveFile.flush() || archiveFile.size() == 0) {
@@ -1236,6 +1504,9 @@ void ClipboardSyncWorker::pullArchive()
     if (!ClipboardArchive::validateArchive(archiveFile, entries, archiveError)) {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Host files rejected: %s", qPrintable(archiveError));
+        notify(archiveError == QLatin1String("unsafe path") || archiveError == QLatin1String("duplicate path") ||
+                       archiveError == QLatin1String("file used as directory")
+                   ? HostFilesUnsupported : HostFilesFailed, true);
         return;
     }
     QStringList topLevel;
@@ -1244,11 +1515,12 @@ void ClipboardSyncWorker::pullArchive()
         if (cancelled()) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Fetching files from the host was cancelled");
-            showTransferEnd(TransferResult::Cancelled);
+            showTransferEnd(TransferResult::Cancelled, QNetworkReply::NoError);
         }
         else {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files could not be saved: %s", qPrintable(archiveError));
+            notify(HostFilesFailed, true);
         }
         return;
     }
@@ -1398,7 +1670,7 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
     ClipboardSyncWorker* worker = m_Worker;
 
     if (trigger == Trigger::FocusGained) {
-        showHostFilesNotice(m_Control->pendingNotice.exchange(NoNotice));
+        showNotice(m_Control->pendingNotice.exchange(NoNotice));
     }
 
 #ifdef Q_OS_WIN32
@@ -1435,6 +1707,7 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         if (data.isEmpty()) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Local clipboard image not sent: unsupported format or over the size limit");
+            showNotice(LocalImageUnsupported);
             return;
         }
         post([worker, data, isDib]() { worker->pushImage(data, isDib); });

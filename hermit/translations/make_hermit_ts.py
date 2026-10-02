@@ -226,6 +226,33 @@ TRANSLATIONS = {
     ('Session', 'Turn on clipboard sync to send dropped files to the host'):
         '끌어 놓은 파일을 호스트로 보내려면 클립보드 동기화를 켜세요',
 
+    # Clipboard content that did not move, and permissions per direction
+    ('ClipboardSync', "Host files can't be copied: unsupported or duplicate names"):
+        '호스트의 파일을 가져올 수 없습니다: 지원하지 않거나 중복된 이름이 있습니다',
+    ('ClipboardSync', 'Host files could not be copied'): '호스트의 파일을 가져오지 못했습니다',
+    ('ClipboardSync', 'Image on the host not copied: over %1 MB or %2x%2 pixels'):
+        '호스트의 이미지를 가져오지 못했습니다: %1MB 또는 %2x%2 픽셀을 넘었습니다',
+    ('ClipboardSync', 'Image on the host not copied: it could not be read'):
+        '호스트의 이미지를 가져오지 못했습니다: 이미지를 읽을 수 없습니다',
+    ('ClipboardSync', 'Image on the host could not be copied'): '호스트의 이미지를 가져오지 못했습니다',
+    ('ClipboardSync', 'Text on the host not copied: over %1 MB'): '호스트의 텍스트를 가져오지 못했습니다: %1MB를 넘었습니다',
+    ('ClipboardSync', 'Image not sent to the host: over %1 MB or %2x%2 pixels'):
+        '이미지를 호스트로 보내지 못했습니다: %1MB 또는 %2x%2 픽셀을 넘었습니다',
+    ('ClipboardSync', "Image not sent to the host: too large or in a format that can't be sent"):
+        '이미지를 호스트로 보내지 못했습니다: 너무 크거나 보낼 수 없는 형식입니다',
+    ('ClipboardSync', 'Image could not be sent to the host'): '이미지를 호스트로 보내지 못했습니다',
+    ('ClipboardSync', 'Text not sent to the host: over %1 MB'): '텍스트를 호스트로 보내지 못했습니다: %1MB를 넘었습니다',
+    ('ClipboardSync', "Clipboard: the host does not allow reading its clipboard for this device. Allow Clipboard Read in the host's device permissions."):
+        '클립보드: 호스트가 이 기기의 호스트 클립보드 읽기를 허용하지 않습니다. 호스트의 기기 권한에서 클립보드 읽기를 허용하세요.',
+    ('ClipboardSync', "Clipboard: the host does not allow sending to its clipboard for this device. Allow Clipboard Set in the host's device permissions."):
+        '클립보드: 호스트가 이 기기에서 호스트 클립보드로 보내는 것을 허용하지 않습니다. 호스트의 기기 권한에서 클립보드 쓰기를 허용하세요.',
+    ('ClipboardSync', "Clipboard: the host does not allow clipboard sync for this device. Allow Clipboard Read and Clipboard Set in the host's device permissions."):
+        '클립보드: 호스트가 이 기기의 클립보드 동기화를 허용하지 않습니다. 호스트의 기기 권한에서 클립보드 읽기와 클립보드 쓰기를 허용하세요.',
+    ('ClipboardSync', "Files not sent: the host does not allow sending to its clipboard or file upload for this device. Check Clipboard Set and File Upload in the host's device permissions."):
+        '파일을 보내지 못했습니다: 호스트가 이 기기의 클립보드 쓰기 또는 파일 업로드를 허용하지 않습니다. 호스트의 기기 권한에서 클립보드 쓰기와 파일 업로드를 확인하세요.',
+    ('ClipboardSync', "Files not sent: the host can't take these names"):
+        '파일을 보내지 못했습니다: 호스트에서 쓸 수 없는 이름이 있습니다',
+
     # Keyboard shortcut list (Ctrl+Alt+Shift+H)
     ('Session', 'Keyboard shortcuts'): '단축키',
     ('Session', 'Mouse mode: remote desktop (absolute)'): '마우스 모드: 원격 데스크톱 (절대 좌표)',
@@ -296,8 +323,8 @@ TRANSLATIONS = {
         '호스트 PC의 Shell 웹 UI(https://<호스트 주소>:47990)에서 PIN을 입력하세요.',
     ('SettingsView', 'This unlocks extremely high video bitrates for use with Shell hosts. It should only be used when streaming over an Ethernet LAN connection.'):
         'Shell 호스트에서 쓸 수 있는 매우 높은 비트레이트를 허용합니다. 유선 LAN으로 스트리밍할 때만 쓰세요.',
-    ('SettingsView', 'Text you copy locally is sent to the host while streaming, and what you copy on the host is brought back when you switch away from the stream window. With a Shell host, images and files (up to 256 MB) are synced too; files move when the stream starts and when you switch back to the stream window. Requires the clipboard (and, for files, file transfer) permissions on the host.'):
-        '스트리밍 중 이 PC에서 복사한 텍스트를 호스트로 보내고, 호스트에서 복사한 내용은 스트림 창에서 나올 때 가져옵니다. Shell 호스트에서는 이미지와 파일(최대 256MB)도 동기화하며, 파일은 스트림 시작 시와 스트림 창으로 돌아올 때 옮깁니다. 호스트에서 이 기기에 클립보드 권한(파일은 파일 전송 권한도)이 있어야 합니다.',
+    ('SettingsView', 'Text you copy locally is sent to the host while streaming, and what you copy on the host is brought back when you switch away from the stream window. With a Shell host, images and files are synced too. Files you copy locally (up to 256 MB) are sent when the stream starts and when you switch back to the stream window. Files copied on the host (up to 4 GB) are offered on the clipboard when you leave the stream window and downloaded while you paste them; they are removed from the clipboard when the stream ends. Older Shell hosts send files up to 256 MB, fetched when you leave the window. Each direction needs its permission on the host: Clipboard Read, Clipboard Set, and File Download or File Upload for files.'):
+        '스트리밍 중 이 PC에서 복사한 텍스트를 호스트로 보내고, 호스트에서 복사한 내용은 스트림 창에서 나올 때 가져옵니다. Shell 호스트에서는 이미지와 파일도 동기화합니다. 이 PC에서 복사한 파일(최대 256MB)은 스트림 시작 시와 스트림 창으로 돌아올 때 보냅니다. 호스트에서 복사한 파일(최대 4GB)은 스트림 창에서 나올 때 클립보드에 올려 두고 붙여넣는 동안 내려받으며, 스트림이 끝나면 클립보드에서 지웁니다. 이전 Shell 호스트에서는 256MB까지, 스트림 창에서 나올 때 가져옵니다. 방향마다 호스트의 권한이 필요합니다: 클립보드 읽기, 클립보드 쓰기, 파일은 파일 다운로드와 파일 업로드.',
     ('SettingsView', 'Show a summary after each session'): '세션이 끝나면 요약 보기',
     ('SettingsView', 'After a stream of at least 30 seconds, shows frame rate, network loss and latency compared with your previous sessions. Every session is also added to a history file (CSV) that opens in any spreadsheet app.'):
         '30초 이상 스트리밍한 뒤 프레임 레이트, 네트워크 손실, 지연을 이전 세션들과 비교해 보여줍니다. 모든 세션은 스프레드시트 앱에서 열 수 있는 기록 파일(CSV)에도 저장됩니다.',

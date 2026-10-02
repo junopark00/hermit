@@ -28,7 +28,9 @@ Windows, and also works with other GameStream hosts such as Sunshine and Apollo.
 - **Clipboard sync.** Copy and paste text between the two PCs; with Shell, images and files as well,
   with a speed limit so transfers do not hurt the stream. Files copied on the host paste at once in File
   Explorer and download while Explorer copies them (up to 4 GB; 256 MB to the host). You can also drop
-  files onto the stream window to put them on the host's clipboard.
+  files onto the stream window to put them on the host's clipboard. Each direction needs its
+  permission in the host's device permissions (Clipboard Read, Clipboard Set, and File Download or
+  File Upload for files), which a newly paired device does not have yet.
 - **Virtual display that follows the stream.** Shell creates its virtual display at the resolution
   you stream at, resizes it when you reconnect at a new resolution, and hands the desktop back to the
   monitors when one is turned on.

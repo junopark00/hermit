@@ -1153,7 +1153,7 @@ Flickable {
                     ToolTip.delay: 1000
                     ToolTip.timeout: 15000
                     ToolTip.visible: hovered || activeFocus
-                    ToolTip.text: qsTr("Text you copy locally is sent to the host while streaming, and what you copy on the host is brought back when you switch away from the stream window. With a Shell host, images and files (up to 256 MB) are synced too; files move when the stream starts and when you switch back to the stream window. Requires the clipboard (and, for files, file transfer) permissions on the host.")
+                    ToolTip.text: qsTr("Text you copy locally is sent to the host while streaming, and what you copy on the host is brought back when you switch away from the stream window. With a Shell host, images and files are synced too. Files you copy locally (up to 256 MB) are sent when the stream starts and when you switch back to the stream window. Files copied on the host (up to 4 GB) are offered on the clipboard when you leave the stream window and downloaded while you paste them; they are removed from the clipboard when the stream ends. Older Shell hosts send files up to 256 MB, fetched when you leave the window. Each direction needs its permission on the host: Clipboard Read, Clipboard Set, and File Download or File Upload for files.")
                 }
 
                 Row {

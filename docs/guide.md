@@ -233,10 +233,20 @@ to sync the clipboard in both directions.
   under the stream for 3.5 seconds (for example, "2 items sent to the host (453 KB)"). Text is copied
   too often to be announced. Notices never cover a connection quality warning; only the shortcut list
   (Ctrl+Alt+Shift+H) appears above the warning, which returns when the list closes.
+- Content that does not move also gets a short notice: an image over 32 MB or 8192×8192 pixels or in
+  a format that can't be converted, text over 1 MB, host files over the limit, host files with names
+  the host can't copy ("unsupported or duplicate names"), or a transfer that failed. Host content is
+  fetched when you leave the stream window, where the notice is easy to miss, so a notice about host
+  content (or a missing permission) is shown once more when you return to the stream window.
 - Turn it off with Settings → Streaming conveniences → "Sync clipboard with the host" (on by
   default).
-- On the host, the device needs the clipboard read and write permissions, and for files also the file
-  upload and download permissions.
+- **Permissions**: the host grants each direction separately in its device permissions. Clipboard
+  Read lets this device fetch the host's clipboard; Clipboard Set lets it send to the host's
+  clipboard. Files also need File Download (from the host) or File Upload (to the host). A newly
+  paired device has none of them. When one is missing, only that direction stops: for example, with
+  Clipboard Set alone, what you copy locally still reaches the host. A notice over the stream names
+  the missing permission (once, and once more when you return to the stream window); turn it on in
+  the host's device permissions and start a new stream.
 - Image and file sync is available in the Windows client only.
 
 ## Dropping files onto the stream (Shell)

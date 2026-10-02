@@ -650,7 +650,8 @@ NvHTTP::openConnection(QUrl baseUrl,
             throw exception;
         }
         else {
-            QtNetworkReplyException exception(reply->error(), reply->errorString());
+            QtNetworkReplyException exception(reply->error(), reply->errorString(),
+                                              reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt());
             delete reply;
             throw exception;
         }
