@@ -560,7 +560,6 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_LocalNetworkNoticeSeqValid(false),
       m_LocalNetworkNoticeSeq(0),
       m_UploadSentAll(false),
-      m_SetupTried(false),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -1051,17 +1050,17 @@ void ClipboardSyncWorker::init(quint64 localChanges)
     if (stopped() || m_Mode != Mode::Unknown) {
         return;
     }
-    // Hermit: only the setup at stream start sees the host's content from before the stream. One
-    // that failed then and succeeds later cannot tell whether the host's clipboard changed
-    // meanwhile, so what it finds is a host change seen now: the local content from stream start,
-    // still waiting to be sent, does not overwrite it, and the next pull fetches it. When the host
-    // did not change after all, its content wins over that local content (copy it again to send
-    // it), which is better than overwriting a copy made on the host during the stream.
-    const bool atStart = !m_SetupTried;
-    m_SetupTried = true;
-    if (!atStart) {
+    // Hermit: only a setup while none failed before (at stream start) sees the host's content from
+    // before the stream. One after a failed attempt cannot tell whether the host's clipboard
+    // changed meanwhile, so what it finds is a host change seen by the last failed attempt: local
+    // content from before that attempt, still waiting to be sent, does not overwrite it, and the
+    // next pull fetches it; a copy made after it (such as the one this job sends) wins
+    // (ClipboardChangeOrder::hostSetUp). When the host did not change after all, its content wins
+    // over that older local content (copy it again to send it), which is better than overwriting a
+    // copy made on the host during the stream.
+    if (m_Order.setupStarting(localChanges)) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Clipboard sync: setting up again after it failed at stream start");
+                    "Clipboard sync: setting up again after it failed");
     }
 
     QByteArray body;
@@ -1070,7 +1069,7 @@ void ClipboardSyncWorker::init(quint64 localChanges)
     if (request(QStringLiteral("info"), nullptr, k_InfoTimeoutMs, body, error) && parseSeq(body, seq)) {
         // Shell host: remember its current state, but do not copy it yet (Hermit: at stream start).
         m_Mode = Mode::Extended;
-        m_Order.hostSetUp(seq, atStart, localChanges);
+        m_Order.hostSetUp(seq);
         QByteArray files;
         m_HostStreamsFiles = parseField(body, "files", files) && files == "stream";
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1096,7 +1095,7 @@ void ClipboardSyncWorker::init(quint64 localChanges)
         if (request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
             m_HostTextHash = hashOf(body);
             m_HostTextHashValid = true;
-            m_Order.hostSetUp(textKey(m_HostTextHash), atStart, localChanges);
+            m_Order.hostSetUp(textKey(m_HostTextHash));
         }
         else if (error == QNetworkReply::AuthenticationRequiredError) {
             denyDirection(Direction::Pull);
@@ -1104,6 +1103,11 @@ void ClipboardSyncWorker::init(quint64 localChanges)
         return;
     }
     handleFailure("setup", error, Direction::Pull);
+    if (m_Mode == Mode::Unknown) {
+        // Hermit: tried again by the next job, which then takes what it finds for a host change
+        // (ClipboardChangeOrder::hostSetUp)
+        m_Order.setupFailed();
+    }
 }
 
 bool ClipboardSyncWorker::hostIsShell()

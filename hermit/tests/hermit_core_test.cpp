@@ -422,7 +422,7 @@ static void testClipboardChangeOrder()
     }
 }
 
-// Clipboard sync: what the worker and the main thread feed into the rule above (round 10).
+// Clipboard sync: what the worker and the main thread feed into the rule above (rounds 10 and 11).
 static void testClipboardChangeInputs()
 {
     using HC = ClipboardChangeOrder::HostContent;
@@ -431,36 +431,92 @@ static void testClipboardChangeInputs()
     // Setup at stream start: the host's content is from before the stream, not a change.
     {
         ClipboardChangeOrder o;
-        o.hostSetUp(100, true, 0);
+        CHECK(!o.setupStarting(0));
+        o.hostSetUp(100);
         CHECK(o.hostSeen(100, 1) == HC::Unchanged);
         CHECK(o.localMayReplaceHost(1));
     }
-    // Setup that failed at stream start and succeeds later, in the job sending the local content
-    // from stream start again: the host's content may have changed meanwhile, so that stale
-    // content no longer overwrites it, and the next pull fetches it (round 10, 1).
+    // A setup only counts as late after one failed: one that runs after another that succeeded
+    // still records the host's content as no change (round 11, 1).
     {
         ClipboardChangeOrder o;
+        CHECK(!o.setupStarting(0));
+        CHECK(!o.setupStarting(1));
+        o.hostSetUp(100);
+        CHECK(o.localMayReplaceHost(1));
+        CHECK(o.hostSeen(100, 1) == HC::Unchanged);
+    }
+    // Setup failed at stream start (posted before any local change) and succeeds in the job that
+    // sends the copy from stream start: that copy was observed after the failed attempt and wins,
+    // and the host's content is not fetched over it (round 11, 1).
+    {
+        ClipboardChangeOrder o;
+        CHECK(!o.setupStarting(0));
+        o.setupFailed();
         const quint64 startCopy = 1;
-        o.hostSetUp(100, false, startCopy);
+        CHECK(o.setupStarting(startCopy));  // late
+        o.hostSetUp(100);
+        CHECK(o.localMayReplaceHost(startCopy));
+        CHECK(o.hostSeen(100, startCopy) == HC::Superseded);
+        o.localSent(true, 101, startCopy);
+        CHECK(o.hostSeen(101, startCopy) == HC::Unchanged);
+    }
+    // ...but when that job failed to set up too, the copy from stream start (waiting to be sent
+    // again) came before the last failed attempt: the host's content found by a later setup may be
+    // newer, so the copy no longer overwrites it and the next pull fetches it; a newer local copy
+    // still wins (rounds 10 and 11, 1).
+    {
+        ClipboardChangeOrder o;
+        o.setupStarting(0);
+        o.setupFailed();
+        const quint64 startCopy = 1;
+        o.setupStarting(startCopy);
+        o.setupFailed();
+        CHECK(o.setupStarting(startCopy));  // sent again on the next trigger
+        o.hostSetUp(100);
         CHECK(!o.localMayReplaceHost(startCopy));
         CHECK(o.hostSeen(100, startCopy) == HC::Fetch);
         CHECK(o.hostSeen(100, startCopy) == HC::Unchanged);
-        CHECK(o.localMayReplaceHost(startCopy + 1));  // a newer local copy still wins
+        CHECK(o.localMayReplaceHost(startCopy + 1));
     }
-    // ...set up late by a pull: fetched by that pull; a local copy made before the next pull wins.
+    // A pull posted after 2 local changes fails to set up, and a later job sets up: the host's
+    // content is fetched unless a copy was made after the failed pull (round 11, 1).
     {
         ClipboardChangeOrder o;
-        o.hostSetUp(100, false, 2);
+        o.setupStarting(2);
+        o.setupFailed();
+        o.setupStarting(2);
+        o.hostSetUp(100);
+        CHECK(!o.localMayReplaceHost(2));
         CHECK(o.hostSeen(100, 2) == HC::Fetch);
         ClipboardChangeOrder p;
-        p.hostSetUp(100, false, 2);
-        CHECK(p.hostSeen(100, 3) == HC::Superseded);
+        p.setupStarting(2);
+        p.setupFailed();
+        p.setupStarting(3);  // the push of a copy made after the failed pull
+        p.hostSetUp(100);
         CHECK(p.localMayReplaceHost(3));
+        CHECK(p.hostSeen(100, 3) == HC::Superseded);
+    }
+    // The last failed attempt counts, never an older one: a re-sent older copy failing again does
+    // not make the host's content older than a pull that failed before it.
+    {
+        ClipboardChangeOrder o;
+        o.setupStarting(3);
+        o.setupFailed();
+        o.setupStarting(1);
+        o.setupFailed();
+        o.setupStarting(4);
+        o.hostSetUp(100);
+        CHECK(!o.localMayReplaceHost(3));
+        CHECK(o.localMayReplaceHost(4));
     }
     // Text-only hosts set up late: the same with the key of the text.
     {
         ClipboardChangeOrder o;
-        o.hostSetUp(0xA, false, 1);
+        o.setupStarting(1);
+        o.setupFailed();
+        o.setupStarting(1);
+        o.hostSetUp(0xA);
         CHECK(!o.localMayReplaceHost(1));
         CHECK(o.hostSeen(0xA, 1) == HC::Fetch);
     }

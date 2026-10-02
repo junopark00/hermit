@@ -91,9 +91,10 @@ public:
     // Detects the host protocol (Shell extensions or the text-only clipboard endpoint) and records
     // the host's current clipboard state without transferring it. The host grants reading its
     // clipboard (GET) and setting it (POST) separately, so either direction may be refused alone.
-    // Hermit: the first attempt (at stream start) records the host's content as no change; a later
-    // one, after that failed, as a host change seen by a job posted after localChanges local
-    // changes (ClipboardChangeOrder::hostSetUp).
+    // Hermit: localChanges: the local changes observed when the job was posted (a push: the order
+    // of its local change). While no attempt failed (at stream start) the host's content is
+    // recorded as no change; after one failed, as a host change seen by the last failed attempt
+    // (ClipboardChangeOrder::hostSetUp).
     void init(quint64 localChanges = 0);
 
     // localSeq: the local clipboard sequence number of the content (Windows), handed back in a
@@ -206,7 +207,6 @@ private:
     bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error
     quint32 m_LocalNetworkNoticeSeq;
     bool m_UploadSentAll;  // Hermit: the last upload sent every byte (transfer)
-    bool m_SetupTried;     // Hermit: init ran once (the setup at stream start)
     // Hermit: the host text last seen or sent, so identical text is not echoed back without local
     // change tracking
     bool m_HostTextHashValid;

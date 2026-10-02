@@ -18,8 +18,9 @@
 //   older than every local change seen after it;
 // - content this side put on the host takes the order of its local change; dropped files the count
 //   when they were dropped (newer on the host than every local change so far);
-// - host content found when sync is set up is not a change only at stream start; a setup that
-//   succeeds later takes it for a host change seen then (hostSetUp);
+// - host content found when sync is set up is not a change while no setup failed before (at stream
+//   start); a setup that succeeds after one failed takes it for a host change seen by the last
+//   failed attempt (hostSetUp);
 // - files whose every byte reached the host without its confirmation count as sent, and the next
 //   new host files as those files, unless a local change came first (localSentUnconfirmed).
 //
@@ -53,23 +54,41 @@ public:
         m_Unconfirmed = false;
     }
 
-    // Sync was set up and found host content key. Only the setup at stream start records it as
-    // the host's content before the stream (hostRecorded). A setup that failed then and succeeds
-    // later cannot tell whether the host's clipboard changed in between (the user copied there
-    // during the stream), so the content is a host change seen now by a job posted after
-    // localChanges local changes: local content older than that (the content from stream start,
-    // waiting to be sent again) no longer replaces it, and the next pull fetches it while no newer
-    // local change came. The trade-off: when the host did not change after all, its older content
-    // wins over the local content from stream start, which is then not sent (copy it again).
-    void hostSetUp(uint64_t key, bool atStart, uint64_t localChanges)
+    // A setup (the worker's init) starts in a job posted after localChanges local changes (a push:
+    // the order of its local change). True when one failed before: what this one finds is then
+    // no longer known to be the host's content from before the stream (hostSetUp).
+    bool setupStarting(uint64_t localChanges)
     {
-        if (atStart) {
+        m_SetupOrder = localChanges;
+        return m_SetupFailed;
+    }
+
+    // The setup that started last could not get the host's answer (a network error, a busy host,
+    // no active stream seen by the host yet): the next job tries again.
+    void setupFailed()
+    {
+        m_SetupFailed = true;
+        m_SetupFailedOrder = (std::max)(m_SetupFailedOrder, m_SetupOrder);
+    }
+
+    // Sync was set up and found host content key. While no setup failed before (at stream start),
+    // it is the host's content from before the stream (hostRecorded). A setup after a failed one
+    // cannot tell whether the host's clipboard changed in between (the user copied there during
+    // the stream), so the content is a host change seen by the last failed attempt: newer than
+    // every local change observed before that attempt's job was posted, older than every one
+    // after. Local content from before it (waiting to be sent again) no longer replaces it and the
+    // next pull fetches it; a copy made since wins and is sent, also the one whose job set sync up
+    // now. The trade-off: when the host did not change after all, its older content wins over
+    // local content from before the last failed attempt, which is then not sent (copy it again).
+    void hostSetUp(uint64_t key)
+    {
+        if (!m_SetupFailed) {
             hostRecorded(key);
             return;
         }
         m_HostKnown = true;
         m_HostKey = key;
-        m_HostOrder = (std::max)(m_HostOrder, localChanges);
+        m_HostOrder = (std::max)(m_HostOrder, m_SetupFailedOrder);
         m_HostPending = true;
         m_Unconfirmed = false;
     }
@@ -175,6 +194,9 @@ private:
     uint64_t m_HostKey = 0;
     uint64_t m_HostOrder = 0;
     bool m_HostPending = false;
+    uint64_t m_SetupOrder = 0;        // of the job whose setup started last
+    bool m_SetupFailed = false;       // a setup failed (tried again by a later job)
+    uint64_t m_SetupFailedOrder = 0;  // of the job whose setup failed last
     bool m_Unconfirmed = false;
     uint64_t m_UnconfirmedOrder = 0;
 };
