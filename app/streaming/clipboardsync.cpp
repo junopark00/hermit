@@ -559,6 +559,7 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_HostNetworkNoticeKey(0),
       m_LocalNetworkNoticeSeqValid(false),
       m_LocalNetworkNoticeSeq(0),
+      m_UploadSentAll(false),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -768,6 +769,7 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
         loop.exec(QEventLoop::ExcludeUserInputEvents);
     }
     tick.stop();
+    m_UploadSentAll = sentAllMs >= 0;
 
     const bool finished = reply->isFinished();
     // No more callbacks into this frame's locals.
@@ -1401,16 +1403,32 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
         }
         return;
     }
+    if (result == TransferResult::Failed && error == QNetworkReply::TimeoutError && m_UploadSentAll) {
+        // Hermit: every byte reached the host, which was still unpacking the files and placing them
+        // on its clipboard when the wait for its answer ended. It most likely took them, so they
+        // are not sent again (up to 256 MB once more); the notice says they may still arrive.
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Sending files to host: %s; not sent again", qPrintable(m_LastError));
+        if (!stopped()) {
+            showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files sent, but the host did not confirm them in time; they may still arrive"), 5000);
+        }
+        return;
+    }
     if (result == TransferResult::Failed && !dropped && m_LastHttpStatus == 0 && error > 0) {
         // Hermit: copied files hit by a network error without a reply (a timeout, connection
-        // refused or reset, an upload cut off) are sent again when the user next returns to the
-        // stream window, unless the host's clipboard changes first, with one notice per content.
-        // Dropped files keep their notice and are not sent again by themselves.
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "Sending files to host failed: %s; sent again on the next return", qPrintable(m_LastError));
-        localNotSent(localSeq);
+        // refused or reset, an upload cut off) are sent once more when the user next returns to
+        // the stream window, unless the host's clipboard changes first, with one notice. Dropped
+        // files keep their notice and are not sent again by themselves.
         if (firstLocalNetworkError(localSeq)) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Sending files to host failed: %s; sent again on the next return", qPrintable(m_LastError));
+            localNotSent(localSeq);
             showTransferEnd(result, error);
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Sending files to host failed again: %s; not sent again until they are copied again",
+                        qPrintable(m_LastError));
         }
         return;
     }

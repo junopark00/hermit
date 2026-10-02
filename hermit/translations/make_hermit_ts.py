@@ -261,6 +261,8 @@ TRANSLATIONS = {
         '파일을 보내지 못했습니다: 호스트가 이 기기의 클립보드 쓰기 또는 파일 업로드를 허용하지 않습니다. 호스트의 기기 권한에서 클립보드 쓰기와 파일 업로드를 확인하세요.',
     ('ClipboardSync', "Files not sent: the host can't take these names"):
         '파일을 보내지 못했습니다: 호스트에서 쓸 수 없는 이름이 있습니다',
+    ('ClipboardSync', 'Files sent, but the host did not confirm them in time; they may still arrive'):
+        '파일을 보냈지만 호스트가 제때 확인하지 않았습니다. 곧 도착할 수 있습니다',
 
     # Keyboard shortcut list (Ctrl+Alt+Shift+H)
     ('Session', 'Keyboard shortcuts'): '단축키',

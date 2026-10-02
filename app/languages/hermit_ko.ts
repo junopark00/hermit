@@ -157,6 +157,10 @@
       <source>Files not sent: the host can't take these names</source>
       <translation>파일을 보내지 못했습니다: 호스트에서 쓸 수 없는 이름이 있습니다</translation>
     </message>
+    <message>
+      <source>Files sent, but the host did not confirm them in time; they may still arrive</source>
+      <translation>파일을 보냈지만 호스트가 제때 확인하지 않았습니다. 곧 도착할 수 있습니다</translation>
+    </message>
   </context>
   <context>
     <name>ReconnectDialog</name>

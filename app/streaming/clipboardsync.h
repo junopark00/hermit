@@ -164,7 +164,8 @@ private:
     // stopped): the main thread sends it again on the next trigger.
     void localNotSent(quint32 localSeq);
     // Hermit: local image or files not sent after a network error without a reply. True the first
-    // time for this local sequence, so the caller shows its notice once per content.
+    // time for this local sequence, so the caller shows its notice once per content (and sends
+    // files again only once).
     bool firstLocalNetworkError(quint32 localSeq);
     // A 422 for host files: a notice for the reason the host gave.
     void notifyHostFilesRefused();
@@ -197,6 +198,7 @@ private:
     quint64 m_HostNetworkNoticeKey;
     bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error
     quint32 m_LocalNetworkNoticeSeq;
+    bool m_UploadSentAll;  // Hermit: the last upload sent every byte (transfer)
     // Hermit: the host text last seen or sent, so identical text is not echoed back without local
     // change tracking
     bool m_HostTextHashValid;
