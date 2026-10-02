@@ -15,8 +15,8 @@ public:
         PIN_WRONG,
         FAILED,
         ALREADY_IN_PROGRESS,
-        // Hermit: the wait for the PIN ended (5 minutes on Shell). The host may still hold the
-        // session (it ends it a few seconds later): call abandonPairing().
+        // Hermit: the wait for the PIN ended (just under 5 minutes, on every host). The host may
+        // still hold the session (Shell ends it a few seconds later): call abandonPairing().
         PIN_NOT_ENTERED
     };
 

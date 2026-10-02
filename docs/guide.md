@@ -38,8 +38,9 @@ else works with any GameStream host, such as Sunshine or Apollo.
    pairing page** in the PIN dialog opens that page in your browser with the PIN and this PC's name
    filled in (the PIN travels in the URL fragment, which the browser does not send to the host). The
    browser warns about the host's self-signed certificate and asks for the web UI password; the
-   PIN dialog stays open until pairing completes. Shell waits 5 minutes for the PIN; after that
-   Hermit says no PIN was entered, and the PIN is no longer accepted. **Cancel** stops the attempt
+   PIN dialog stays open until pairing completes. Hermit waits about 5 minutes for the PIN with
+   every host; after that it says no PIN was entered (Shell also drops the attempt at 5 minutes, so
+   the PIN is no longer accepted there). **Cancel** stops the attempt
    and asks the host to drop it; selecting the host again starts a new one with a new PIN. NVIDIA
    GameStream hosts are not asked to drop it on Cancel or when no PIN was entered: there Hermit uses
    the client ID that Moonlight clients share, so that request could unpair all of them.
@@ -513,8 +514,8 @@ Hermit.exe quit <host>           Quit the running app on a host
 - **The stream stutters.** Open the performance overlay (Ctrl+Alt+Shift+S): network loss and jitter
   drops point to the network; lower the bitrate or turn on automatic bitrate on Shell hosts. Long queue
   delays point to frame pacing; try turning it off.
-- **Pairing fails.** Make sure the PIN was entered on the right host, and on Shell within 5 minutes
-  (after that, select the host again for a new PIN). **Open Shell pairing page** uses the address Hermit
+- **Pairing fails.** Make sure the PIN was entered on the right host within about 5 minutes (after
+  that, select the host again for a new PIN). **Open Shell pairing page** uses the address Hermit
   reached the host at and the host's web UI port (HTTP port + 1, normally 47990); if the host's web
   UI listens elsewhere, or the PIN dialog says the page could not be opened (no browser), open it
   yourself and enter the PIN.
