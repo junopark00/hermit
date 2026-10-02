@@ -395,8 +395,9 @@ TRANSLATIONS = {
     ('Session', 'Host software version 3.0 or higher is required for 4K streaming.'): '4K 스트리밍에는 호스트 소프트웨어 3.0 이상이 필요합니다.',
     ('NvHTTP', 'Missing audio capture device. Reinstalling the host software should resolve this error.'):
         '오디오 캡처 장치가 없습니다. 호스트 소프트웨어를 다시 설치하면 이 오류가 해결됩니다.',
-    ('main', "This version of Hermit isn't optimized for your PC. Please download the '%1' version of Hermit for the best streaming performance."):
-        '이 Hermit 빌드는 이 PC에 맞게 최적화되어 있지 않습니다. 최상의 성능을 위해 %1 빌드를 쓰세요.',
+    ('main', 'Hermit runs under x64 emulation on this %1 PC, so streaming performance may be lower.'):
+        '이 %1 PC에서는 Hermit이 x64 에뮬레이션으로 실행되므로 스트리밍 성능이 낮을 수 있습니다.',
+    ('main', 'Click the Help button for possible solutions.'): '도움말 버튼을 눌러 해결 방법을 확인하세요.',
     ('PendingPairingTask', 'The host returned an error: %1'): '호스트가 오류를 반환했습니다: %1',
     ('QPlatformTheme', 'Save'): '저장',
 }

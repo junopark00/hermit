@@ -1234,8 +1234,12 @@ Start를 길게 눌러 끄기</translation>
   <context>
     <name>main</name>
     <message>
-      <source>This version of Hermit isn't optimized for your PC. Please download the '%1' version of Hermit for the best streaming performance.</source>
-      <translation>이 Hermit 빌드는 이 PC에 맞게 최적화되어 있지 않습니다. 최상의 성능을 위해 %1 빌드를 쓰세요.</translation>
+      <source>Hermit runs under x64 emulation on this %1 PC, so streaming performance may be lower.</source>
+      <translation>이 %1 PC에서는 Hermit이 x64 에뮬레이션으로 실행되므로 스트리밍 성능이 낮을 수 있습니다.</translation>
+    </message>
+    <message>
+      <source>Click the Help button for possible solutions.</source>
+      <translation>도움말 버튼을 눌러 해결 방법을 확인하세요.</translation>
     </message>
   </context>
   <context>

@@ -466,6 +466,11 @@ Hermit.exe quit <host>           Quit the running app on a host
   these ports, or both sides must be on the same VPN.
 - **"No video received from host."** The connection was set up but video packets never arrived:
   usually a firewall or port forwarding problem for the UDP ports listed in the message.
+- **"Starting ... failed" or the connection ends during a stream.** Check that the host is running
+  and reachable and that the ports above are open; a message that lists ports names the ones that
+  failed. Errors when a stream starts or ends have a **Help** button that opens this section. When
+  the network drops during a stream, Hermit reconnects by itself (see
+  [Automatic reconnect](#automatic-reconnect)).
 - **The stream stutters.** Open the performance overlay (Ctrl+Alt+Shift+S): network loss and jitter
   drops point to the network; lower the bitrate or turn on automatic bitrate on Shell hosts. Long queue
   delays point to frame pacing; try turning it off.

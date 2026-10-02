@@ -413,11 +413,12 @@ ApplicationWindow {
                    "Try running with QT_QPA_PLATFORM=wayland or switch to X11.")
     }
 
-    // Hermit: no download link (upstream's opened its own releases page); Hermit builds x64 only
+    // Hermit: no download link (upstream's opened its own releases page). Hermit is built for x64
+    // only, so there is no other version to suggest; on an ARM64 PC it runs under emulation.
     NavigableMessageDialog {
         id: wow64Dialog
         standardButtons: Dialog.Ok
-        text: qsTr("This version of Hermit isn't optimized for your PC. Please download the '%1' version of Hermit for the best streaming performance.").arg(SystemProperties.friendlyNativeArchName)
+        text: qsTr("Hermit runs under x64 emulation on this %1 PC, so streaming performance may be lower.").arg(SystemProperties.friendlyNativeArchName)
     }
 
     ErrorMessageDialog {
@@ -446,6 +447,9 @@ ApplicationWindow {
         id: streamSegueErrorDialog
 
         property bool quitAfter: false
+
+        // Hermit: stream start and connection failures; Help opens the guide's troubleshooting
+        helpText: qsTr("Click the Help button for possible solutions.")
 
         onClosed: {
             if (quitAfter) {
