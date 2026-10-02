@@ -201,6 +201,45 @@ private:
     uint64_t m_UnconfirmedOrder = 0;
 };
 
+// Hermit: host images and files whose fetch hit a network error without a reply (a timeout,
+// connection refused or reset, a transfer cut off), which may be passing: one notice per content,
+// and whether it is fetched again. Each kind of transfer keeps its own record, so a failed file
+// list does not use up the one retry and notice of the archive of the same files (and the other
+// way round).
+class ClipboardHostNetworkErrors
+{
+public:
+    enum class Transfer {
+        Image,     // large: fetched once more at most, then not until the host's clipboard changes
+        FileList,  // small (names and sizes): fetched again each time
+        Archive,   // large, like an image
+    };
+
+    struct Outcome {
+        bool notice = false;  // the first error for this content and transfer: say so
+        bool retry = false;   // fetch it again on a later pull (ClipboardChangeOrder::hostRetry)
+    };
+
+    // A network error for transfer of host content key
+    Outcome failed(Transfer transfer, uint64_t key)
+    {
+        Seen& seen = m_Seen[static_cast<int>(transfer)];
+        Outcome outcome;
+        outcome.notice = !seen.valid || seen.key != key;
+        outcome.retry = outcome.notice || transfer == Transfer::FileList;
+        seen.valid = true;
+        seen.key = key;
+        return outcome;
+    }
+
+private:
+    struct Seen {
+        bool valid = false;
+        uint64_t key = 0;
+    };
+    Seen m_Seen[3];
+};
+
 // Hermit: the main thread's side: which local clipboard content is a local change, and the count
 // of local changes observed (the order ClipboardChangeOrder puts changes in).
 class ClipboardLocalChanges

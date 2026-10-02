@@ -555,8 +555,6 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_HostStreamsFiles(false),
       m_HostFilesErrorKeyValid(false),
       m_HostFilesErrorKey(0),
-      m_HostNetworkNoticeKeyValid(false),
-      m_HostNetworkNoticeKey(0),
       m_LocalNetworkNoticeSeqValid(false),
       m_LocalNetworkNoticeSeq(0),
       m_UploadSentAll(false),
@@ -1636,7 +1634,7 @@ void ClipboardSyncWorker::pull(quint64 localChanges)
                 // (unless a local change comes first), with one notice. After a second one, not
                 // fetched again until the host's clipboard changes.
                 handleFailure("image fetch", error, Direction::Pull);
-                if (retryAfterNetworkError(true)) {
+                if (retryAfterNetworkError(ClipboardHostNetworkErrors::Transfer::Image)) {
                     notify(HostImageFailed, true);
                 }
             }
@@ -1763,10 +1761,12 @@ void ClipboardSyncWorker::failedHostFiles(int qtError, bool archive)
         // A timeout: the host may still be preparing the files (cloud placeholders it has to fetch
         // first, for example), so they are offered again when the user next leaves the stream
         // window. Hermit: so are they after a network error without a reply (connection refused
-        // or reset, a transfer cut off), which may be passing too. One notice per content, as
-        // such an error can come every time. The archive (up to 256 MB) is fetched once more at
-        // most, then not until the host's clipboard changes; the list (no file data) each time.
-        if (retryAfterNetworkError(archive)) {
+        // or reset, a transfer cut off), which may be passing too. One notice per content (and
+        // transfer), as such an error can come every time. The archive (up to 256 MB) is fetched
+        // once more at most, then not until the host's clipboard changes; the list (no file data)
+        // each time.
+        if (retryAfterNetworkError(archive ? ClipboardHostNetworkErrors::Transfer::Archive
+                                           : ClipboardHostNetworkErrors::Transfer::FileList)) {
             notify(HostFilesFailed, true);
         }
         else if (archive) {
@@ -1794,16 +1794,14 @@ void ClipboardSyncWorker::failedHostFiles(int qtError, bool archive)
     notify(HostFilesFailed, true);
 }
 
-bool ClipboardSyncWorker::retryAfterNetworkError(bool once)
+bool ClipboardSyncWorker::retryAfterNetworkError(ClipboardHostNetworkErrors::Transfer transfer)
 {
     const quint64 key = m_Order.hostKey();
-    const bool first = !m_HostNetworkNoticeKeyValid || m_HostNetworkNoticeKey != key;
-    if (first || !once) {
+    const ClipboardHostNetworkErrors::Outcome outcome = m_HostNetworkErrors.failed(transfer, key);
+    if (outcome.retry) {
         m_Order.hostRetry(key);
     }
-    m_HostNetworkNoticeKey = key;
-    m_HostNetworkNoticeKeyValid = true;
-    return first;
+    return outcome.notice;
 }
 
 void ClipboardSyncWorker::pullArchive()

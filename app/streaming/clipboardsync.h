@@ -153,10 +153,11 @@ private:
     // list (small), fetched again each time, with one notice.
     void failedHostFiles(int qtError, bool archive);
     // Hermit: a network error without a reply (timeout, connection refused or reset, a transfer cut
-    // off) for host images or files. True the first time for this host content: the caller shows
-    // its notice, and the content is fetched again on a later pull. once: after that, it is not
-    // fetched again until the host's clipboard changes (large content); else it always is.
-    bool retryAfterNetworkError(bool once);
+    // off) for host images or files, by transfer. True the first time for this host content and
+    // transfer: the caller shows its notice. The content is fetched again on a later pull; an image
+    // or archive only once, then not until the host's clipboard changes, a file list each time
+    // (ClipboardHostNetworkErrors).
+    bool retryAfterNetworkError(ClipboardHostNetworkErrors::Transfer transfer);
     // Logs a failed request; a missing endpoint turns sync off, a missing permission turns off
     // that direction only, with a notice.
     void handleFailure(const char* operation, int qtError, Direction direction);
@@ -202,8 +203,7 @@ private:
     bool m_HostStreamsFiles;  // "files=stream" in the host's info reply
     bool m_HostFilesErrorKeyValid;  // Hermit: host files of m_HostFilesErrorKey failed once with a host error
     quint64 m_HostFilesErrorKey;
-    bool m_HostNetworkNoticeKeyValid;  // Hermit: host image or files of m_HostNetworkNoticeKey had a network error notice
-    quint64 m_HostNetworkNoticeKey;
+    ClipboardHostNetworkErrors m_HostNetworkErrors;  // Hermit: host content that had a network error, by transfer
     bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error
     quint32 m_LocalNetworkNoticeSeq;
     bool m_UploadSentAll;  // Hermit: the last upload sent every byte (transfer)

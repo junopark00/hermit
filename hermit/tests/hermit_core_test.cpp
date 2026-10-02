@@ -566,6 +566,35 @@ static void testClipboardChangeInputs()
         CHECK(o.hostSeen(102, 3) == HC::Fetch);
     }
 
+    // Network errors fetching host content: one notice per content; an image or archive is fetched
+    // once more at most, a file list each time. The list and the archive of the same files keep
+    // their own records, so a failed list (then an archive for paths over 259 characters) does
+    // not use up the archive's retry and notice (round 11, 2).
+    {
+        using T = ClipboardHostNetworkErrors::Transfer;
+        ClipboardHostNetworkErrors e;
+        auto r = e.failed(T::FileList, 7);
+        CHECK(r.notice && r.retry);
+        r = e.failed(T::FileList, 7);
+        CHECK(!r.notice && r.retry);
+        r = e.failed(T::Archive, 7);  // the same files, as an archive
+        CHECK(r.notice && r.retry);
+        r = e.failed(T::Archive, 7);
+        CHECK(!r.notice && !r.retry);
+        r = e.failed(T::FileList, 7);
+        CHECK(!r.notice && r.retry);
+        r = e.failed(T::Archive, 8);  // the host's clipboard changed
+        CHECK(r.notice && r.retry);
+        r = e.failed(T::Image, 9);
+        CHECK(r.notice && r.retry);
+        r = e.failed(T::Image, 9);
+        CHECK(!r.notice && !r.retry);
+        ClipboardHostNetworkErrors f;  // the archive first, then its list
+        f.failed(T::Archive, 7);
+        r = f.failed(T::FileList, 7);
+        CHECK(r.notice && r.retry);
+    }
+
     // What the local clipboard holds: our marker, an empty clipboard, and our list while the
     // owner thread is still putting it there are no local copy (round 10, 5).
     {
