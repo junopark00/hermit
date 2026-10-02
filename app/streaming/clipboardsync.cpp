@@ -548,6 +548,8 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_HostNetworkNoticeSeq(0),
       m_LocalNetworkNoticeSeqValid(false),
       m_LocalNetworkNoticeSeq(0),
+      m_LocalCopySeqValid(false),
+      m_LocalCopySeq(0),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -1020,6 +1022,23 @@ bool ClipboardSyncWorker::resendAfterNetworkError(quint32 localSeq)
     return true;
 }
 
+void ClipboardSyncWorker::localCopied(quint32 localSeq)
+{
+    if (m_LocalCopySeqValid && m_LocalCopySeq == localSeq) {
+        return;  // the same content handled again after it was not sent: not a newer copy
+    }
+    m_LocalCopySeq = localSeq;
+    m_LocalCopySeqValid = true;
+    if (m_Mode == Mode::Extended && !m_HostSeqValid) {
+        // Host content left to be fetched again (after a busy host, a network error or a failed
+        // local write) is the one at m_HostSeq, older than this copy: recorded as seen, so the
+        // next pull fetches only host content that changes after it.
+        m_HostSeqValid = true;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host clipboard content not fetched again: newer content was copied locally");
+    }
+}
+
 void ClipboardSyncWorker::notifyHostFilesRefused()
 {
     switch (ClipboardArchive::parseRefusal(m_LastErrorBody)) {
@@ -1463,14 +1482,19 @@ void ClipboardSyncWorker::pull()
     if (type == "text") {
         if (!request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
             handleFailure("fetch", error, Direction::Pull);
+            m_HostSeq = seq;
             if (m_LastHttpStatus >= 500 && !hostClipboardBusy()) {
                 // The host could not read its text (500, for example): said once, and this
                 // content is not fetched again on every focus change. Busy (503), no active
                 // stream (403) and network errors without a reply (a timeout) are retried.
-                m_HostSeq = seq;
                 m_HostSeqValid = true;
                 m_HostTextHashValid = false;
                 notify(HostTextFailed, true);
+            }
+            else {
+                // Hermit: pending at this sequence number like host images and files, so a local
+                // copy made meanwhile can drop it (localCopied).
+                m_HostSeqValid = false;
             }
             return;
         }
@@ -1937,6 +1961,17 @@ void ClipboardSync::markLocalHandled()
 #endif
 }
 
+void ClipboardSync::markLocalCopied()
+{
+#ifdef Q_OS_WIN32
+    markLocalHandled();
+    // Hermit: sent or not, this copy is newer than host content still waiting to be fetched again
+    ClipboardSyncWorker* worker = m_Worker;
+    const quint32 localSeq = m_LocalSeq;
+    post([worker, localSeq]() { worker->localCopied(localSeq); });
+#endif
+}
+
 void ClipboardSync::pushLocalToHost(Trigger trigger)
 {
     if (m_Stopped->load()) {
@@ -1966,7 +2001,7 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         char* text = SDL_GetClipboardText();
         QByteArray utf8(text != nullptr ? text : "");
         SDL_free(text);
-        markLocalHandled();
+        markLocalCopied();
         const quint32 localSeq = m_LocalSeq;
         if (!utf8.isEmpty()) {
             post([worker, utf8, localSeq]() { worker->pushText(utf8, localSeq); });
@@ -1979,7 +2014,7 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         if (!readLocalImage(owner, data, isDib)) {
             return;  // clipboard busy: try again on the next trigger
         }
-        markLocalHandled();
+        markLocalCopied();
         if (data.isEmpty()) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Local clipboard image not sent: unsupported format or over the size limit");
@@ -2001,12 +2036,12 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         if (paths.isEmpty()) {
             return;  // clipboard busy or empty list: leave unhandled so the next trigger retries
         }
-        markLocalHandled();
+        markLocalCopied();
         const quint32 localSeq = m_LocalSeq;
         post([worker, paths, localSeq]() { worker->pushFiles(paths, false, localSeq); });
         return;
     }
-    markLocalHandled();
+    markLocalCopied();
 #else
     Q_UNUSED(trigger);
     if (!SDL_HasClipboardText()) {

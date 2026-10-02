@@ -99,6 +99,12 @@ public:
     // Brings the host clipboard to the client if it changed since we last saw or set it.
     void pull();
 
+    // Hermit: the user copied something locally (Windows: local clipboard sequence localSeq),
+    // whether it is sent or not. Host content still waiting to be fetched again is older than
+    // that copy and is dropped, so leaving the stream does not put it over the local content;
+    // host content that changes after the copy is still fetched.
+    void localCopied(quint32 localSeq);
+
     // Host content fetched at sequence number seq (text: in Legacy mode, the host's text) could
     // not be put on the local clipboard: the next pull fetches it again, unless newer host content
     // was seen or sent meanwhile.
@@ -183,6 +189,8 @@ private:
     quint32 m_HostNetworkNoticeSeq;
     bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error notice
     quint32 m_LocalNetworkNoticeSeq;
+    bool m_LocalCopySeqValid;  // Hermit: the last local copy localCopied saw
+    quint32 m_LocalCopySeq;
     bool m_HostTextHashValid;
     QByteArray m_HostTextHash;
     bool m_WarnedTextOnly;
@@ -243,6 +251,9 @@ public:
 
 private:
     void markLocalHandled();
+    // Hermit: markLocalHandled for content the user copied locally, which also tells the worker
+    // (localCopied)
+    void markLocalCopied();
     void post(const std::function<void()>& job);
     void releaseHostFileList();
 
