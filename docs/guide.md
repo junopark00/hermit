@@ -90,7 +90,10 @@ of other remote desktop clients.
   metrics"), "Mute on this PC", clipboard sync, full screen, and mouse mode. "Mute on this PC"
   is separate from the setting that mutes Hermit in the background, so it stays on when you return to the
   window and across reconnects. The mouse mode button shows the current mode (game or remote
-  desktop); changing it with Ctrl+Alt+Shift+M briefly shows the new mode over the stream. V-Sync and
+  desktop); changing it with Ctrl+Alt+Shift+M briefly shows the new mode over the stream. Mute, mouse
+  mode and full screen as you left them (in the panel or with the shortcuts) carry over to a
+  reconnect, whether you apply new settings or Hermit reconnects after a network drop; the next
+  stream you start yourself uses the settings again. V-Sync and
   frame pacing also apply immediately, but recreate the renderer, so the picture blinks once. Frame
   pacing has no effect without V-Sync and is shown as off in that case (as in Settings).
 - **Bitrate** (top section): on Shell hosts with an NVIDIA encoder, the bitrate changes live as soon

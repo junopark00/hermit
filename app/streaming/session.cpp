@@ -620,6 +620,10 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_DecoderLock(SDL_CreateMutex()),
       m_AudioMuted(false),
       m_UserMuted(false),
+      m_CarriedAbsoluteMouse(-1),
+      m_CarriedFullScreen(-1),
+      m_FinalAbsoluteMouse(-1),
+      m_FinalFullScreen(-1),
       m_FocusMuted(false),
       m_QtWindow(nullptr),
       m_UnexpectedTermination(true), // Failure prior to streaming is unexpected
@@ -662,9 +666,15 @@ Session* Session::createReconnectSession()
 {
     Session* session = new Session(m_Computer, m_App, m_Preferences);
     session->m_IsReconnect = true;
-    // Hermit: muting from the stream panel lasts across reconnects
+    // Hermit: muting, the mouse mode and full screen from the stream panel (or the shortcuts)
+    // last across reconnects. A stream that never started passes on what it was given.
     session->m_UserMuted = m_UserMuted;
     session->m_AudioMuted = m_UserMuted;
+    session->m_CarriedAbsoluteMouse = m_FinalAbsoluteMouse >= 0 ? m_FinalAbsoluteMouse : m_CarriedAbsoluteMouse;
+    session->m_CarriedFullScreen = m_FinalFullScreen >= 0 ? m_FinalFullScreen : m_CarriedFullScreen;
+    if (session->m_CarriedFullScreen >= 0 && WMUtils::isRunningDesktopEnvironment()) {
+        session->m_IsFullScreen = session->m_CarriedFullScreen != 0;
+    }
     return session;
 }
 
@@ -2217,6 +2227,10 @@ void Session::start()
     // Initialize the gamepad code with our preferences
     // NB: m_InputHandler must be initialize before starting the connection.
     m_InputHandler = new SdlInputHandler(*m_Preferences, m_StreamConfig.width, m_StreamConfig.height);
+    // Hermit: the mouse mode the previous stream ended with (reconnect)
+    if (m_CarriedAbsoluteMouse >= 0 && m_InputHandler->isAbsoluteMouseMode() != (m_CarriedAbsoluteMouse != 0)) {
+        m_InputHandler->toggleAbsoluteMouseMode();
+    }
 
     // Kick off the async connection thread then return to the caller to pump the event loop
     auto thread = new AsyncConnectionStartThread(this);
@@ -2378,7 +2392,8 @@ void Session::exec()
     // We still capture in windowed absolute mode because it doesn't
     // constrain the motion of the cursor. This allows the user to
     // easily reposition or resize the window.
-    if (m_IsFullScreen || m_Preferences->absoluteMouseMode) {
+    // Hermit: the handler's mode, which a reconnect may have carried over from the stream panel
+    if (m_IsFullScreen || m_InputHandler->isAbsoluteMouseMode()) {
         // HACK: For Wayland, we wait until we get the first SDL_WINDOWEVENT_ENTER
         // event where it seems to work consistently on GNOME. For other platforms,
         // especially where SDL may call SDL_RecreateWindow(), we must only capture
@@ -2971,6 +2986,10 @@ DispatchDeferredCleanup:
 
     // Raise any keys that are still down
     m_InputHandler->raiseAllKeys();
+
+    // Hermit: for a reconnect session (createReconnectSession)
+    m_FinalAbsoluteMouse = m_InputHandler->isAbsoluteMouseMode() ? 1 : 0;
+    m_FinalFullScreen = (m_FullScreenFlag != 0 && (SDL_GetWindowFlags(m_Window) & m_FullScreenFlag) != 0) ? 1 : 0;
 
     // Destroy the input handler now. This must be destroyed
     // before allowwing the UI to continue execution or it could

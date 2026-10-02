@@ -344,6 +344,13 @@ private:
     bool m_AudioDisabled;
     bool m_AudioMuted;      // in effect: m_UserMuted or m_FocusMuted
     bool m_UserMuted;       // muted from the stream panel (kept across reconnects)
+    // Hermit: mouse mode (absolute) and full screen as the user left them (stream panel or
+    // shortcuts), kept across reconnects like m_UserMuted. Carried: from the session this one
+    // reconnects; final: when this stream ended. -1 when unknown (the settings apply).
+    int m_CarriedAbsoluteMouse;
+    int m_CarriedFullScreen;
+    int m_FinalAbsoluteMouse;
+    int m_FinalFullScreen;
     bool m_FocusMuted;      // muted while the stream window is in the background
     QStringList m_DroppedFiles;
     int m_HotkeyHelpSerial;
