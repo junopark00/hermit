@@ -127,6 +127,9 @@ private:
     // the whole archive.
     void pullFileList();
     void pullArchive();
+    // Host files not fetched for another reason than those with their own notice: says so, and
+    // leaves the content to be fetched again on the next pull when that may help.
+    void failedHostFiles(int qtError);
     // Logs a failed request; a missing endpoint turns sync off, a missing permission turns off
     // that direction only, with a notice.
     void handleFailure(const char* operation, int qtError, Direction direction);
@@ -164,6 +167,8 @@ private:
     bool m_HostSeqValid;
     bool m_HostStreamsFiles;  // "files=stream" in the host's info reply
     quint32 m_HostSeq;
+    bool m_HostFilesErrorSeqValid;  // Hermit: host files of m_HostFilesErrorSeq failed once with a host error
+    quint32 m_HostFilesErrorSeq;
     bool m_HostTextHashValid;
     QByteArray m_HostTextHash;
     bool m_WarnedTextOnly;

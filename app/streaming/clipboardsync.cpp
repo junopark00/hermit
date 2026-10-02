@@ -542,6 +542,8 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_HostSeqValid(false),
       m_HostStreamsFiles(false),
       m_HostSeq(0),
+      m_HostFilesErrorSeqValid(false),
+      m_HostFilesErrorSeq(0),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -1570,12 +1572,7 @@ void ClipboardSyncWorker::pullFileList()
         else {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Fetching the host file list failed: %s", qPrintable(m_LastError));
-            notify(HostFilesFailed, true);
-            if (error == QNetworkReply::TimeoutError || m_LastHttpStatus >= 500) {
-                // The host may still be preparing the files (cloud placeholders it has to fetch
-                // first, for example): offered again when the user next leaves the stream window.
-                m_HostSeqValid = false;
-            }
+            failedHostFiles(error);
         }
         return;
     }
@@ -1608,6 +1605,34 @@ void ClipboardSyncWorker::pullFileList()
                 "Host file list received (%d items, %llu KB); files download when pasted",
                 (int)content->remoteFiles.entries.size(), (unsigned long long)(content->remoteFiles.totalBytes / 1024));
     deliver(content);
+}
+
+void ClipboardSyncWorker::failedHostFiles(int qtError)
+{
+    if (qtError == QNetworkReply::TimeoutError) {
+        // The host may still be preparing the files (cloud placeholders it has to fetch first,
+        // for example): offered again when the user next leaves the stream window.
+        notify(HostFilesFailed, true);
+        m_HostSeqValid = false;
+        return;
+    }
+    if (m_LastHttpStatus >= 500) {
+        // Hermit: an error of the host's own (500, for example; 503 is handled as busy) may be
+        // passing, so it is fetched once more, with one notice. A second failure for the same
+        // content is recorded, so a lasting host error is not fetched on every focus change.
+        if (!m_HostFilesErrorSeqValid || m_HostFilesErrorSeq != m_HostSeq) {
+            m_HostFilesErrorSeq = m_HostSeq;
+            m_HostFilesErrorSeqValid = true;
+            m_HostSeqValid = false;
+            notify(HostFilesFailed, true);
+        }
+        else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files failed twice on the host; not fetched again until the host clipboard changes");
+        }
+        return;
+    }
+    notify(HostFilesFailed, true);
 }
 
 void ClipboardSyncWorker::pullArchive()
@@ -1670,12 +1695,7 @@ void ClipboardSyncWorker::pullArchive()
         else {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Fetching files from host failed: %s", qPrintable(m_LastError));
-            notify(HostFilesFailed, true);
-            if (error == QNetworkReply::TimeoutError || m_LastHttpStatus >= 500) {
-                // As for the file list: the host may still be preparing the files, so they are
-                // offered again when the user next leaves the stream window.
-                m_HostSeqValid = false;
-            }
+            failedHostFiles(error);
         }
         return;
     }
