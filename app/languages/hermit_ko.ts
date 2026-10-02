@@ -1284,6 +1284,10 @@ Start를 길게 눌러 끄기</translation>
       <source>The host returned an error: %1</source>
       <translation>호스트가 오류를 반환했습니다: %1</translation>
     </message>
+    <message>
+      <source>No PIN was entered on the host within 5 minutes. Start pairing again.</source>
+      <translation>5분 안에 호스트에서 PIN을 입력하지 않았습니다. 페어링을 다시 시작하세요.</translation>
+    </message>
   </context>
   <context>
     <name>QPlatformTheme</name>

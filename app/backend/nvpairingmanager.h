@@ -14,7 +14,8 @@ public:
         PAIRED,
         PIN_WRONG,
         FAILED,
-        ALREADY_IN_PROGRESS
+        ALREADY_IN_PROGRESS,
+        PIN_NOT_ENTERED  // Hermit: the host ended the wait for its PIN (5 minutes on Shell)
     };
 
     explicit NvPairingManager(NvComputer* computer);

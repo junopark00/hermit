@@ -413,6 +413,8 @@ TRANSLATIONS = {
         '이 %1 PC에서는 Hermit이 x64 에뮬레이션으로 실행되므로 스트리밍 성능이 낮을 수 있습니다.',
     ('main', 'Click the Help button for possible solutions.'): '도움말 버튼을 눌러 해결 방법을 확인하세요.',
     ('PendingPairingTask', 'The host returned an error: %1'): '호스트가 오류를 반환했습니다: %1',
+    ('PendingPairingTask', 'No PIN was entered on the host within 5 minutes. Start pairing again.'):
+        '5분 안에 호스트에서 PIN을 입력하지 않았습니다. 페어링을 다시 시작하세요.',
     ('QPlatformTheme', 'Save'): '저장',
 }
 

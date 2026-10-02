@@ -623,6 +623,9 @@ private:
            case NvPairingManager::PairState::ALREADY_IN_PROGRESS:
                emit pairingCompleted(m_Computer, tr("Another pairing attempt is already in progress."), m_Attempt);
                break;
+           case NvPairingManager::PairState::PIN_NOT_ENTERED:
+               emit pairingCompleted(m_Computer, tr("No PIN was entered on the host within 5 minutes. Start pairing again."), m_Attempt);
+               break;
            case NvPairingManager::PairState::PAIRED:
                // Persist the newly pinned server certificate for this host
                m_ComputerManager->saveHost(m_Computer);
