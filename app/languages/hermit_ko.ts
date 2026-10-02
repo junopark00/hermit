@@ -114,6 +114,10 @@
       <translation>호스트의 텍스트를 가져오지 못했습니다: %1MB를 넘었습니다</translation>
     </message>
     <message>
+      <source>Text on the host could not be copied</source>
+      <translation>호스트의 텍스트를 가져오지 못했습니다</translation>
+    </message>
+    <message>
       <source>Image not sent to the host: over %1 MB or %2x%2 pixels</source>
       <translation>이미지를 호스트로 보내지 못했습니다: %1MB 또는 %2x%2 픽셀을 넘었습니다</translation>
     </message>

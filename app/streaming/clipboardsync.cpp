@@ -58,7 +58,7 @@ enum ClipboardNotice {
     // Host files
     DownloadNotAllowed, OverLimit, OverStreamLimit, HostFilesUnsupported, HostFilesNothingToCopy, HostFilesFailed,
     // Other host content
-    HostImageTooLarge, HostImageUnreadable, HostImageFailed, HostTextTooLarge,
+    HostImageTooLarge, HostImageUnreadable, HostImageFailed, HostTextTooLarge, HostTextFailed,
     // Local content
     LocalImageTooLarge, LocalImageUnsupported, LocalImageFailed, LocalTextTooLarge,
     // Permissions for a whole direction
@@ -102,6 +102,9 @@ static void showNotice(int notice)
         break;
     case HostTextTooLarge:
         text = QCoreApplication::translate("ClipboardSync", "Text on the host not copied: over %1 MB").arg(k_MaxTextBytes / (1024 * 1024));
+        break;
+    case HostTextFailed:
+        text = QCoreApplication::translate("ClipboardSync", "Text on the host could not be copied");
         break;
     case LocalImageTooLarge:
         text = QCoreApplication::translate("ClipboardSync", "Image not sent to the host: over %1 MB or %2x%2 pixels")
@@ -1416,6 +1419,16 @@ void ClipboardSyncWorker::pull()
     if (type == "text") {
         if (!request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
             handleFailure("fetch", error, Direction::Pull);
+            if (!hostClipboardBusy() && error != QNetworkReply::AuthenticationRequiredError &&
+                error != QNetworkReply::ContentAccessDenied && error != QNetworkReply::ContentNotFoundError) {
+                // The host could not read its text (500, for example): said once, and this
+                // content is not fetched again on every focus change. Busy (503) and no active
+                // stream (403) are retried.
+                m_HostSeq = seq;
+                m_HostSeqValid = true;
+                m_HostTextHashValid = false;
+                notify(HostTextFailed, true);
+            }
             return;
         }
         m_HostSeq = seq;
@@ -1656,6 +1669,11 @@ void ClipboardSyncWorker::pullArchive()
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Fetching files from host failed: %s", qPrintable(m_LastError));
             notify(HostFilesFailed, true);
+            if (error == QNetworkReply::TimeoutError || m_LastHttpStatus >= 500) {
+                // As for the file list: the host may still be preparing the files, so they are
+                // offered again when the user next leaves the stream window.
+                m_HostSeqValid = false;
+            }
         }
         return;
     }

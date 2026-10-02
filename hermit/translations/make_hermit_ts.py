@@ -242,6 +242,7 @@ TRANSLATIONS = {
         '호스트의 이미지를 가져오지 못했습니다: 이미지를 읽을 수 없습니다',
     ('ClipboardSync', 'Image on the host could not be copied'): '호스트의 이미지를 가져오지 못했습니다',
     ('ClipboardSync', 'Text on the host not copied: over %1 MB'): '호스트의 텍스트를 가져오지 못했습니다: %1MB를 넘었습니다',
+    ('ClipboardSync', 'Text on the host could not be copied'): '호스트의 텍스트를 가져오지 못했습니다',
     ('ClipboardSync', 'Image not sent to the host: over %1 MB or %2x%2 pixels'):
         '이미지를 호스트로 보내지 못했습니다: %1MB 또는 %2x%2 픽셀을 넘었습니다',
     ('ClipboardSync', "Image not sent to the host: too large or in a format that can't be sent"):

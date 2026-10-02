@@ -257,9 +257,10 @@ to sync the clipboard in both directions.
 - Content that does not move also gets a short notice: an image over 32 MB or 8192×8192 pixels or in
   a format that can't be converted, text over 1 MB, host files over the limit, host files with names
   the host can't copy ("unsupported or duplicate names") or only links ("only links or nothing to
-  copy"), a whole drive copied locally, or a transfer that failed. Host content is
-  fetched when you leave the stream window, where the notice is easy to miss, so a notice about host
-  content (or a missing permission) is shown once more when you return to the stream window.
+  copy"), a whole drive copied locally, host text the host could not read, or a transfer that failed.
+  Host content is fetched when you leave the stream window, where the notice is easy to miss, so a
+  notice about host content (or a missing permission) is shown once more when you return to the
+  stream window.
 - Turn it off with Settings → Streaming conveniences → "Sync clipboard with the host" (on by
   default).
 - **Permissions**: the host grants each direction separately in its device permissions. Clipboard
