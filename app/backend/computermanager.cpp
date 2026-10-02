@@ -19,6 +19,9 @@
 #define STUN_SERVER "stun.cloudflare.com"
 #define STUN_PORT 3478
 
+// Hermit: how long a new pairing attempt waits for an earlier one's /unpair (3 s timeout)
+#define PAIRING_ABANDON_WAIT_MS 4000
+
 class PcMonitorThread : public QThread
 {
     Q_OBJECT
@@ -605,6 +608,15 @@ private:
             return !computerManager->isCurrentPairingAttempt(attempt);
         });
 
+        // Hermit: let an earlier attempt's /unpair reach the host first. Sent after this attempt's
+        // getservercert, it would cancel this attempt on the host.
+        if (computerManager->m_PairingAbandonMutex.tryLock(PAIRING_ABANDON_WAIT_MS)) {
+            computerManager->m_PairingAbandonMutex.unlock();
+        }
+        else {
+            qWarning() << "Pairing attempt" << attempt << "did not wait any longer for an earlier attempt's cleanup";
+        }
+
         try {
            NvPairingManager::PairState result = pairingManager.pair(m_Computer->appVersion, m_Pin, m_Computer->serverCert);
            switch (result)
@@ -625,11 +637,8 @@ private:
                break;
            case NvPairingManager::PairState::PIN_NOT_ENTERED:
                // Hermit: Hermit gave up a few seconds before the host does; a PIN entered on the
-               // host meanwhile must not be accepted. Not when a newer attempt superseded it.
-               if (computerManager->isCurrentPairingAttempt(attempt) || computerManager->isPairingIdle()) {
-                   qInfo() << "Pairing attempt" << attempt << "got no PIN: asking the host to drop its pairing session";
-                   pairingManager.abandonPairing();
-               }
+               // host meanwhile must not be accepted
+               abandonUnlessSuperseded(pairingManager, "got no PIN");
                emit pairingCompleted(m_Computer, tr("No PIN was entered on the host within 5 minutes. Start pairing again."), m_Attempt);
                break;
            case NvPairingManager::PairState::PAIRED:
@@ -643,13 +652,23 @@ private:
             emit pairingCompleted(m_Computer, tr("The host returned an error: %1").arg(e.toQString()), m_Attempt);
         } catch (const QtNetworkReplyException& e) {
             // Hermit: a cancelled attempt asks the host to drop its session, so a PIN entered on
-            // the host later is not handed to it. Not when a newer attempt superseded it: the
-            // host drops sessions by client ID, which would drop the newer one.
-            if (e.getError() == QNetworkReply::OperationCanceledError && computerManager->isPairingIdle()) {
-                qInfo() << "Pairing attempt" << attempt << "cancelled: asking the host to drop its pairing session";
-                pairingManager.abandonPairing();
+            // the host later is not handed to it
+            if (e.getError() == QNetworkReply::OperationCanceledError) {
+                abandonUnlessSuperseded(pairingManager, "cancelled");
             }
             emit pairingCompleted(m_Computer, e.toQString(), m_Attempt);
+        }
+    }
+
+    // Hermit: asks the host to drop this attempt's pairing session. Not when a newer attempt
+    // superseded it: the host drops sessions by client ID, which would drop the newer one. The
+    // lock keeps a newer attempt from sending getservercert between the check and the /unpair.
+    void abandonUnlessSuperseded(NvPairingManager& pairingManager, const char* why)
+    {
+        QMutexLocker lock(&m_ComputerManager->m_PairingAbandonMutex);
+        if (m_ComputerManager->isCurrentPairingAttempt(m_Attempt) || m_ComputerManager->isPairingIdle()) {
+            qInfo() << "Pairing attempt" << m_Attempt << why << "- asking the host to drop its pairing session";
+            pairingManager.abandonPairing();
         }
     }
 

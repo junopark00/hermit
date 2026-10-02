@@ -293,4 +293,5 @@ private:
     bool m_NeedsDelayedFlush;
     QAtomicInt m_PairingAttempt; // Hermit: the current pairing attempt, 0 if none
     int m_LastPairingAttempt = 0; // Hermit: main thread only
+    QMutex m_PairingAbandonMutex; // Hermit: held while a dropped attempt's /unpair is sent
 };
