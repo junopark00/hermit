@@ -68,7 +68,7 @@ static void testSessionSummary()
 
     SessionSummary::Settings settings;
     settings.host = "host.example";
-    settings.app = QString::fromUtf8("엘든 링");
+    settings.app = QString::fromUtf8("테스트 게임");
     settings.width = 2560;
     settings.height = 1440;
     settings.fps = 60;
@@ -109,7 +109,7 @@ static void testSessionSummary()
     const QByteArray bytes = file.readAll();
     file.close();
     CHECK(bytes.startsWith("\xEF\xBB\xBF" "ended_at,host,app,"));
-    CHECK(bytes.contains(QString::fromUtf8(",host.example,엘든 링,").toUtf8()));
+    CHECK(bytes.contains(QString::fromUtf8(",host.example,테스트 게임,").toUtf8()));
     CHECK_EQ(bytes.count('\n'), 2);
 
     // Averages skip the newest row (this session) when asked.

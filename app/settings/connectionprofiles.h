@@ -7,8 +7,8 @@
 class StreamingPreferences;
 
 // Named snapshots of the stream settings (resolution, frame rate, bitrate, window mode, V-Sync,
-// frame pacing, codec, ...) that can be applied in one step, for example "MapleStory QHD
-// window" and "Full screen". Stored as JSON in the Hermit settings.
+// frame pacing, codec, ...) that can be applied in one step, for example "1440p
+// windowed" and "Full screen". Stored as JSON in the Hermit settings.
 class ConnectionProfiles : public QObject
 {
     Q_OBJECT

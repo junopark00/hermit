@@ -296,7 +296,7 @@ overlay.
   settings are shared by all profiles.
 - The save dialog's Save button stays disabled until a name is entered, and deleting asks for
   confirmation. The profile that matches the current settings has a check mark. For example, save
-  "QHD windowed" and "Full screen" and pick one before connecting.
+  "1440p windowed" and "Full screen" and pick one before connecting.
 
 ## Automatic reconnect
 

@@ -118,7 +118,7 @@ NavigableToolButton {
             TextField {
                 id: nameField
                 Layout.fillWidth: true
-                placeholderText: qsTr("For example: MapleStory QHD window")
+                placeholderText: qsTr("For example: 1440p windowed")
                 onTextChanged: saveDialog.updateSaveButton()
                 onAccepted: {
                     if (text.trim().length > 0) {

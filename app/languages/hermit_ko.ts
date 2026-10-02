@@ -236,8 +236,8 @@
       <translation>세션이 끝나면 요약 보기</translation>
     </message>
     <message>
-      <source>After a stream of at least 30 seconds, shows frame rate, network loss and latency compared with your previous sessions. Every session is also added to a history file you can open in Excel.</source>
-      <translation>30초 이상 스트리밍한 뒤 프레임 레이트, 네트워크 손실, 지연을 이전 세션들과 비교해 보여줍니다. 모든 세션은 엑셀로 열 수 있는 기록 파일에도 저장됩니다.</translation>
+      <source>After a stream of at least 30 seconds, shows frame rate, network loss and latency compared with your previous sessions. Every session is also added to a history file (CSV) that opens in any spreadsheet app.</source>
+      <translation>30초 이상 스트리밍한 뒤 프레임 레이트, 네트워크 손실, 지연을 이전 세션들과 비교해 보여줍니다. 모든 세션은 스프레드시트 앱에서 열 수 있는 기록 파일(CSV)에도 저장됩니다.</translation>
     </message>
     <message>
       <source>Open session history folder</source>
@@ -592,8 +592,8 @@ Start를 길게 눌러 끄기</translation>
       <translation>'%1' 프로필을 삭제할까요?</translation>
     </message>
     <message>
-      <source>For example: MapleStory QHD window</source>
-      <translation>예: 메이플 QHD 창모드</translation>
+      <source>For example: 1440p windowed</source>
+      <translation>예: 1440p 창 모드</translation>
     </message>
   </context>
   <context>

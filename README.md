@@ -37,7 +37,7 @@ Windows, and also works with other GameStream hosts such as Sunshine and Apollo.
   host latency, decode and render times, and an estimated total latency.
 - **Session summary.** After each session, see how it went compared with your last ten, with every
   session recorded in a CSV history.
-- **Connection profiles.** Save sets of stream settings (for example "QHD windowed" and "Full screen")
+- **Connection profiles.** Save sets of stream settings (for example "1440p windowed" and "Full screen")
   and switch between them in one click.
 - **Automatic reconnect.** If the network drops, Hermit reconnects to the same app by itself.
 - **Sharper text in a window.** A higher-quality scaler keeps text readable when the stream is shown

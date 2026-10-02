@@ -1228,7 +1228,7 @@ Flickable {
                     ToolTip.delay: 1000
                     ToolTip.timeout: 15000
                     ToolTip.visible: hovered || activeFocus
-                    ToolTip.text: qsTr("After a stream of at least 30 seconds, shows frame rate, network loss and latency compared with your previous sessions. Every session is also added to a history file you can open in Excel.")
+                    ToolTip.text: qsTr("After a stream of at least 30 seconds, shows frame rate, network loss and latency compared with your previous sessions. Every session is also added to a history file (CSV) that opens in any spreadsheet app.")
                 }
 
                 Button {

@@ -101,7 +101,7 @@ TRANSLATIONS = {
     ('ProfilesButton', 'Saves resolution, frame rate, bitrate, display mode, V-Sync, frame pacing, codec, HDR, YUV 4:4:4, audio, the performance overlay and large packets. A profile with the same name is replaced.'):
         '해상도, 프레임 레이트, 비트레이트, 창 모드, 수직동기화, 프레임 조율, 코덱, HDR, YUV 4:4:4, 오디오, 성능 오버레이, 큰 패킷 설정을 저장합니다. 같은 이름의 프로필은 덮어씁니다.',
     ("ProfilesButton", "Delete the profile '%1'?"): "'%1' 프로필을 삭제할까요?",
-    ('ProfilesButton', 'For example: MapleStory QHD window'): '예: 메이플 QHD 창모드',
+    ('ProfilesButton', 'For example: 1440p windowed'): '예: 1440p 창 모드',
 
     ('SessionSummaryDialog', 'Frame pacing added %1 ms of queue delay. If the picture stays smooth, turn it off in Settings or in the stream settings (Ctrl+Alt+Shift+P) for faster response.'):
         '프레임 조율 때문에 큐 대기가 %1 ms 늘었습니다. 화면이 계속 부드럽다면 설정이나 스트림 설정(Ctrl+Alt+Shift+P)에서 끄면 반응이 빨라집니다.',
@@ -295,8 +295,8 @@ TRANSLATIONS = {
     ('SettingsView', 'Text you copy locally is sent to the host while streaming, and what you copy on the host is brought back when you switch away from the stream window. With a Shell host, images and files (up to 256 MB) are synced too; files move when the stream starts and when you switch back to the stream window. Requires the clipboard (and, for files, file transfer) permissions on the host.'):
         '스트리밍 중 이 PC에서 복사한 텍스트를 호스트로 보내고, 호스트에서 복사한 내용은 스트림 창에서 나올 때 가져옵니다. Shell 호스트에서는 이미지와 파일(최대 256MB)도 동기화하며, 파일은 스트림 시작 시와 스트림 창으로 돌아올 때 옮깁니다. 호스트에서 이 기기에 클립보드 권한(파일은 파일 전송 권한도)이 있어야 합니다.',
     ('SettingsView', 'Show a summary after each session'): '세션이 끝나면 요약 보기',
-    ('SettingsView', 'After a stream of at least 30 seconds, shows frame rate, network loss and latency compared with your previous sessions. Every session is also added to a history file you can open in Excel.'):
-        '30초 이상 스트리밍한 뒤 프레임 레이트, 네트워크 손실, 지연을 이전 세션들과 비교해 보여줍니다. 모든 세션은 엑셀로 열 수 있는 기록 파일에도 저장됩니다.',
+    ('SettingsView', 'After a stream of at least 30 seconds, shows frame rate, network loss and latency compared with your previous sessions. Every session is also added to a history file (CSV) that opens in any spreadsheet app.'):
+        '30초 이상 스트리밍한 뒤 프레임 레이트, 네트워크 손실, 지연을 이전 세션들과 비교해 보여줍니다. 모든 세션은 스프레드시트 앱에서 열 수 있는 기록 파일(CSV)에도 저장됩니다.',
     ('SettingsView', 'Open session history folder'): '세션 기록 폴더 열기',
     ('SettingsView', 'Use full-size video packets over the internet (1392 bytes)'): '인터넷 스트리밍에서 큰 비디오 패킷 사용 (1392바이트)',
     ('SettingsView', 'Video packets are normally limited to 1024 bytes when streaming over the internet. Larger packets mean about 26% fewer packets per frame. Turn this off again if the stream breaks up or fails to start: the network path may not carry full-size packets. VPN connections always keep the 1024 byte limit.'):
