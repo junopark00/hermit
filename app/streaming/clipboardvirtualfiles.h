@@ -58,7 +58,10 @@ namespace ClipboardVirtualFiles {
 
 constexpr qint64 k_DownloadBufferBytes = 4 * 1024 * 1024;  // per file being pasted
 constexpr qint64 k_ReplyBufferBytes = 256 * 1024;          // what Qt may hold per request
-constexpr qint64 k_InactivityTimeoutMs = 60000;            // while waiting for the network
+// While waiting for the network, per attempt. The host may first have to download a cloud
+// placeholder (OneDrive Files On-Demand) before the first byte, which can take minutes; File
+// Explorer's dialog shows the copy waiting meanwhile and can cancel it.
+constexpr qint64 k_InactivityTimeoutMs = 5 * 60000;
 constexpr int k_TickMs = 10;
 constexpr int k_MaxAttemptsWithoutProgress = 2;
 constexpr qint64 k_PasteIdleMs = 2000;  // a paste is over (for the log) after this long without files

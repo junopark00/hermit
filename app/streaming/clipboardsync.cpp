@@ -159,11 +159,16 @@ namespace {
 
 constexpr int k_InfoTimeoutMs = 5000;
 constexpr int k_TextTimeoutMs = 5000;
-// The host walks the copied folders for a file list (at most 1,000 items, no file data).
-constexpr int k_FileListTimeoutMs = 30000;
+// The host walks the copied folders for a file list (at most 1,000 items, no file data). It can
+// take a while for files in a cloud folder (OneDrive), so a list that times out is fetched again
+// the next time the user leaves the stream window.
+constexpr int k_FileListTimeoutMs = 120000;
 // Images and files have no fixed deadline (a 256 MB transfer at 10 Mbps takes minutes); they
 // fail when no data moves for this long, which also covers the host packing or unpacking.
 constexpr qint64 k_TransferInactivityTimeoutMs = 60000;
+// Host files as one archive: the host may first have to download cloud placeholders (OneDrive
+// Files On-Demand) before it sends their bytes, which can take minutes.
+constexpr qint64 k_ArchiveInactivityTimeoutMs = 5 * 60000;
 constexpr int k_TransferTickMs = 10;
 constexpr qint64 k_ProgressDelayMs = 1000;
 constexpr qint64 k_ProgressIntervalMs = 500;
@@ -588,7 +593,8 @@ bool ClipboardSyncWorker::request(const QString& type, const QByteArray* postBod
 }
 
 ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString& type, ClipboardArchive::ThrottledUploadDevice* upload,
-                                                                  QIODevice* sink, qint64 sinkLimit, QByteArray* response, int& qtError)
+                                                                  QIODevice* sink, qint64 sinkLimit, QByteArray* response, int& qtError,
+                                                                  qint64 inactivityTimeoutMs)
 {
     enum class State { Running, Cancelled, TimedOut, TooLarge, WriteFailed };
 
@@ -617,6 +623,7 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
     clock.start();
     qint64 lastActivityMs = 0;
     qint64 lastProgressMs = -1;
+    qint64 lastProduced = 0;  // upload: bytes read from the files so far
     QEventLoop loop;
 
     auto finish = [&](State newState) {
@@ -705,7 +712,13 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
             drain(!limiter.unlimited());
         }
         const qint64 now = clock.elapsed();
-        if (now - lastActivityMs > k_TransferInactivityTimeoutMs) {
+        if (isUpload && upload->produced() > lastProduced) {
+            // Reading the local files counts as activity: a cloud placeholder is downloaded while
+            // it is read, and the read holds up this thread (and the upload) until it is done.
+            lastProduced = upload->produced();
+            lastActivityMs = now;
+        }
+        if (now - lastActivityMs > inactivityTimeoutMs) {
             finish(State::TimedOut);
             return;
         }
@@ -735,7 +748,7 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
         return TransferResult::Cancelled;
     case State::TimedOut:
         qtError = QNetworkReply::TimeoutError;
-        m_LastError = QStringLiteral("no data moved for %1 s").arg(k_TransferInactivityTimeoutMs / 1000);
+        m_LastError = QStringLiteral("no data moved for %1 s").arg(inactivityTimeoutMs / 1000);
         return TransferResult::Failed;
     case State::TooLarge:
         qtError = QNetworkReply::UnknownContentError;  // what the host answers with 413
@@ -1149,7 +1162,7 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 
     ActiveTransfer active(*m_Control);
     ClipboardArchive::BufferUploadDevice device(png, m_RateBytesPerSecond);
     device.open(QIODevice::ReadOnly | QIODevice::Unbuffered);
-    const TransferResult result = transfer(QStringLiteral("image"), &device, nullptr, 0, &body, error);
+    const TransferResult result = transfer(QStringLiteral("image"), &device, nullptr, 0, &body, error, k_TransferInactivityTimeoutMs);
     if (result == TransferResult::Cancelled) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Sending the clipboard image to the host was cancelled");
@@ -1252,7 +1265,7 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
     ActiveTransfer active(*m_Control);
     ClipboardArchive::ArchiveUploadDevice device(entries, archiveSize, m_RateBytesPerSecond);
     device.open(QIODevice::ReadOnly | QIODevice::Unbuffered);
-    const TransferResult result = transfer(QStringLiteral("files"), &device, nullptr, 0, &body, error);
+    const TransferResult result = transfer(QStringLiteral("files"), &device, nullptr, 0, &body, error, k_TransferInactivityTimeoutMs);
     if (result == TransferResult::Cancelled) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Sending files to the host was cancelled");
@@ -1419,7 +1432,8 @@ void ClipboardSyncWorker::pull()
         QBuffer buffer(&body);
         buffer.open(QIODevice::WriteOnly);
         ActiveTransfer active(*m_Control);
-        const TransferResult result = transfer(QStringLiteral("image"), nullptr, &buffer, k_MaxImageBytes, nullptr, error);
+        const TransferResult result = transfer(QStringLiteral("image"), nullptr, &buffer, k_MaxImageBytes, nullptr, error,
+                                               k_TransferInactivityTimeoutMs);
         buffer.close();
         if (result == TransferResult::Cancelled) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1589,7 +1603,8 @@ void ClipboardSyncWorker::pullArchive()
         return;
     }
     ActiveTransfer active(*m_Control);
-    const TransferResult result = transfer(QStringLiteral("files"), nullptr, &archiveFile, k_MaxArchiveBytes, nullptr, error);
+    const TransferResult result = transfer(QStringLiteral("files"), nullptr, &archiveFile, k_MaxArchiveBytes, nullptr, error,
+                                           k_ArchiveInactivityTimeoutMs);
     if (result == TransferResult::Cancelled) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Fetching files from the host was cancelled");

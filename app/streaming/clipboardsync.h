@@ -108,10 +108,12 @@ private:
     NvHTTP* http();
     bool request(const QString& type, const QByteArray* postBody, int timeoutMs, QByteArray& body, int& qtError);
     // Moves an image or file archive with the rate limit, progress notices, cancel support and
-    // an inactivity timeout. An upload sends the open device and stores the host's reply in
+    // an inactivity timeout (no data sent, received or, for an upload, read from the local files
+    // for inactivityTimeoutMs). An upload sends the open device and stores the host's reply in
     // response; a download (upload == nullptr) writes the body to sink, up to sinkLimit bytes.
     TransferResult transfer(const QString& type, ClipboardArchive::ThrottledUploadDevice* upload,
-                            QIODevice* sink, qint64 sinkLimit, QByteArray* response, int& qtError);
+                            QIODevice* sink, qint64 sinkLimit, QByteArray* response, int& qtError,
+                            qint64 inactivityTimeoutMs);
     void showTransferProgress(bool upload, qint64 done, qint64 total);
     // A cancelled transfer, or one that failed without a more specific notice.
     void showTransferEnd(TransferResult result, int qtError);
