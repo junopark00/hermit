@@ -214,11 +214,12 @@ to sync the clipboard in both directions.
     same file (HTTP 503), for example one that just stopped, the paste asks again every 1 to 2 seconds
     for up to 5 minutes; these answers do not count as attempts.
   - The list itself may take up to 2 minutes (folders in OneDrive, for example). If it does not
-    arrive, or the network fails while host files are fetched, they are fetched again the next time
-    you leave the stream window (unless you copied something locally since). After an error on the
-    host (HTTP 500, for example), host files are
-    fetched once more; when that fails too, they are not fetched again until the host clipboard
-    changes.
+    arrive, or the network fails while it is fetched, it is fetched again the next time you leave
+    the stream window (unless you copied something locally since), with one notice for those files.
+    Files that come over as one archive (described below) are fetched once more after a network
+    error or timeout; when that fails too, they are not fetched again until the host clipboard
+    changes. After an error on the host (HTTP 500, for example), host files are fetched once more;
+    when that fails too, they are not fetched again until the host clipboard changes.
   - This needs a current Shell host. With older Shell versions, and for folders with paths over 259
     characters, the files come over as one archive when you leave the stream window (256 MB limit) and
     are pasted from a temporary folder, as described next.
@@ -241,20 +242,27 @@ to sync the clipboard in both directions.
   - Host content that did not arrive (busy host, network error, or the local clipboard could not be
     written) is fetched again the next time you leave the stream window, unless you copied something
     locally after it: then your copy wins and is sent to the host. The same applies to host content
-    still on its way when you copy locally.
-  - An empty local clipboard does not count as a copy.
+    still on its way when you copy locally, also when Hermit has not handled that copy yet.
+  - An empty local clipboard does not count as a copy, nor does a list of host files that Hermit is
+    still putting on the clipboard.
+  - When sync could not be set up at stream start (the host could not be reached, for example) and
+    is set up later, Hermit cannot tell whether the host's clipboard changed in between, so the
+    host's content counts as the newer change: what you copied before is not sent, and the host's
+    content comes over when you leave the stream window. Copy again to send yours.
 - When another program on the host holds its clipboard at that moment, the host answers that it is
   busy (HTTP 503). Nothing is shown; the content moves the next time you leave or return to the stream
   window. Files dropped on the stream window are not sent again by themselves: the notice says the
   host clipboard is busy, and you drop them again. When the host refuses content (HTTP 422), it names
   the reason (names it can't create, only links, an image it can't convert), and the notice says
   which.
-- When the network fails while copied files are sent, they are sent once more the next time you
-  return to the stream window; if that fails too, copy them again. When every byte was sent but the
-  host did not answer within 5 minutes, the files are not sent again: the host most likely took
-  them, and the notice says they may still arrive. When the host cannot be reached at all at that
-  moment (for example, at stream start), what you copied is sent the next time you return to the
-  stream window.
+- When the network fails while an image or copied files are sent, they are sent once more the next
+  time you return to the stream window; if that fails too, copy them again. When every byte of the
+  files was sent but the host did not answer within 5 minutes,
+  the files are not sent again: the host most likely took them, and the notice says they may still
+  arrive. When they do, the next new files on the host clipboard are taken for them and not fetched
+  back over your local copy (unless you copied something locally since). When the host cannot be
+  reached at all at that moment, what you copied is sent the next time you return to the stream
+  window (but see above for a setup that failed at stream start).
 - Network transfer, image conversion and file I/O run on separate threads and never stall the
   stream. Clipboard contents are never logged.
 - **Speed limit**: image and file transfers are rate-limited in both directions, leaving bandwidth for
@@ -290,8 +298,9 @@ to sync the clipboard in both directions.
   copy"), a whole drive copied locally, host text the host could not read (HTTP 500; after a network
   error or timeout, text is fetched again silently the next time you leave the stream window), a host
   image that did not arrive because of a network error or timeout (said once for that image, which
-  is fetched again the next time you leave the stream window), a local image or copied files that a
-  network error stopped (said once; sent again as described above, local text silently), or a
+  is fetched once more the next time you leave the stream window, and after a second failure not
+  until the host clipboard changes), a local image or copied files that a network error stopped
+  (said once; sent once more as described above, local text silently and each time), or a
   transfer that failed. Content retried this way is dropped without a notice once newer content
   replaces it.
   Host content is fetched when you leave the stream window, where the notice is easy to miss, so a
