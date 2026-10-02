@@ -212,7 +212,8 @@ to sync the clipboard in both directions.
   "copied", so they can be pasted in File Explorer. The last 5 transfers are kept; older ones are
   deleted.
 - A received file list is written only after the paths, duplicates and sizes have all been checked.
-  Symbolic links and junctions are not followed.
+  Symbolic links and junctions are not followed in either direction; OneDrive Files On-Demand
+  placeholders are ordinary files and are downloaded as they are sent.
 - Both sides track the clipboard sequence number, so unchanged content is not sent again and a side
   never receives back what it wrote itself.
 - Network transfer, image conversion and file I/O run on separate threads and never stall the

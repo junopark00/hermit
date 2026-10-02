@@ -24,16 +24,27 @@ constexpr qint64 k_HeaderBytes = 12;          // "APCF" | version | count
 constexpr qint64 k_EntryFixedBytes = 1 + 4 + 8; // kind | path length | size
 constexpr qint64 k_CopyChunkBytes = 1024 * 1024;
 
+// A symbolic link or junction, which uploads do not follow (as the Shell host does not). Only
+// reparse points that stand for another name count: OneDrive Files On-Demand placeholders,
+// deduplicated and ProjFS files are reparse points too, but read like ordinary files (a
+// placeholder is downloaded as it is read).
 bool isLinkOrJunction(const QFileInfo& info)
 {
 #ifdef Q_OS_WIN32
     const QString native = QDir::toNativeSeparators(info.absoluteFilePath());
-    const DWORD attributes = GetFileAttributesW(reinterpret_cast<LPCWSTR>(native.utf16()));
-    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
-        return true;
+    WIN32_FIND_DATAW data;
+    const HANDLE find = FindFirstFileExW(reinterpret_cast<LPCWSTR>(native.utf16()), FindExInfoBasic, &data,
+                                         FindExSearchNameMatch, nullptr, 0);
+    if (find != INVALID_HANDLE_VALUE) {
+        FindClose(find);
+        // dwReserved0 is the reparse tag when the attribute is set
+        return (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && IsReparseTagNameSurrogate(data.dwReserved0);
     }
-#endif
+    // Not found that way (a drive root, for example)
+    return info.isSymbolicLink() || info.isJunction();
+#else
     return info.isSymLink();
+#endif
 }
 
 void appendU32(QByteArray& out, quint32 value)

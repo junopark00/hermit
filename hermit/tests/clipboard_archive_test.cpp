@@ -10,6 +10,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QProcess>
 #include <QRandomGenerator>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -183,6 +184,30 @@ int main(int argc, char** argv)
         std::printf("shrunk file: failed=%d (%s)\n", dev.failed(), qPrintable(dev.errorString()));
         CHECK(dev.failed());
         writeFile(src + "/Folder/b.txt", small);
+    }
+
+    // ---- 3b. Links: a junction is skipped, a plain file next to it is sent ----
+    {
+        const QString links = tmp.path() + "/links";
+        writeFile(links + "/plain.txt", QByteArray("plain"));
+        QVector<Entry> p; qint64 s; QString e;
+        CHECK(planUpload({links}, p, s, e) && p.size() == 2 && p[1].path == "links/plain.txt");
+#ifdef Q_OS_WIN32
+        // A directory junction needs no privilege (mklink /J); it must not be followed into
+        const QString junction = QDir::toNativeSeparators(links + "/junction");
+        const QString target = QDir::toNativeSeparators(src + "/Folder");
+        const int made = QProcess::execute("cmd.exe", {"/c", "mklink", "/J", junction, target});
+        if (made == 0) {
+            CHECK(QFileInfo::exists(links + "/junction/b.txt"));
+            CHECK(planUpload({links}, p, s, e) && p.size() == 2 && p[1].path == "links/plain.txt");
+            CHECK(!planUpload({links + "/junction"}, p, s, e) && e == "nothing to copy");
+            std::printf("junction skipped: %d entries (%s)\n", (int)p.size(), qPrintable(e));
+            QProcess::execute("cmd.exe", {"/c", "rmdir", junction});
+        }
+        else {
+            std::printf("junction not created (mklink returned %d); skipped\n", made);
+        }
+#endif
     }
 
     // ---- 4. Plan rejects: nothing, unsafe names ----
