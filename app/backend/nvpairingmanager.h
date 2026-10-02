@@ -25,6 +25,10 @@ public:
     pair(QString appVersion, QString pin, QSslCertificate& serverCert);
 
 private:
+    // Hermit: tells the host to drop the unfinished pairing session; failures are only logged
+    void
+    cleanupPairing();
+
     QByteArray
     generateRandomBytes(int length);
 
