@@ -207,9 +207,12 @@ to sync the clipboard in both directions.
   - A download that stops (network loss, or the host's 30-minute limit per request) continues from
     where it stopped. It waits up to 5 minutes for data, since the host may first have to download a
     OneDrive placeholder; File Explorer shows the copy waiting, and its Cancel ends it. The file fails
-    when two attempts in a row bring no data.
+    when two attempts in a row bring no data. While the host is still busy with an earlier read of the
+    same file (HTTP 503), the paste asks again every 1 to 2 seconds, until 5 minutes pass without data.
   - The list itself may take up to 2 minutes (folders in OneDrive, for example). If it does not
-    arrive, it is fetched again the next time you leave the stream window.
+    arrive, it is fetched again the next time you leave the stream window. After an error on the host
+    (HTTP 500, for example), host files are fetched once more; when that fails too, they are not
+    fetched again until the host clipboard changes.
   - This needs a current Shell host. With older Shell versions, and for folders with paths over 259
     characters, the files come over as one archive when you leave the stream window (256 MB limit) and
     are pasted from a temporary folder, as described next.
@@ -261,7 +264,9 @@ to sync the clipboard in both directions.
 - Content that does not move also gets a short notice: an image over 32 MB or 8192×8192 pixels or in
   a format that can't be converted, text over 1 MB, host files over the limit, host files with names
   the host can't copy ("unsupported or duplicate names") or only links ("only links or nothing to
-  copy"), a whole drive copied locally, host text the host could not read, or a transfer that failed.
+  copy"), a whole drive copied locally, host text the host could not read (after a network
+  error or timeout, it is fetched again the next time you leave the stream window), or a transfer
+  that failed.
   Host content is fetched when you leave the stream window, where the notice is easy to miss, so a
   notice about host content (or a missing permission) is shown once more when you return to the
   stream window.
