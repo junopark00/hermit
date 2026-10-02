@@ -211,9 +211,10 @@ to sync the clipboard in both directions.
     same file (HTTP 503), for example one that just stopped, the paste asks again every 1 to 2 seconds
     for up to 5 minutes; these answers do not count as attempts.
   - The list itself may take up to 2 minutes (folders in OneDrive, for example). If it does not
-    arrive, it is fetched again the next time you leave the stream window. After an error on the host
-    (HTTP 500, for example), host files are fetched once more; when that fails too, they are not
-    fetched again until the host clipboard changes.
+    arrive, or the network fails while host files are fetched, they are fetched again the next time
+    you leave the stream window. After an error on the host (HTTP 500, for example), host files are
+    fetched once more; when that fails too, they are not fetched again until the host clipboard
+    changes.
   - This needs a current Shell host. With older Shell versions, and for folders with paths over 259
     characters, the files come over as one archive when you leave the stream window (256 MB limit) and
     are pasted from a temporary folder, as described next.

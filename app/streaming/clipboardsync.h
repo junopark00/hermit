@@ -169,6 +169,8 @@ private:
     quint32 m_HostSeq;
     bool m_HostFilesErrorSeqValid;  // Hermit: host files of m_HostFilesErrorSeq failed once with a host error
     quint32 m_HostFilesErrorSeq;
+    bool m_HostFilesNetworkSeqValid;  // Hermit: host files of m_HostFilesNetworkSeq had a network error notice
+    quint32 m_HostFilesNetworkSeq;
     bool m_HostTextHashValid;
     QByteArray m_HostTextHash;
     bool m_WarnedTextOnly;

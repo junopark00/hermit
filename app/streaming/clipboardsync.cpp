@@ -544,6 +544,8 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_HostSeq(0),
       m_HostFilesErrorSeqValid(false),
       m_HostFilesErrorSeq(0),
+      m_HostFilesNetworkSeqValid(false),
+      m_HostFilesNetworkSeq(0),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -834,7 +836,8 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
         break;
     }
     if (total >= 0 && done != total) {
-        qtError = -1;
+        // Hermit: the connection ended early, a network error like a reset
+        qtError = QNetworkReply::RemoteHostClosedError;
         m_LastError = QStringLiteral("incomplete download");
         return TransferResult::Failed;
     }
@@ -1614,6 +1617,18 @@ void ClipboardSyncWorker::failedHostFiles(int qtError)
         // for example): offered again when the user next leaves the stream window.
         notify(HostFilesFailed, true);
         m_HostSeqValid = false;
+        return;
+    }
+    if (m_LastHttpStatus == 0 && qtError > 0) {
+        // Hermit: a network error without a reply (connection refused or reset, a transfer cut
+        // off) may be passing too: fetched again on the next pull. One notice per content, as
+        // such an error can come at once every time.
+        m_HostSeqValid = false;
+        if (!m_HostFilesNetworkSeqValid || m_HostFilesNetworkSeq != m_HostSeq) {
+            m_HostFilesNetworkSeq = m_HostSeq;
+            m_HostFilesNetworkSeqValid = true;
+            notify(HostFilesFailed, true);
+        }
         return;
     }
     if (m_LastHttpStatus >= 500) {
