@@ -289,14 +289,23 @@ CenteredGridView {
         property string pin : "0000"
         // Hermit: the PC by uuid, for the pairing page button (the list can be re-sorted meanwhile)
         property string pcUuid : ""
+        // Hermit: shown under the text when the pairing page could not be opened
+        property string notice : ""
         text:qsTr("Please enter %1 on your host PC. This dialog will close when pairing is completed.").arg(pin)+"\n\n"+
-             qsTr("Enter the PIN in the Shell web UI on the host PC (https://<host address>:47990).")+"\n\n"+
-             qsTr("Open Shell pairing page fills in the PIN and this PC's name for you. The browser warns about the host's self-signed certificate and asks for the web UI password.")
+             qsTr("Enter the PIN in the Shell web UI on the host PC (https://<host address>:47990).")+
+             (SystemProperties.hasBrowser ? "\n\n"+
+             qsTr("Open Shell pairing page fills in the PIN and this PC's name for you. The browser warns about the host's self-signed certificate and asks for the web UI password.") : "")+
+             (notice !== "" ? "\n\n"+notice : "")
         standardButtons: Dialog.Cancel
         // Hermit: opens the host's pairing page in the browser; the dialog stays open until pairing completes
-        actionText: qsTr("Open Shell pairing page")
+        actionText: SystemProperties.hasBrowser ? qsTr("Open Shell pairing page") : ""
         onActionClicked: {
-            computerModel.openPairingPage(pcUuid, pin)
+            if (!computerModel.openPairingPage(pcUuid, pin)) {
+                notice = qsTr("The pairing page could not be opened. Enter the PIN in the web UI yourself.")
+            }
+        }
+        onClosed: {
+            notice = ""
         }
         onRejected: {
             // FIXME: We should interrupt pairing here

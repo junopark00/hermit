@@ -314,12 +314,12 @@ void ComputerModel::pairComputer(int computerIndex, QString pin)
     m_ComputerManager->pairHost(m_Computers[computerIndex], pin);
 }
 
-void ComputerModel::openPairingPage(QString uuid, QString pin)
+bool ComputerModel::openPairingPage(QString uuid, QString pin)
 {
     NvComputer* computer = findComputer(uuid);
     if (computer == nullptr) {
         qWarning() << "Pairing page: PC" << uuid << "is no longer in the list";
-        return;
+        return false;
     }
 
     QString host;
@@ -329,12 +329,15 @@ void ComputerModel::openPairingPage(QString uuid, QString pin)
         NvAddress address = computer->activeAddress;
         if (address.isNull()) {
             qWarning() << "Pairing page: no active address for" << computer->name;
-            return;
+            return false;
         }
 
-        // IPv6 literals go in brackets, as NvAddress::toString() does
-        host = QHostAddress(address.address()).protocol() == QAbstractSocket::IPv6Protocol ?
-                    "[" + address.address() + "]" : address.address();
+        // IPv6 literals go in brackets, as NvAddress::toString() does, without a zone id
+        // ("fe80::1%eth0"), which a URL cannot carry
+        host = address.address();
+        if (QHostAddress(host).protocol() == QAbstractSocket::IPv6Protocol) {
+            host = "[" + host.section('%', 0, 0) + "]";
+        }
 
         // Sunshine convention: HTTPS = base - 5, HTTP = base, web UI = base + 1. The active
         // address carries the HTTP (base) port; fall back to the default when it is unknown.
@@ -355,7 +358,9 @@ void ComputerModel::openPairingPage(QString uuid, QString pin)
 
     if (!QDesktopServices::openUrl(url)) {
         qWarning() << "Pairing page: couldn't open" << url.toString(QUrl::RemoveFragment);
+        return false;
     }
+    return true;
 }
 
 void ComputerModel::handlePairingCompleted(NvComputer*, QString error)
