@@ -30,9 +30,11 @@ constexpr quint64 k_MaxStreamFilesBytes = 4ULL * 1024 * 1024 * 1024;
 // name and 1024 UTF-8 bytes in all (the same rules as the Shell host).
 bool isSafeRelativePath(const QString& path);
 
-// Key for comparing paths without case, as Windows and the Shell host do (LCMAP_UPPERCASE): each
-// UTF-16 code unit in its simple upper case form, so the length never changes (QString::toUpper
-// would turn "ß" into "SS", which Windows does not).
+// Key for comparing paths without case, as Windows and the Shell host do: on Windows the host's
+// own LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE) call, elsewhere each UTF-16 code unit
+// in its simple upper case form (the two differ for a few characters, such as a dotless "ı",
+// which Windows leaves alone). The length never changes (QString::toUpper would turn "ß" into
+// "SS", which Windows does not).
 QString foldPath(const QString& path);
 
 struct Entry

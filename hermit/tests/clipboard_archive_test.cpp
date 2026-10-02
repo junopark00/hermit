@@ -431,14 +431,20 @@ int main(int argc, char** argv)
         }
         CHECK(!parseFileList(many, list, err) && err == "too many files");
 
-        // Names compared without case the way Windows and the Shell host do (each character in
-        // upper case on its own): the Kelvin sign and "k" are two names, a dotless "ı" and "I"
-        // are the same, "ß" stays one character.
+        // Names compared without case the way Windows and the Shell host do (LCMAP_UPPERCASE on
+        // Windows, each character in upper case on its own elsewhere): the Kelvin sign and "k" are
+        // two names, "ß" stays one character. LCMAP_UPPERCASE leaves a dotless "ı" alone (it has
+        // no one-to-one round trip with "I"), so on Windows "ı" and "I" are two names, as on the
+        // host; QChar::toUpper makes them one.
         auto twoFiles = [](const QByteArray& a, const QByteArray& b) {
             return "seq=1\nsnapshot=ab\nentries=2\nbytes=0\nf\t0\t0\t" + a + "\nf\t0\t0\t" + b + "\n";
         };
         CHECK(parseFileList(twoFiles("\xE2\x84\xAA.txt", "k.txt"), list, err));
+#ifdef Q_OS_WIN32
+        CHECK(parseFileList(twoFiles("\xC4\xB1.txt", "I.TXT"), list, err));
+#else
         CHECK(!parseFileList(twoFiles("\xC4\xB1.txt", "I.TXT"), list, err) && err == "duplicate path");
+#endif
         CHECK(!parseFileList(twoFiles("Read.me", "rEAD.ME"), list, err) && err == "duplicate path");
         CHECK(parseFileList(twoFiles("stra\xC3\x9F" "e", "STRASSE"), list, err));
         CHECK(foldPath(QString::fromUtf8("stra\xC3\x9F" "e")).size() == 6);

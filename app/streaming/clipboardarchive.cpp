@@ -97,6 +97,19 @@ bool isSafeRelativePath(const QString& path)
 QString foldPath(const QString& path)
 {
     QString key(path);
+#ifdef Q_OS_WIN32
+    // The same call as the Shell host, so both sides see the same duplicates. LCMAP_UPPERCASE maps
+    // code units one to one, so the key keeps the path's length.
+    if (!key.isEmpty()) {
+        const int mapped = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE,
+                                         reinterpret_cast<LPCWSTR>(path.utf16()), path.size(),
+                                         reinterpret_cast<LPWSTR>(key.data()), key.size(), nullptr, nullptr, 0);
+        if (mapped == key.size()) {
+            return key;
+        }
+        key = path;  // not mapped (an unexpected length or failure): the fallback below
+    }
+#endif
     for (QChar& c : key) {
         c = c.toUpper();
     }
