@@ -312,9 +312,11 @@ private:
 class Fetcher : public QObject
 {
 public:
-    Fetcher(RequestFactory requests, qint64 rateBytesPerSecond, std::shared_ptr<ClipboardTransferControl> control)
+    Fetcher(RequestFactory requests, qint64 rateBytesPerSecond, std::shared_ptr<ClipboardTransferControl> control,
+            qint64 inactivityTimeoutMs = k_InactivityTimeoutMs)
         : m_Requests(std::move(requests)),
           m_Control(std::move(control)),
+          m_InactivityTimeoutMs(inactivityTimeoutMs),
           m_Tick(nullptr),
           m_Limiter(rateBytesPerSecond),
           m_Chunk(64 * 1024, Qt::Uninitialized),
@@ -356,7 +358,6 @@ public:
         Job job;
         job.download = download;
         job.cancelEpoch = m_Control->streamCancel.load();
-        job.lastDataMs = m_Clock.elapsed();
         m_Control->streams.fetch_add(1);
         m_Jobs.push_back(job);
         sendRequest(m_Jobs.back());
@@ -379,7 +380,7 @@ private:
         quint64 attemptStart = 0;  // bytes received when the current request started
         int attemptsWithoutProgress = 0;
         qint64 lastActivityMs = 0;
-        qint64 lastDataMs = 0;     // when bytes last arrived (or the job started)
+        qint64 busySinceMs = -1;   // >= 0: the first 503 of the current busy streak
         qint64 resendAtMs = -1;    // >= 0: waiting to ask a busy host again, with no reply
         int busyAnswers = 0;       // 503s in a row
         int cancelEpoch = 0;
@@ -453,13 +454,18 @@ private:
     }
 
     // Hermit: the host is still serving an earlier read of this file (503): ask for the same
-    // offset again shortly. Not an attempt without progress; it gives up only after
-    // k_InactivityTimeoutMs without data, like a stalled response.
+    // offset again shortly. Not an attempt without progress; it gives up when the host stays busy
+    // for the inactivity timeout, like a stalled response. Counted from the first 503 of the
+    // streak, not from the last data: the host answers 503 just after a stalled request was
+    // given up, when no data has come for the whole timeout already.
     bool waitForBusyHost(Job& job, qint64 now)
     {
-        if (now - job.lastDataMs > k_InactivityTimeoutMs) {
+        if (job.busySinceMs < 0) {
+            job.busySinceMs = now;
+        }
+        else if (now - job.busySinceMs > m_InactivityTimeoutMs) {
             failJob(job, HRESULT_FROM_WIN32(ERROR_UNEXP_NET_ERR),
-                    QStringLiteral("host busy, no data for %1 s").arg(k_InactivityTimeoutMs / 1000));
+                    QStringLiteral("host busy for %1 s").arg(m_InactivityTimeoutMs / 1000));
             return false;
         }
         dropReply(job);
@@ -511,6 +517,9 @@ private:
             }
             if (!job.checkedLength) {
                 job.checkedLength = true;
+                // Hermit: the host serves the file again; a later 503 starts a new busy streak.
+                job.busySinceMs = -1;
+                job.busyAnswers = 0;
                 const QVariant length = reply->header(QNetworkRequest::ContentLengthHeader);
                 if (length.isValid() && length.toULongLong() != download.expected() - download.received()) {
                     failJob(job, HRESULT_FROM_WIN32(ERROR_UNEXP_NET_ERR), QStringLiteral("unexpected length"));
@@ -534,8 +543,6 @@ private:
                 m_Limiter.consume(n);
                 download.append(m_Chunk.constData(), n);
                 job.lastActivityMs = now;
-                job.lastDataMs = now;
-                job.busyAnswers = 0;
             }
             if (download.received() >= download.expected()) {
                 dropReply(job);
@@ -553,10 +560,9 @@ private:
         }
         if (download.space() <= 0) {
             job.lastActivityMs = now;  // Explorer is not reading (paused, or a slow disk): not a stall
-            job.lastDataMs = now;
         }
-        else if (now - job.lastActivityMs > k_InactivityTimeoutMs) {
-            return retryOrFail(job, QStringLiteral("no data for %1 s").arg(k_InactivityTimeoutMs / 1000));
+        else if (now - job.lastActivityMs > m_InactivityTimeoutMs) {
+            return retryOrFail(job, QStringLiteral("no data for %1 s").arg(m_InactivityTimeoutMs / 1000));
         }
         return true;
     }
@@ -593,6 +599,7 @@ private:
 
     RequestFactory m_Requests;
     std::shared_ptr<ClipboardTransferControl> m_Control;
+    const qint64 m_InactivityTimeoutMs;  // k_InactivityTimeoutMs; shorter in the tests
     QTimer* m_Tick;
     ClipboardArchive::RateLimiter m_Limiter;  // shared by all files, like one transfer
     QByteArray m_Chunk;

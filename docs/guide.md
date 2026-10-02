@@ -208,7 +208,8 @@ to sync the clipboard in both directions.
     where it stopped. It waits up to 5 minutes for data, since the host may first have to download a
     OneDrive placeholder; File Explorer shows the copy waiting, and its Cancel ends it. The file fails
     when two attempts in a row bring no data. While the host is still busy with an earlier read of the
-    same file (HTTP 503), the paste asks again every 1 to 2 seconds, until 5 minutes pass without data.
+    same file (HTTP 503), for example one that just stopped, the paste asks again every 1 to 2 seconds
+    for up to 5 minutes; these answers do not count as attempts.
   - The list itself may take up to 2 minutes (folders in OneDrive, for example). If it does not
     arrive, it is fetched again the next time you leave the stream window. After an error on the host
     (HTTP 500, for example), host files are fetched once more; when that fails too, they are not

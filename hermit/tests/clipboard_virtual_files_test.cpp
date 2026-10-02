@@ -46,6 +46,8 @@ struct FakeHost
     int cutIndex = -1;
     int busyIndex = -1;            // the next busyAnswers requests for busyIndex get 503
     int busyAnswers = 0;
+    int stallIndex = -1;           // the next stallAnswers requests for stallIndex get the headers only
+    int stallAnswers = 0;
     std::mutex mutex;
     QList<QPair<int, qint64>> requests;  // (index, offset)
 
@@ -84,15 +86,26 @@ struct FakeHost
         const qint64 offset = query.queryItemValue("offset").toLongLong();
         bool firstForIndex;
         bool busy = false;
+        bool stall = false;
         {
             std::lock_guard<std::mutex> lock(mutex);
             firstForIndex = true;
             for (const auto& r : requests) firstForIndex = firstForIndex && r.first != index;
             requests.append({index, offset});
-            if (index == busyIndex && busyAnswers > 0) {
+            if (index == stallIndex && stallAnswers > 0) {
+                stallAnswers--;
+                stall = true;
+            }
+            else if (index == busyIndex && busyAnswers > 0) {
                 busyAnswers--;
                 busy = true;
             }
+        }
+        if (stall) {
+            // Promises the file, then sends nothing and keeps the connection open (a stalled read)
+            sock->write("HTTP/1.1 200 X\r\nConnection: close\r\nContent-Length: " +
+                        QByteArray::number(files.value(index).size() - offset) + "\r\n\r\n");
+            return;
         }
         if (busy) {
             // Like Shell while an earlier read of the same file is still stalled
@@ -249,20 +262,26 @@ int main(int argc, char** argv)
         CHECK(published->count() == 0);
     }
 
-    // Download thread with two fetchers: unlimited, and 8 Mbps for the cancel and stop cases
+    // Download thread with three fetchers: unlimited, 8 Mbps for the cancel and stop cases, and
+    // unlimited with a 3 s inactivity timeout (instead of 5 minutes) for the stall cases
     auto control = std::make_shared<ClipboardTransferControl>();
     QThread fetchThread;
     auto* fast = new Fetcher(loopbackRequests(host.server.serverPort()), 0, control);
     auto* slow = new Fetcher(loopbackRequests(host.server.serverPort()), 8 * 1000000 / 8, control);
+    auto* impatient = new Fetcher(loopbackRequests(host.server.serverPort()), 0, control, 3000);
     fast->moveToThread(&fetchThread);
     slow->moveToThread(&fetchThread);
+    impatient->moveToThread(&fetchThread);
     QObject::connect(&fetchThread, &QThread::finished, fast, &QObject::deleteLater);
     QObject::connect(&fetchThread, &QThread::finished, slow, &QObject::deleteLater);
+    QObject::connect(&fetchThread, &QThread::finished, impatient, &QObject::deleteLater);
     fetchThread.start();
     auto hub = std::make_shared<Hub>();
     hub->setFetcher(fast);
     auto slowHub = std::make_shared<Hub>();
     slowHub->setFetcher(slow);
+    auto impatientHub = std::make_shared<Hub>();
+    impatientHub->setFetcher(impatient);
 
     std::atomic<bool> done {false};
     std::thread sta([&]() {
@@ -419,6 +438,58 @@ int main(int argc, char** argv)
             for (const auto& r : requests) CHECK(r.second == 200);
             CHECK(t.elapsed() >= 2000);  // waited 1 s, then 1.25 s
             stream->Release();
+        }
+        // ---- A read stalls until the inactivity timeout (3 s here), and the host is still busy
+        // with it (503 twice) when it is asked again: the busy wait counts from the first 503, not
+        // from the last data, so the paste completes
+        {
+            auto* impatientObject = new HostFilesDataObject(impatientHub, list);
+            {
+                std::lock_guard<std::mutex> lock(host.mutex);
+                host.requests.clear();
+                host.stallIndex = 3;
+                host.stallAnswers = 1;
+                host.busyIndex = 3;
+                host.busyAnswers = 2;
+            }
+            IStream* stream = openContents(impatientObject, 3);
+            CHECK(stream != nullptr);
+            QByteArray got;
+            QElapsedTimer t;
+            t.start();
+            HRESULT hr = readAll(stream, got, 4096);
+            auto requests = host.requestsFor(3);
+            std::printf("stalled, then busy: hr=0x%08lx, %lld bytes in %lld ms, %d request(s)\n",
+                        (unsigned long)hr, (long long)got.size(), (long long)t.elapsed(), (int)requests.size());
+            CHECK(hr == S_OK && got == smallData);
+            CHECK(requests.size() == 4);
+            for (const auto& r : requests) CHECK(r.second == 0);
+            CHECK(t.elapsed() >= 3000 + 2000);
+            stream->Release();
+
+            // ---- A host that stays busy: the paste fails once the busy streak is as long as the
+            // inactivity timeout
+            {
+                std::lock_guard<std::mutex> lock(host.mutex);
+                host.requests.clear();
+                host.busyIndex = 3;
+                host.busyAnswers = 1000;
+            }
+            stream = openContents(impatientObject, 3);
+            CHECK(stream != nullptr);
+            t.restart();
+            hr = readAll(stream, got, 4096);
+            requests = host.requestsFor(3);
+            std::printf("always busy: hr=0x%08lx after %lld ms, %d request(s)\n",
+                        (unsigned long)hr, (long long)t.elapsed(), (int)requests.size());
+            CHECK(hr == HRESULT_FROM_WIN32(ERROR_UNEXP_NET_ERR) && got.isEmpty());
+            CHECK(t.elapsed() >= 3000 && t.elapsed() < 8000);
+            stream->Release();
+            {
+                std::lock_guard<std::mutex> lock(host.mutex);
+                host.busyAnswers = 0;
+            }
+            impatientObject->Release();
         }
         // ---- A list the host no longer knows (410): the read fails instead of waiting
         {
