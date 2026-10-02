@@ -1526,7 +1526,7 @@ private:
             failed->kind = ClipboardHostContent::RemoteFilesFailed;
             failed->generation = m_Generation;
             failed->listGeneration = generation;
-            failed->hostSeq = list.seq;
+            failed->hostKey = list.seq;
             pushContent(failed);
             return;
         }
@@ -1555,7 +1555,7 @@ private:
                 superseded->kind = ClipboardHostContent::RemoteFilesSuperseded;
                 superseded->generation = m_Generation;
                 superseded->listGeneration = generation;
-                superseded->hostSeq = list.seq;
+                superseded->hostKey = list.seq;
                 pushContent(superseded);
             }
             return;

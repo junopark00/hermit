@@ -230,6 +230,7 @@ HEADERS += \
     settings/resolutionpresets.h \
     streaming/input/input.h \
     streaming/clipboardarchive.h \
+    streaming/clipboardchangeorder.h \
     streaming/clipboardsync.h \
     streaming/clipboardvirtualfiles.h \
     streaming/session.h \

@@ -1,6 +1,7 @@
 // Tests for Hermit's own logic that does not need a stream: the layered translator, the session
-// summary (maths and history file), the performance overlay text, automatic bitrate, resolution
-// presets for the display's aspect ratio and the connection profile property list. Built and run by hermit/tests/run-tests.ps1.
+// summary (maths and history file), the performance overlay text, automatic bitrate, which
+// clipboard change wins, resolution presets for the display's aspect ratio and the connection
+// profile property list. Built and run by hermit/tests/run-tests.ps1.
 
 // The headers pull in SDL, which would otherwise rename main().
 #define SDL_MAIN_HANDLED
@@ -8,6 +9,7 @@
 #include "streaming/sessionsummary.h"
 #include "streaming/video/statsoverlay.h"
 #include "streaming/autobitrate.h"
+#include "streaming/clipboardchangeorder.h"
 #include "settings/resolutionpresets.h"
 
 #include <QCoreApplication>
@@ -255,6 +257,171 @@ static void testAutoBitrate()
     CHECK_EQ(ab.current(), 50000);
 }
 
+// Clipboard sync: when both sides changed, the most recent change wins (clipboardchangeorder.h).
+// `local` stands for the main thread's count of local changes, which pulls carry when posted.
+static void testClipboardChangeOrder()
+{
+    using HC = ClipboardChangeOrder::HostContent;
+    auto hostMayReplaceLocal = [](const ClipboardChangeOrder& o, quint64 local) {
+        return ClipboardChangeOrder::hostMayReplaceLocal(o.hostOrder(), local);
+    };
+
+    // Start: the host's content is recorded, not fetched; the local content is sent and not
+    // fetched back.
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        CHECK(o.hostSeen(100, 0) == HC::Unchanged);
+        const quint64 local = 1;
+        CHECK(o.localMayReplaceHost(local));
+        o.localSent(true, 101, local);
+        CHECK(o.hostSeen(101, local) == HC::Unchanged);
+        CHECK(o.hostKey() == 101 && o.hostOrder() == 1 && !o.hostPending());
+    }
+
+    // A local copy that did not reach the host (network error, busy host) is sent again while
+    // the host's clipboard did not change...
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        const quint64 local = 1;
+        CHECK(o.hostSeen(100, local) == HC::Unchanged);
+        CHECK(o.localMayReplaceHost(local));
+    }
+    // ...but not over a host change seen after it: the host's content is fetched instead, also
+    // after its own fetch failed (round 9, 1).
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        const quint64 local = 1;
+        CHECK(o.localMayReplaceHost(local));     // the first attempt fails
+        CHECK(o.hostSeen(101, local) == HC::Fetch);
+        o.hostRetry(101);                        // busy
+        CHECK(!o.localMayReplaceHost(local));
+        CHECK(o.hostSeen(101, local) == HC::Fetch);
+        CHECK(hostMayReplaceLocal(o, local));
+    }
+
+    // Host content on its way when the user copies locally does not replace the copy, which is
+    // sent to the host (round 9, 2).
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        quint64 local = 0;
+        CHECK(o.hostSeen(101, local) == HC::Fetch);
+        local++;
+        CHECK(!hostMayReplaceLocal(o, local));
+        CHECK(o.localMayReplaceHost(local));
+        o.localSent(true, 102, local);
+        CHECK(o.hostSeen(102, local) == HC::Unchanged);
+    }
+
+    // Host content waiting to be fetched again (busy, network error, failed local write) is
+    // fetched while no local change came after it, and dropped once one did.
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        CHECK(o.hostSeen(101, 3) == HC::Fetch);
+        CHECK(!o.hostPending());
+        o.hostRetry(101);
+        CHECK(o.hostPending());
+        CHECK(o.hostSeen(101, 3) == HC::Fetch);
+        CHECK(hostMayReplaceLocal(o, 3));
+        o.hostRetry(101);
+        CHECK(o.hostSeen(101, 4) == HC::Superseded);
+        CHECK(!o.hostPending());
+        CHECK(o.hostSeen(101, 4) == HC::Unchanged);
+        CHECK(o.localMayReplaceHost(4));
+        // A later host change is fetched, and wins over the older local copy.
+        CHECK(o.hostSeen(102, 4) == HC::Fetch);
+        CHECK(!o.localMayReplaceHost(4));
+        CHECK(o.localMayReplaceHost(5));
+    }
+
+    // An emptied clipboard is no local change, so content forgotten after a failed write (or
+    // removed with a superseded host file list) still comes (round 9, 3).
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        CHECK(o.hostSeen(101, 2) == HC::Fetch);
+        o.hostRetry(101);
+        CHECK(o.hostSeen(101, 2) == HC::Fetch);
+    }
+
+    // Forgetting content that is no longer the host's current content does nothing.
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        CHECK(o.hostSeen(101, 0) == HC::Fetch);
+        CHECK(o.hostSeen(102, 0) == HC::Fetch);
+        o.hostRetry(101);
+        CHECK(!o.hostPending());
+        CHECK(o.hostSeen(102, 0) == HC::Unchanged);
+    }
+
+    // Text-only hosts: the same rule with the key of the text (round 9, 5).
+    {
+        const quint64 textA = 0xA, textB = 0xB, textC = 0xC;
+        ClipboardChangeOrder o;
+        o.hostRecorded(textA);
+        CHECK(o.hostSeen(textB, 0) == HC::Fetch);
+        o.hostRetry(textB);                       // not put on the local clipboard
+        CHECK(o.hostSeen(textB, 1) == HC::Superseded);  // a local copy came after it
+        CHECK(o.localMayReplaceHost(1));
+        o.localSent(true, textC, 1);
+        CHECK(o.hostSeen(textC, 1) == HC::Unchanged);
+        CHECK(o.hostSeen(textA, 1) == HC::Fetch);  // the host's text changed back: a change
+    }
+
+    // Dropped files: newer on the host than every local change so far, without being a local
+    // change (host content seen later still replaces the local clipboard).
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        o.localSent(true, 101, 1);   // dropped after one local change
+        CHECK(!o.localMayReplaceHost(1));
+        CHECK(o.localMayReplaceHost(2));
+        CHECK(o.hostSeen(102, 1) == HC::Fetch);
+        CHECK(hostMayReplaceLocal(o, 1));
+        CHECK(!hostMayReplaceLocal(o, 2));
+    }
+
+    // A file list under a newer sequence number than the one asked about is taken under it.
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        CHECK(o.hostSeen(101, 2) == HC::Fetch);
+        o.hostSeen(103, 2);
+        CHECK(o.hostKey() == 103 && o.hostOrder() == 2);
+        o.hostRetry(101);
+        CHECK(o.hostSeen(103, 2) == HC::Unchanged);
+    }
+
+    // A reply without a sequence number: waiting host content is gone, the key stays unknown, so
+    // the next change is fetched.
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        CHECK(o.hostSeen(101, 0) == HC::Fetch);
+        o.hostRetry(101);
+        o.localSent(false, 0, 1);
+        CHECK(!o.hostPending() && o.hostKey() == 101);
+        CHECK(o.hostSeen(101, 1) == HC::Unchanged);
+        CHECK(o.hostSeen(102, 1) == HC::Fetch);
+    }
+
+    // Without local change tracking (order 0), nothing is held back.
+    {
+        ClipboardChangeOrder o;
+        CHECK(!o.hostKnown());
+        CHECK(o.hostSeen(101, 0) == HC::Fetch);
+        o.hostRetry(101);
+        CHECK(o.hostSeen(101, 0) == HC::Fetch);
+        CHECK(o.localMayReplaceHost(0));
+        CHECK(hostMayReplaceLocal(o, 0));
+    }
+}
+
 static QString sizesText(const QList<QSize>& sizes)
 {
     QStringList parts;
@@ -351,6 +518,7 @@ int main(int argc, char** argv)
     testSessionSummary();
     testStatsOverlay();
     testAutoBitrate();
+    testClipboardChangeOrder();
     testResolutionPresets();
     testProfileProperties(repo);
 

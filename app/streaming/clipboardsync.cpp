@@ -218,6 +218,14 @@ QByteArray hashOf(const QByteArray& data)
     return QCryptographicHash::hash(data, QCryptographicHash::Sha256);
 }
 
+// Hermit: the ClipboardChangeOrder key of a text-only host's text, from its hashOf
+quint64 textKey(const QByteArray& hash)
+{
+    quint64 key = 0;
+    memcpy(&key, hash.constData(), qMin<size_t>(sizeof(key), (size_t)hash.size()));
+    return key;
+}
+
 // Host replies are "key=value" lines.
 bool parseField(const QByteArray& body, const char* key, QByteArray& value)
 {
@@ -413,6 +421,11 @@ bool writeLocalClipboard(HWND owner, const QVector<QPair<UINT, QByteArray>>& for
         owned[i] = SetClipboardData(formats[i].first, handles[i]) != nullptr;
         ok = owned[i];
     }
+    if (!ok) {
+        // Hermit: no part of it stays either. An empty clipboard is not taken for a local copy,
+        // which a lone format left behind would be (and sent back to the host).
+        EmptyClipboard();
+    }
     CloseClipboard();
     for (int i = 0; i < handles.size(); i++) {
         if (!owned[i]) {
@@ -539,17 +552,13 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_Http(nullptr),
       m_Busy(false),
       m_Mode(Mode::Unknown),
-      m_HostSeqValid(false),
       m_HostStreamsFiles(false),
-      m_HostSeq(0),
-      m_HostFilesErrorSeqValid(false),
-      m_HostFilesErrorSeq(0),
-      m_HostNetworkNoticeSeqValid(false),
-      m_HostNetworkNoticeSeq(0),
+      m_HostFilesErrorKeyValid(false),
+      m_HostFilesErrorKey(0),
+      m_HostNetworkNoticeKeyValid(false),
+      m_HostNetworkNoticeKey(0),
       m_LocalNetworkNoticeSeqValid(false),
       m_LocalNetworkNoticeSeq(0),
-      m_LocalCopySeqValid(false),
-      m_LocalCopySeq(0),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -961,35 +970,26 @@ void ClipboardSyncWorker::handleFailure(const char* operation, int qtError, Dire
     }
 }
 
-void ClipboardSyncWorker::forgetHostContent(quint32 seq, const QByteArray& text)
+void ClipboardSyncWorker::forgetHostContent(quint64 key)
 {
-    if (m_Mode == Mode::Legacy) {
-        // No sequence numbers: the next pull compares the host's text with this hash.
-        if (m_HostTextHashValid && m_HostTextHash == hashOf(text)) {
-            m_HostTextHashValid = false;
-        }
-        return;
-    }
-    if (m_HostSeqValid && m_HostSeq == seq) {
-        m_HostSeqValid = false;
-    }
+    m_Order.hostRetry(key);
 }
 
-void ClipboardSyncWorker::recordHostSequence(const QByteArray& responseBody)
+void ClipboardSyncWorker::recordLocalSent(const QByteArray& responseBody, quint64 localOrder)
 {
     quint32 seq = 0;
-    if (parseSeq(responseBody, seq)) {
-        m_HostSeq = seq;
-        m_HostSeqValid = true;
-    }
+    const bool known = parseSeq(responseBody, seq);
+    m_Order.localSent(known, seq, localOrder);
 }
 
 void ClipboardSyncWorker::deliver(ClipboardHostContent* content)
 {
     content->generation = m_Generation;
-    // The sequence number this content was fetched at, recorded just before, so a failed write
-    // forgets only this content and not newer content seen meanwhile.
-    content->hostSeq = m_HostSeq;
+    // The host content this is, recorded just before, so a failed write forgets only this content
+    // and not newer content seen meanwhile; Hermit: and the order of its change, so the main thread
+    // drops it when a local change came after it while it was on its way.
+    content->hostKey = m_Order.hostKey();
+    content->changeOrder = m_Order.hostOrder();
     if (stopped()) {
         delete content;
         return;
@@ -1011,32 +1011,14 @@ void ClipboardSyncWorker::localNotSent(quint32 localSeq)
     deliver(content);
 }
 
-bool ClipboardSyncWorker::resendAfterNetworkError(quint32 localSeq)
+bool ClipboardSyncWorker::firstLocalNetworkError(quint32 localSeq)
 {
-    localNotSent(localSeq);
     if (m_LocalNetworkNoticeSeqValid && m_LocalNetworkNoticeSeq == localSeq) {
         return false;
     }
     m_LocalNetworkNoticeSeq = localSeq;
     m_LocalNetworkNoticeSeqValid = true;
     return true;
-}
-
-void ClipboardSyncWorker::localCopied(quint32 localSeq)
-{
-    if (m_LocalCopySeqValid && m_LocalCopySeq == localSeq) {
-        return;  // the same content handled again after it was not sent: not a newer copy
-    }
-    m_LocalCopySeq = localSeq;
-    m_LocalCopySeqValid = true;
-    if (m_Mode == Mode::Extended && !m_HostSeqValid) {
-        // Host content left to be fetched again (after a busy host, a network error or a failed
-        // local write) is the one at m_HostSeq, older than this copy: recorded as seen, so the
-        // next pull fetches only host content that changes after it.
-        m_HostSeqValid = true;
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Host clipboard content not fetched again: newer content was copied locally");
-    }
 }
 
 void ClipboardSyncWorker::notifyHostFilesRefused()
@@ -1073,8 +1055,7 @@ void ClipboardSyncWorker::init()
     if (request(QStringLiteral("info"), nullptr, k_InfoTimeoutMs, body, error) && parseSeq(body, seq)) {
         // Shell host: remember its current state, but do not copy it yet.
         m_Mode = Mode::Extended;
-        m_HostSeq = seq;
-        m_HostSeqValid = true;
+        m_Order.hostRecorded(seq);
         QByteArray files;
         m_HostStreamsFiles = parseField(body, "files", files) && files == "stream";
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1100,6 +1081,7 @@ void ClipboardSyncWorker::init()
         if (request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
             m_HostTextHash = hashOf(body);
             m_HostTextHashValid = true;
+            m_Order.hostRecorded(textKey(m_HostTextHash));
         }
         else if (error == QNetworkReply::AuthenticationRequiredError) {
             denyDirection(Direction::Pull);
@@ -1123,7 +1105,7 @@ bool ClipboardSyncWorker::hostIsShell()
     }
 }
 
-bool ClipboardSyncWorker::ensureReady()
+bool ClipboardSyncWorker::ensureReady(quint32 localSeq)
 {
     if (stopped()) {
         return false;
@@ -1131,12 +1113,25 @@ bool ClipboardSyncWorker::ensureReady()
     if (m_Mode == Mode::Unknown) {
         init();
     }
+    if (m_Mode == Mode::Unknown && localSeq != 0 && !stopped()) {
+        // Hermit: the host could not be asked (a network error, a busy host, or no active stream
+        // seen by the host yet), so setup is tried again on the next job: the local content is
+        // left to the next trigger instead of being dropped.
+        localNotSent(localSeq);
+    }
     return m_Mode == Mode::Extended || m_Mode == Mode::Legacy;
 }
 
-void ClipboardSyncWorker::pushText(const QByteArray& utf8, quint32 localSeq)
+void ClipboardSyncWorker::pushText(const QByteArray& utf8, quint32 localSeq, quint64 localOrder)
 {
-    if (utf8.isEmpty() || !ensureReady() || m_PushDenied) {
+    if (utf8.isEmpty() || !ensureReady(localSeq) || m_PushDenied) {
+        return;
+    }
+    if (!m_Order.localMayReplaceHost(localOrder)) {
+        // Hermit: sent again after the host was busy or a network error, but the host's clipboard
+        // changed after this copy: the newer content wins.
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Local clipboard text not sent again: the host's clipboard changed after it was copied");
         return;
     }
     if (utf8.size() > k_MaxTextBytes) {
@@ -1169,14 +1164,19 @@ void ClipboardSyncWorker::pushText(const QByteArray& utf8, quint32 localSeq)
     m_PushAccepted = true;
     m_HostTextHash = hash;
     m_HostTextHashValid = true;
-    recordHostSequence(body);
+    if (m_Mode == Mode::Legacy) {
+        m_Order.localSent(true, textKey(hash), localOrder);
+    }
+    else {
+        recordLocalSent(body, localOrder);
+    }
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Clipboard text sent to host (%d bytes)", (int)utf8.size());
 }
 
-void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 localSeq)
+void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 localSeq, quint64 localOrder)
 {
-    if (!ensureReady() || m_PushDenied) {
+    if (!ensureReady(localSeq) || m_PushDenied) {
         return;
     }
     if (m_Mode != Mode::Extended) {
@@ -1185,6 +1185,12 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 
                         "Clipboard images and files need a Shell host; only text is synced");
             m_WarnedTextOnly = true;
         }
+        return;
+    }
+    if (!m_Order.localMayReplaceHost(localOrder)) {
+        // Hermit: the host's clipboard changed after this copy: the newer content wins.
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Local clipboard image not sent again: the host's clipboard changed after it was copied");
         return;
     }
 
@@ -1245,10 +1251,11 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 
         }
         else if (m_LastHttpStatus == 0 && error > 0) {
             // Hermit: a network error without a reply (a timeout, connection refused or reset, an
-            // upload cut off) may be passing: sent again on the next trigger, with one notice per
-            // content.
+            // upload cut off) may be passing: sent again on the next trigger, unless the host's
+            // clipboard changes first, with one notice per content.
             handleFailure("image send", error, Direction::Push);
-            if (resendAfterNetworkError(localSeq)) {
+            localNotSent(localSeq);
+            if (firstLocalNetworkError(localSeq)) {
                 notify(LocalImageFailed, false);
             }
         }
@@ -1265,7 +1272,7 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 
         return;
     }
     m_PushAccepted = true;
-    recordHostSequence(body);
+    recordLocalSent(body, localOrder);
     m_HostTextHashValid = false;
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Clipboard image sent to host (%d KB)", (int)(png.size() / 1024));
@@ -1275,9 +1282,10 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 
     }
 }
 
-void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quint32 localSeq)
+void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quint32 localSeq, quint64 localOrder)
 {
-    const bool ready = ensureReady();
+    // Dropped files are not sent again by themselves
+    const bool ready = ensureReady(dropped ? 0 : localSeq);
     if (ready && m_PushDenied) {
         if (dropped) {
             notify(WriteNotAllowed, false);
@@ -1296,6 +1304,13 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
                         "Clipboard images and files need a Shell host; only text is synced");
             m_WarnedTextOnly = true;
         }
+        return;
+    }
+    if (!dropped && !m_Order.localMayReplaceHost(localOrder)) {
+        // Hermit: the host's clipboard changed after these files were copied: the newer content
+        // wins. (Dropped files are newer than everything seen when they were dropped.)
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Local files not sent again: the host's clipboard changed after they were copied");
         return;
     }
 
@@ -1389,11 +1404,12 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
     if (result == TransferResult::Failed && !dropped && m_LastHttpStatus == 0 && error > 0) {
         // Hermit: copied files hit by a network error without a reply (a timeout, connection
         // refused or reset, an upload cut off) are sent again when the user next returns to the
-        // stream window, with one notice per content. Dropped files keep their notice and are not
-        // sent again by themselves.
+        // stream window, unless the host's clipboard changes first, with one notice per content.
+        // Dropped files keep their notice and are not sent again by themselves.
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Sending files to host failed: %s; sent again on the next return", qPrintable(m_LastError));
-        if (resendAfterNetworkError(localSeq)) {
+        localNotSent(localSeq);
+        if (firstLocalNetworkError(localSeq)) {
             showTransferEnd(result, error);
         }
         return;
@@ -1413,7 +1429,7 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
         return;
     }
     m_PushAccepted = true;
-    recordHostSequence(body);
+    recordLocalSent(body, localOrder);
     m_HostTextHashValid = false;
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Clipboard files sent to host (%d items, %lld KB)",
@@ -1428,7 +1444,18 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
     }
 }
 
-void ClipboardSyncWorker::pull()
+// Hermit: whether host content seen by a pull is fetched: new content, or content waiting to be
+// fetched again while no local change came after it (clipboardchangeorder.h).
+static bool shouldFetch(ClipboardChangeOrder::HostContent decision)
+{
+    if (decision == ClipboardChangeOrder::HostContent::Superseded) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host clipboard content not fetched again: newer content was copied locally");
+    }
+    return decision == ClipboardChangeOrder::HostContent::Fetch;
+}
+
+void ClipboardSyncWorker::pull(quint64 localChanges)
 {
     if (!ensureReady() || m_PullDenied) {
         return;
@@ -1442,18 +1469,21 @@ void ClipboardSyncWorker::pull()
             handleFailure("fetch", error, Direction::Pull);
             return;
         }
+        // No sequence numbers: the host's text itself tells whether it changed.
         const QByteArray hash = hashOf(body);
-        const bool changed = !m_HostTextHashValid || hash != m_HostTextHash;
+        if (!shouldFetch(m_Order.hostSeen(textKey(hash), localChanges))) {
+            return;
+        }
         m_HostTextHash = hash;
         m_HostTextHashValid = true;
         // Empty means the host has no text; leave the local clipboard alone.
-        if (changed && body.size() > k_MaxTextBytes) {
+        if (body.size() > k_MaxTextBytes) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Host clipboard text ignored: %d bytes exceeds the %d byte limit",
                         (int)body.size(), k_MaxTextBytes);
             notify(HostTextTooLarge, true);
         }
-        else if (changed && !body.isEmpty()) {
+        else if (!body.isEmpty()) {
             auto* content = new ClipboardHostContent;
             content->kind = ClipboardHostContent::Text;
             content->text = body;
@@ -1475,31 +1505,27 @@ void ClipboardSyncWorker::pull()
     }
     QByteArray files;
     m_HostStreamsFiles = parseField(body, "files", files) && files == "stream";
-    if (m_HostSeqValid && seq == m_HostSeq) {
-        return;  // unchanged since we last pushed or pulled
+    // Unchanged since we last pushed or pulled, or waiting to be fetched again but older than a
+    // local change
+    if (!shouldFetch(m_Order.hostSeen(seq, localChanges))) {
+        return;
     }
 
     if (type == "text") {
         if (!request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
             handleFailure("fetch", error, Direction::Pull);
-            m_HostSeq = seq;
             if (m_LastHttpStatus >= 500 && !hostClipboardBusy()) {
                 // The host could not read its text (500, for example): said once, and this
                 // content is not fetched again on every focus change. Busy (503), no active
                 // stream (403) and network errors without a reply (a timeout) are retried.
-                m_HostSeqValid = true;
                 m_HostTextHashValid = false;
                 notify(HostTextFailed, true);
             }
             else {
-                // Hermit: pending at this sequence number like host images and files, so a local
-                // copy made meanwhile can drop it (localCopied).
-                m_HostSeqValid = false;
+                m_Order.hostRetry(seq);
             }
             return;
         }
-        m_HostSeq = seq;
-        m_HostSeqValid = true;
         m_HostTextHash = hashOf(body);
         m_HostTextHashValid = true;
         if (body.size() > k_MaxTextBytes) {
@@ -1517,10 +1543,8 @@ void ClipboardSyncWorker::pull()
         return;
     }
 
-    // For images and files, remember the sequence even on failure so the same content is not
+    // For images and files, the content stays taken even on failure so the same content is not
     // retried on every focus change (Hermit: except after a busy host or a network error).
-    m_HostSeq = seq;
-    m_HostSeqValid = true;
     m_HostTextHashValid = false;
 
 #ifdef Q_OS_WIN32
@@ -1540,8 +1564,8 @@ void ClipboardSyncWorker::pull()
         }
         if (result == TransferResult::Failed) {
             if (hostClipboardBusy()) {
-                // Not recorded after all, so the next pull fetches it again.
-                m_HostSeqValid = false;
+                // Not taken after all, so a later pull fetches it again.
+                m_Order.hostRetry(seq);
                 handleFailure("image fetch", error, Direction::Pull);
             }
             else if (m_LastHttpStatus == 413) {
@@ -1556,8 +1580,8 @@ void ClipboardSyncWorker::pull()
             }
             else if (m_LastHttpStatus == 0 && error > 0) {
                 // Hermit: a network error without a reply (a timeout, connection refused or
-                // reset, a transfer cut off) may be passing: fetched again on the next pull, with
-                // one notice per content.
+                // reset, a transfer cut off) may be passing: fetched again on a later pull (unless
+                // a local change comes first), with one notice per content.
                 handleFailure("image fetch", error, Direction::Pull);
                 if (retryAfterNetworkError()) {
                     notify(HostImageFailed, true);
@@ -1598,7 +1622,7 @@ void ClipboardSyncWorker::pull()
     }
     else if (type == "files") {
         if (m_HostStreamsFiles) {
-            pullFileList();
+            pullFileList(localChanges);
         }
         else {
             pullArchive();
@@ -1609,7 +1633,7 @@ void ClipboardSyncWorker::pull()
 
 #ifdef Q_OS_WIN32
 
-void ClipboardSyncWorker::pullFileList()
+void ClipboardSyncWorker::pullFileList(quint64 localChanges)
 {
     // Only the list now (names, sizes, times). File Explorer shows its own progress when the user
     // pastes, and each file is downloaded while it is pasted.
@@ -1637,8 +1661,8 @@ void ClipboardSyncWorker::pullFileList()
                         "Host files not copied: host reports no active stream");
         }
         else if (hostClipboardBusy()) {
-            // Not recorded after all, so the next pull fetches the list again.
-            m_HostSeqValid = false;
+            // Not taken after all, so a later pull fetches the list again.
+            m_Order.hostRetry(m_Order.hostKey());
             handleFailure("file list fetch", error, Direction::Pull);
         }
         else {
@@ -1671,8 +1695,9 @@ void ClipboardSyncWorker::pullFileList()
         pullArchive();
         return;
     }
-    m_HostSeq = content->remoteFiles.seq;
-    m_HostSeqValid = true;
+    // The list's own sequence number: newer than the one asked about if the host's clipboard
+    // changed in between, a host change seen by this same pull.
+    m_Order.hostSeen(content->remoteFiles.seq, localChanges);
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Host file list received (%d items, %llu KB); files download when pasted",
                 (int)content->remoteFiles.entries.size(), (unsigned long long)(content->remoteFiles.totalBytes / 1024));
@@ -1685,7 +1710,7 @@ void ClipboardSyncWorker::failedHostFiles(int qtError)
         // The host may still be preparing the files (cloud placeholders it has to fetch first,
         // for example): offered again when the user next leaves the stream window.
         notify(HostFilesFailed, true);
-        m_HostSeqValid = false;
+        m_Order.hostRetry(m_Order.hostKey());
         return;
     }
     if (m_LastHttpStatus == 0 && qtError > 0) {
@@ -1701,10 +1726,10 @@ void ClipboardSyncWorker::failedHostFiles(int qtError)
         // Hermit: an error of the host's own (500, for example; 503 is handled as busy) may be
         // passing, so it is fetched once more, with one notice. A second failure for the same
         // content is recorded, so a lasting host error is not fetched on every focus change.
-        if (!m_HostFilesErrorSeqValid || m_HostFilesErrorSeq != m_HostSeq) {
-            m_HostFilesErrorSeq = m_HostSeq;
-            m_HostFilesErrorSeqValid = true;
-            m_HostSeqValid = false;
+        if (!m_HostFilesErrorKeyValid || m_HostFilesErrorKey != m_Order.hostKey()) {
+            m_HostFilesErrorKey = m_Order.hostKey();
+            m_HostFilesErrorKeyValid = true;
+            m_Order.hostRetry(m_Order.hostKey());
             notify(HostFilesFailed, true);
         }
         else {
@@ -1718,12 +1743,13 @@ void ClipboardSyncWorker::failedHostFiles(int qtError)
 
 bool ClipboardSyncWorker::retryAfterNetworkError()
 {
-    m_HostSeqValid = false;
-    if (m_HostNetworkNoticeSeqValid && m_HostNetworkNoticeSeq == m_HostSeq) {
+    const quint64 key = m_Order.hostKey();
+    m_Order.hostRetry(key);
+    if (m_HostNetworkNoticeKeyValid && m_HostNetworkNoticeKey == key) {
         return false;
     }
-    m_HostNetworkNoticeSeq = m_HostSeq;
-    m_HostNetworkNoticeSeqValid = true;
+    m_HostNetworkNoticeKey = key;
+    m_HostNetworkNoticeKeyValid = true;
     return true;
 }
 
@@ -1780,8 +1806,8 @@ void ClipboardSyncWorker::pullArchive()
                         "Host files not copied: host reports no active stream");
         }
         else if (hostClipboardBusy()) {
-            // Not recorded after all, so the next pull fetches them again.
-            m_HostSeqValid = false;
+            // Not taken after all, so a later pull fetches them again.
+            m_Order.hostRetry(m_Order.hostKey());
             handleFailure("files fetch", error, Direction::Pull);
         }
         else {
@@ -1933,7 +1959,10 @@ void ClipboardSync::pushDroppedFiles(const QStringList& paths)
     // the user clicks back into the stream, replacing the dropped ones on the host clipboard.
     markLocalHandled();
     ClipboardSyncWorker* worker = m_Worker;
-    post([worker, paths]() { worker->pushFiles(paths, true); });
+    // Hermit: on the host, newer than every local change so far (not a local change itself: the
+    // local clipboard did not change)
+    const quint64 order = m_LocalChanges;
+    post([worker, paths, order]() { worker->pushFiles(paths, true, 0, order); });
 }
 
 bool ClipboardSync::cancelActiveTransfer()
@@ -1961,15 +1990,17 @@ void ClipboardSync::markLocalHandled()
 #endif
 }
 
-void ClipboardSync::markLocalCopied()
+quint64 ClipboardSync::observeLocalChange(quint32 seq)
 {
-#ifdef Q_OS_WIN32
-    markLocalHandled();
-    // Hermit: sent or not, this copy is newer than host content still waiting to be fetched again
-    ClipboardSyncWorker* worker = m_Worker;
-    const quint32 localSeq = m_LocalSeq;
-    post([worker, localSeq]() { worker->localCopied(localSeq); });
-#endif
+    if (!m_ObservedLocalSeqValid || m_ObservedLocalSeq != seq) {
+        m_ObservedLocalSeq = seq;
+        m_ObservedLocalSeqValid = true;
+        m_LocalChanges++;
+        // Newer than host content still on its way: a host file list waiting to go on the
+        // clipboard must not cover this copy (other host content is dropped in onHostContent).
+        releaseHostFileList();
+    }
+    return m_LocalChanges;
 }
 
 void ClipboardSync::pushLocalToHost(Trigger trigger)
@@ -1985,15 +2016,30 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
 
 #ifdef Q_OS_WIN32
     // Each clipboard write bumps the sequence number, so this skips content we already sent
-    // and content we just wrote ourselves from the host.
-    if (m_LocalSeqValid && GetClipboardSequenceNumber() == m_LocalSeq) {
+    // and content we just wrote ourselves from the host. Read once, before the content, so a
+    // copy made while it is read is handled on its own trigger.
+    const quint32 localSeq = GetClipboardSequenceNumber();
+    if (m_LocalSeqValid && localSeq == m_LocalSeq) {
         return;
     }
+    auto markHandled = [this, localSeq]() {
+        m_LocalSeq = localSeq;
+        m_LocalSeqValid = true;
+    };
     if (IsClipboardFormatAvailable(ClipboardVirtualFiles::markerFormat())) {
         // Our own list of host files (virtual files): never sent back.
-        markLocalHandled();
+        markHandled();
         return;
     }
+    if (CountClipboardFormats() == 0) {
+        // Hermit: an empty clipboard is not a copy. We empty it ourselves (a superseded host file
+        // list), and a failed write of host content leaves it empty: host content waiting to be
+        // fetched again must still come.
+        markHandled();
+        return;
+    }
+    // Hermit: a copy made locally, newer than every host change seen so far (clipboardchangeorder.h)
+    const quint64 localOrder = observeLocalChange(localSeq);
     HWND owner = static_cast<HWND>(m_WindowHandle);
 
     // Same priority as the host: text, then image, then files.
@@ -2001,10 +2047,9 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         char* text = SDL_GetClipboardText();
         QByteArray utf8(text != nullptr ? text : "");
         SDL_free(text);
-        markLocalCopied();
-        const quint32 localSeq = m_LocalSeq;
+        markHandled();
         if (!utf8.isEmpty()) {
-            post([worker, utf8, localSeq]() { worker->pushText(utf8, localSeq); });
+            post([worker, utf8, localSeq, localOrder]() { worker->pushText(utf8, localSeq, localOrder); });
         }
         return;
     }
@@ -2014,21 +2059,21 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         if (!readLocalImage(owner, data, isDib)) {
             return;  // clipboard busy: try again on the next trigger
         }
-        markLocalCopied();
+        markHandled();
         if (data.isEmpty()) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Local clipboard image not sent: unsupported format or over the size limit");
             showNotice(LocalImageUnsupported);
             return;
         }
-        const quint32 localSeq = m_LocalSeq;
-        post([worker, data, isDib, localSeq]() { worker->pushImage(data, isDib, localSeq); });
+        post([worker, data, isDib, localSeq, localOrder]() { worker->pushImage(data, isDib, localSeq, localOrder); });
         return;
     }
     if (IsClipboardFormatAvailable(CF_HDROP)) {
         // Files can be large, so they move when the stream starts or the user returns to the
-        // stream window, not on every copy. Files copied before the stream started are sent
-        // too: the host otherwise keeps pointing at an older snapshot of the same files.
+        // stream window, not on every copy (Hermit: the copy still counts as a local change from
+        // now on). Files copied before the stream started are sent too: the host otherwise keeps
+        // pointing at an older snapshot of the same files.
         if (trigger == Trigger::ClipboardChanged) {
             return;
         }
@@ -2036,12 +2081,13 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         if (paths.isEmpty()) {
             return;  // clipboard busy or empty list: leave unhandled so the next trigger retries
         }
-        markLocalCopied();
-        const quint32 localSeq = m_LocalSeq;
-        post([worker, paths, localSeq]() { worker->pushFiles(paths, false, localSeq); });
+        markHandled();
+        post([worker, paths, localSeq, localOrder]() { worker->pushFiles(paths, false, localSeq, localOrder); });
         return;
     }
-    markLocalCopied();
+    // Hermit: content that cannot be sent (no text, image or files) is still a local copy, newer
+    // than host content seen before it.
+    markHandled();
 #else
     Q_UNUSED(trigger);
     if (!SDL_HasClipboardText()) {
@@ -2062,7 +2108,9 @@ void ClipboardSync::pullHostToLocal()
         return;
     }
     ClipboardSyncWorker* worker = m_Worker;
-    post([worker]() { worker->pull(); });
+    // Hermit: host changes this pull sees are newer than the local changes observed by now
+    const quint64 localChanges = m_LocalChanges;
+    post([worker, localChanges]() { worker->pull(localChanges); });
 }
 
 void ClipboardSync::onHostContent(ClipboardHostContent* content)
@@ -2077,6 +2125,15 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         if (m_LocalSeqValid && m_LocalSeq == owned->localSeq) {
             m_LocalSeqValid = false;
         }
+        return;
+    }
+    const bool hostContent = owned->kind == ClipboardHostContent::Text || owned->kind == ClipboardHostContent::Image ||
+                             owned->kind == ClipboardHostContent::Files || owned->kind == ClipboardHostContent::RemoteFiles;
+    if (hostContent && !ClipboardChangeOrder::hostMayReplaceLocal(owned->changeOrder, m_LocalChanges)) {
+        // Hermit: the user copied something locally while this was on its way: the newer local
+        // copy stays (and is sent to the host).
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Clipboard content from host dropped: newer content was copied locally");
         return;
     }
 
@@ -2121,21 +2178,21 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Clipboard files from host could not be offered; fetched again on the next pull");
         ClipboardSyncWorker* worker = m_Worker;
-        const quint32 seq = owned->hostSeq;
-        post([worker, seq]() { worker->forgetHostContent(seq); });
+        const quint64 key = owned->hostKey;
+        post([worker, key]() { worker->forgetHostContent(key); });
         return;
     }
     if (owned->kind == ClipboardHostContent::RemoteFilesSuperseded) {
         // The host content written last may have been removed together with a superseded file
         // list: forgotten, so the next pull fetches it again. Harmless when it was not: the
-        // worker forgets only content it still holds as current, and fetches the same again.
+        // worker forgets only content it still holds as current, and fetches the same again
+        // (Hermit: unless a local change came after it, which then stays).
         if (m_LastHostContentValid) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Host content may have been removed with superseded host files; fetched again on the next pull");
             ClipboardSyncWorker* worker = m_Worker;
-            const quint32 seq = m_LastHostSeq;
-            const QByteArray text = m_LastHostText;
-            post([worker, seq, text]() { worker->forgetHostContent(seq, text); });
+            const quint64 key = m_LastHostKey;
+            post([worker, key]() { worker->forgetHostContent(key); });
         }
         return;
     }
@@ -2177,15 +2234,13 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Failed to update the local clipboard with host %s; fetched again on the next pull", what);
         ClipboardSyncWorker* worker = m_Worker;
-        const quint32 seq = owned->hostSeq;
-        const QByteArray text = owned->kind == ClipboardHostContent::Text ? owned->text : QByteArray();
-        post([worker, seq, text]() { worker->forgetHostContent(seq, text); });
+        const quint64 key = owned->hostKey;
+        post([worker, key]() { worker->forgetHostContent(key); });
         return;
     }
     markLocalHandled();
     m_LastHostContentValid = true;
-    m_LastHostSeq = owned->hostSeq;
-    m_LastHostText = owned->kind == ClipboardHostContent::Text ? owned->text : QByteArray();
+    m_LastHostKey = owned->hostKey;
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Clipboard %s received from host", what);
     if (owned->kind == ClipboardHostContent::Image) {

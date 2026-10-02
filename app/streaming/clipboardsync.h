@@ -2,6 +2,7 @@
 
 #include "backend/nvaddress.h"
 #include "clipboardarchive.h"
+#include "clipboardchangeorder.h"
 
 #include <QByteArray>
 #include <QList>
@@ -49,9 +50,13 @@ struct ClipboardHostContent
 
     int generation = 0;
     Kind kind = Text;
-    // Host clipboard sequence number the content was fetched at (Shell hosts); RemoteFilesFailed:
-    // that of the list that could not be put on the clipboard
-    quint32 hostSeq = 0;
+    // Which host content this is (ClipboardChangeOrder key: the host clipboard sequence number it
+    // was fetched at; Hermit: for text-only hosts a hash of the text), so a failed write forgets
+    // only this content; RemoteFilesFailed/Superseded: that of the list
+    quint64 hostKey = 0;
+    // Hermit: the order of the host change this content came from (ClipboardChangeOrder): not put
+    // on the local clipboard once a local change came after it
+    quint64 changeOrder = 0;
     QByteArray text;    // UTF-8
     QByteArray png;     // Image: PNG bytes
     QByteArray dib;     // Image: CF_DIBV5 block (Windows)
@@ -59,7 +64,7 @@ struct ClipboardHostContent
     ClipboardArchive::RemoteFileList remoteFiles;  // RemoteFiles: host files to offer as virtual files
     // RemoteFilesReady: local clipboard sequence number once they were offered; LocalNotSent: that
     // of the local content the host could not take yet (its clipboard was busy, or Hermit: a
-    // network error)
+    // network error, or sync could not be set up yet)
     quint32 localSeq = 0;
     int itemCount = 0;     // RemoteFilesReady: items the user copied on the host
     quint64 listGeneration = 0;  // RemoteFilesReady/Failed: which publish of the virtual files it answers
@@ -90,25 +95,25 @@ public:
 
     // localSeq: the local clipboard sequence number of the content (Windows), handed back in a
     // LocalNotSent event when the host's clipboard was busy (Hermit: or a network error stopped
-    // it), so the next trigger sends it again
-    void pushText(const QByteArray& utf8, quint32 localSeq = 0);
-    void pushImage(const QByteArray& data, bool isDib, quint32 localSeq = 0);
-    // dropped: files dropped on the stream window, so every outcome is announced
-    void pushFiles(const QStringList& paths, bool dropped = false, quint32 localSeq = 0);
+    // it, or the host could not be reached to set up sync), so the next trigger sends it again.
+    // Hermit: localOrder: its local change (ClipboardChangeOrder), not sent once a host change was
+    // seen after it; 0 if not tracked.
+    void pushText(const QByteArray& utf8, quint32 localSeq = 0, quint64 localOrder = 0);
+    void pushImage(const QByteArray& data, bool isDib, quint32 localSeq = 0, quint64 localOrder = 0);
+    // dropped: files dropped on the stream window, so every outcome is announced; always sent,
+    // localOrder then being the local changes observed when they were dropped
+    void pushFiles(const QStringList& paths, bool dropped = false, quint32 localSeq = 0, quint64 localOrder = 0);
 
     // Brings the host clipboard to the client if it changed since we last saw or set it.
-    void pull();
+    // Hermit: localChanges: the local changes observed when this pull was posted
+    // (ClipboardChangeOrder); host content waiting to be fetched again is dropped when a local
+    // change came after it.
+    void pull(quint64 localChanges = 0);
 
-    // Hermit: the user copied something locally (Windows: local clipboard sequence localSeq),
-    // whether it is sent or not. Host content still waiting to be fetched again is older than
-    // that copy and is dropped, so leaving the stream does not put it over the local content;
-    // host content that changes after the copy is still fetched.
-    void localCopied(quint32 localSeq);
-
-    // Host content fetched at sequence number seq (text: in Legacy mode, the host's text) could
-    // not be put on the local clipboard: the next pull fetches it again, unless newer host content
-    // was seen or sent meanwhile.
-    void forgetHostContent(quint32 seq, const QByteArray& text = QByteArray());
+    // Host content key (ClipboardHostContent::hostKey) could not be put on the local clipboard:
+    // a later pull fetches it again, unless newer host content was seen or sent meanwhile, or a
+    // local change came after it.
+    void forgetHostContent(quint64 key);
 
 private:
     enum class Mode { Unknown, Extended, Legacy, Disabled };
@@ -127,20 +132,22 @@ private:
     void showTransferProgress(bool upload, qint64 done, qint64 total);
     // A cancelled transfer, or one that failed without a more specific notice.
     void showTransferEnd(TransferResult result, int qtError);
-    bool ensureReady();
+    // Hermit: localSeq: local content being sent, left to the next trigger (LocalNotSent) when sync
+    // could not be set up yet (a network error, a busy host, or no active stream seen by the host)
+    bool ensureReady(quint32 localSeq = 0);
     // A Shell host, asked in a way that needs no clipboard permission (when reading its clipboard
     // is refused, the clipboard itself cannot tell).
     bool hostIsShell();
     // Host files (Windows): a file list for virtual files when the host can stream files, else
     // the whole archive.
-    void pullFileList();
+    void pullFileList(quint64 localChanges);
     void pullArchive();
     // Host files not fetched for another reason than those with their own notice: says so, and
     // leaves the content to be fetched again on the next pull when that may help.
     void failedHostFiles(int qtError);
     // Hermit: a network error without a reply (timeout, connection refused or reset, a transfer cut
-    // off) for host images or files: the content is fetched again on the next pull. True the first
-    // time for this host clipboard sequence, so the caller shows its notice once per content.
+    // off) for host images or files: the content is fetched again on a later pull. True the first
+    // time for this host content, so the caller shows its notice once per content.
     bool retryAfterNetworkError();
     // Logs a failed request; a missing endpoint turns sync off, a missing permission turns off
     // that direction only, with a notice.
@@ -148,17 +155,17 @@ private:
     void denyDirection(Direction direction);
     // Shows a ClipboardNotice now; repeat: also once more when the user returns to the stream window.
     void notify(int notice, bool repeat);
-    void recordHostSequence(const QByteArray& responseBody);
+    // Hermit: local change localOrder is on the host; the host's reply names its sequence number.
+    void recordLocalSent(const QByteArray& responseBody, quint64 localOrder);
     void deliver(ClipboardHostContent* content);
     // 503 on the last request: another program held the host's clipboard
     bool hostClipboardBusy() const { return m_LastHttpStatus == 503; }
     // Local content the host's busy clipboard could not take (Hermit: or that a network error
     // stopped): the main thread sends it again on the next trigger.
     void localNotSent(quint32 localSeq);
-    // Hermit: local image or files not sent after a network error without a reply: sent again on
-    // the next trigger. True the first time for this local sequence, so the caller shows its
-    // notice once per content.
-    bool resendAfterNetworkError(quint32 localSeq);
+    // Hermit: local image or files not sent after a network error without a reply. True the first
+    // time for this local sequence, so the caller shows its notice once per content.
+    bool firstLocalNetworkError(quint32 localSeq);
     // A 422 for host files: a notice for the reason the host gave.
     void notifyHostFilesRefused();
     bool stopped() const { return m_Stopped->load(); }
@@ -180,17 +187,18 @@ private:
     QByteArray m_ReadBuffer;
 
     Mode m_Mode;
-    bool m_HostSeqValid;
+    // Hermit: what the host holds (its sequence number; Legacy: a hash of its text), whether it is
+    // waiting to be fetched again, and which change is the latest (clipboardchangeorder.h)
+    ClipboardChangeOrder m_Order;
     bool m_HostStreamsFiles;  // "files=stream" in the host's info reply
-    quint32 m_HostSeq;
-    bool m_HostFilesErrorSeqValid;  // Hermit: host files of m_HostFilesErrorSeq failed once with a host error
-    quint32 m_HostFilesErrorSeq;
-    bool m_HostNetworkNoticeSeqValid;  // Hermit: host image or files of m_HostNetworkNoticeSeq had a network error notice
-    quint32 m_HostNetworkNoticeSeq;
-    bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error notice
+    bool m_HostFilesErrorKeyValid;  // Hermit: host files of m_HostFilesErrorKey failed once with a host error
+    quint64 m_HostFilesErrorKey;
+    bool m_HostNetworkNoticeKeyValid;  // Hermit: host image or files of m_HostNetworkNoticeKey had a network error notice
+    quint64 m_HostNetworkNoticeKey;
+    bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error
     quint32 m_LocalNetworkNoticeSeq;
-    bool m_LocalCopySeqValid;  // Hermit: the last local copy localCopied saw
-    quint32 m_LocalCopySeq;
+    // Hermit: the host text last seen or sent, so identical text is not echoed back without local
+    // change tracking
     bool m_HostTextHashValid;
     QByteArray m_HostTextHash;
     bool m_WarnedTextOnly;
@@ -222,6 +230,11 @@ private:
 // a refused direction stops alone, with a notice. Content that does not move (too large,
 // unsupported, refused by the host) gets a short notice over the stream as well.
 //
+// Hermit: when both sides changed, the most recent change wins; content that could not be
+// delivered (a busy host, a network error, a failed local write) is retried until something newer
+// replaces it (clipboardchangeorder.h). This side counts the local changes it observes and hands
+// the count to every pull and push; content from the host carries the order of its change.
+//
 // All public methods must be called on the SDL main thread.
 class ClipboardSync
 {
@@ -251,9 +264,9 @@ public:
 
 private:
     void markLocalHandled();
-    // Hermit: markLocalHandled for content the user copied locally, which also tells the worker
-    // (localCopied)
-    void markLocalCopied();
+    // Hermit: the order of the local change at local clipboard sequence seq, a real copy: the next
+    // one the first time this sequence is seen, the same one when it is handled again
+    quint64 observeLocalChange(quint32 seq);
     void post(const std::function<void()>& job);
     void releaseHostFileList();
 
@@ -276,9 +289,14 @@ private:
     bool m_LocalSeqValid;
     quint32 m_LocalSeq;
 
-    // Hermit: the host content last written to the local clipboard (its host sequence number, and
-    // its text for Legacy hosts), forgotten again if a superseded host file list removed it
+    // Hermit: local changes observed so far (ClipboardChangeOrder), and the local clipboard
+    // sequence number of the last one
+    quint64 m_LocalChanges = 0;
+    bool m_ObservedLocalSeqValid = false;
+    quint32 m_ObservedLocalSeq = 0;
+
+    // Hermit: the host content last written to the local clipboard (its ClipboardHostContent
+    // hostKey), forgotten again if a superseded host file list removed it
     bool m_LastHostContentValid = false;
-    quint32 m_LastHostSeq = 0;
-    QByteArray m_LastHostText;
+    quint64 m_LastHostKey = 0;
 };

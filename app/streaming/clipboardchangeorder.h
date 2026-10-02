@@ -1,0 +1,121 @@
+#pragma once
+
+#include <algorithm>
+#include <cstdint>
+
+// Calls are written (std::max)(...) so the min/max macros of <windows.h> cannot break them.
+
+// Hermit: when both clipboards changed, the most recent change wins. Content that could not be
+// delivered (the host was busy, a network error, a failed local write) is retried until something
+// newer replaces it, and only then.
+//
+// Changes are put in order by the count of local changes the main thread has observed:
+// - a local change gets the next number (1, 2, ...) when the main thread first sees a new local
+//   clipboard sequence that is a real copy: not content we wrote from the host, not our own list of
+//   host files, not an empty clipboard (we empty it ourselves, and a failed write leaves it empty);
+// - a host change (a new host clipboard sequence number; for text-only hosts, new text) gets the
+//   count at the time its pull was posted: newer than every local change seen before that pull,
+//   older than every local change seen after it;
+// - content this side put on the host takes the order of its local change; dropped files the count
+//   when they were dropped (newer on the host than every local change so far).
+//
+// So:
+// - local content is sent (again, after a busy host or a network error) only while no host change
+//   was seen after it (localMayReplaceHost); otherwise it is dropped and the host's newer content
+//   wins;
+// - host content is fetched (again) only while no local change was seen after it (hostSeen), and
+//   content already on its way is put on the local clipboard only then (hostMayReplaceLocal, on the
+//   main thread); otherwise it is dropped and the local copy wins, and is sent.
+//
+// The clipboard worker keeps one of these for the host side; it runs its jobs one at a time, so the
+// state needs no lock. The main thread keeps the count of local changes and hands it to every pull
+// and push. Order 0 is a change this side cannot place (no local change tracking): never held back.
+class ClipboardChangeOrder
+{
+public:
+    enum class HostContent {
+        Unchanged,   // already delivered, given up on, or replaced by our own content
+        Superseded,  // waiting to be fetched again, but a local change came after it: dropped now
+        Fetch,       // new, or waiting and still the latest change: fetch and deliver it
+    };
+
+    // The host holds content it held already when sync started (or that we cannot have caused):
+    // known, but not a change, so it is not fetched.
+    void hostRecorded(uint64_t key)
+    {
+        m_HostKnown = true;
+        m_HostKey = key;
+        m_HostPending = false;
+    }
+
+    // A pull posted after localChanges local changes found host content key (its clipboard sequence
+    // number, or for text-only hosts a hash of its text). Fetch also takes the content: call
+    // hostRetry when it could not be delivered in a way that may pass. A pull that fetches content
+    // under another key than it asked for (a file list with its own sequence number) calls this
+    // again with that key.
+    HostContent hostSeen(uint64_t key, uint64_t localChanges)
+    {
+        if (!m_HostKnown || key != m_HostKey) {
+            m_HostKnown = true;
+            m_HostKey = key;
+            m_HostOrder = (std::max)(m_HostOrder, localChanges);
+            m_HostPending = false;
+            return HostContent::Fetch;
+        }
+        if (!m_HostPending) {
+            return HostContent::Unchanged;
+        }
+        m_HostPending = false;
+        return hostMayReplaceLocal(m_HostOrder, localChanges) ? HostContent::Fetch : HostContent::Superseded;
+    }
+
+    // Host content key was not delivered (the fetch failed in a way that may pass, or it could not
+    // be put on the local clipboard): fetched again on a later pull, unless newer host content was
+    // seen (or sent) meanwhile or a local change comes first.
+    void hostRetry(uint64_t key)
+    {
+        if (m_HostKnown && key == m_HostKey) {
+            m_HostPending = true;
+        }
+    }
+
+    // Local change localOrder is now on the host. keyKnown: the host said under which key (its
+    // sequence number), so a later pull does not fetch it back. Host content waiting to be fetched
+    // again is gone from the host.
+    void localSent(bool keyKnown, uint64_t key, uint64_t localOrder)
+    {
+        if (keyKnown) {
+            m_HostKnown = true;
+            m_HostKey = key;
+        }
+        m_HostPending = false;
+        m_HostOrder = (std::max)(m_HostOrder, localOrder);
+    }
+
+    // Whether local change localOrder may still replace the host's content: no host change (nor a
+    // newer local change) reached the host after it.
+    bool localMayReplaceHost(uint64_t localOrder) const
+    {
+        return localOrder == 0 || localOrder > m_HostOrder;
+    }
+
+    // Whether host content of hostOrder may still replace the local clipboard, localChanges local
+    // changes having been observed by now: none came after it.
+    static bool hostMayReplaceLocal(uint64_t hostOrder, uint64_t localChanges)
+    {
+        return localChanges <= hostOrder;
+    }
+
+    bool hostKnown() const { return m_HostKnown; }
+    uint64_t hostKey() const { return m_HostKey; }
+    // The order of the change the host's content came from (0 before any)
+    uint64_t hostOrder() const { return m_HostOrder; }
+    // Host content waiting to be fetched again
+    bool hostPending() const { return m_HostPending; }
+
+private:
+    bool m_HostKnown = false;
+    uint64_t m_HostKey = 0;
+    uint64_t m_HostOrder = 0;
+    bool m_HostPending = false;
+};
