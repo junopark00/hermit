@@ -115,6 +115,20 @@ kept in sync afterwards. See the [user guide](docs/guide.md#getting-started) for
 
 ![The settings page](docs/images/hermit-settings.png)
 
+## Remote access
+
+To stream from outside your home network, we recommend [Tailscale](https://tailscale.com): install it
+on the host and on this PC, sign in to the same tailnet, then add the host with **+** by its Tailscale
+address (`100.x.y.z`) or MagicDNS name, because automatic discovery does not work across Tailscale.
+Nothing changes on your router, and with Shell, pairing and **Open Shell pairing page** work over
+Tailscale too. The alternatives are UPnP or port forwarding on the host's router; with those, pair
+at home first. See Shell's [remote access guide](https://github.com/junopark00/hermit-shell/blob/main/docs/remote-access.md)
+for all three options and the port list.
+
+New to Shell? Its repository includes an AI agent skill that walks you through installing the host,
+pairing and remote access step by step: see
+[Guided setup with an AI agent](https://github.com/junopark00/hermit-shell#guided-setup-with-an-ai-agent).
+
 ## Documentation
 
 - [User guide](docs/guide.md): every feature in detail, keyboard shortcuts, where Hermit keeps its
