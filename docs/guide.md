@@ -215,7 +215,8 @@ to sync the clipboard in both directions.
     for up to 5 minutes; these answers do not count as attempts.
   - The list itself may take up to 2 minutes (folders in OneDrive, for example). If it does not
     arrive, or the network fails while host files are fetched, they are fetched again the next time
-    you leave the stream window. After an error on the host (HTTP 500, for example), host files are
+    you leave the stream window (unless you copied something locally since). After an error on the
+    host (HTTP 500, for example), host files are
     fetched once more; when that fails too, they are not fetched again until the host clipboard
     changes.
   - This needs a current Shell host. With older Shell versions, and for folders with paths over 259
@@ -229,14 +230,31 @@ to sync the clipboard in both directions.
   Symbolic links and junctions are not followed in either direction; OneDrive Files On-Demand
   placeholders are ordinary files and are downloaded as they are sent. App execution aliases (the
   commands in `WindowsApps`) and Unix sockets cannot be read and are skipped when sending.
-- Both sides track the clipboard sequence number, so unchanged content is not sent again and a side
-  never receives back what it wrote itself.
+- Both sides track the clipboard sequence number, so content that was delivered is not sent again
+  and a side never receives back what it wrote itself. Content that could not be delivered is the
+  exception, as described next.
+- **When both sides changed, the most recent change wins.** Content that could not be delivered is
+  retried until something newer replaces it:
+  - Something you copied locally that did not reach the host (busy host, network error) is sent
+    again the next time you return to the stream window, unless the host's clipboard changed after
+    you copied it: then the host's content wins and comes over when you leave the stream window.
+  - Host content that did not arrive (busy host, network error, or the local clipboard could not be
+    written) is fetched again the next time you leave the stream window, unless you copied something
+    locally after it: then your copy wins and is sent to the host. The same applies to host content
+    still on its way when you copy locally.
+  - An empty local clipboard does not count as a copy.
 - When another program on the host holds its clipboard at that moment, the host answers that it is
   busy (HTTP 503). Nothing is shown; the content moves the next time you leave or return to the stream
   window. Files dropped on the stream window are not sent again by themselves: the notice says the
   host clipboard is busy, and you drop them again. When the host refuses content (HTTP 422), it names
   the reason (names it can't create, only links, an image it can't convert), and the notice says
   which.
+- When the network fails while copied files are sent, they are sent once more the next time you
+  return to the stream window; if that fails too, copy them again. When every byte was sent but the
+  host did not answer within 5 minutes, the files are not sent again: the host most likely took
+  them, and the notice says they may still arrive. When the host cannot be reached at all at that
+  moment (for example, at stream start), what you copied is sent the next time you return to the
+  stream window.
 - Network transfer, image conversion and file I/O run on separate threads and never stall the
   stream. Clipboard contents are never logged.
 - **Speed limit**: image and file transfers are rate-limited in both directions, leaving bandwidth for
@@ -272,7 +290,10 @@ to sync the clipboard in both directions.
   copy"), a whole drive copied locally, host text the host could not read (HTTP 500; after a network
   error or timeout, text is fetched again silently the next time you leave the stream window), a host
   image that did not arrive because of a network error or timeout (said once for that image, which
-  is fetched again the next time you leave the stream window), or a transfer that failed.
+  is fetched again the next time you leave the stream window), a local image or copied files that a
+  network error stopped (said once; sent again as described above, local text silently), or a
+  transfer that failed. Content retried this way is dropped without a notice once newer content
+  replaces it.
   Host content is fetched when you leave the stream window, where the notice is easy to miss, so a
   notice about host content (or a missing permission) is shown once more when you return to the
   stream window.
