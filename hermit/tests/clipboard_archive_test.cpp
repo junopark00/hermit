@@ -430,6 +430,28 @@ int main(int argc, char** argv)
             many += "f\t0\t0\tfile" + QByteArray::number(i) + "\n";
         }
         CHECK(!parseFileList(many, list, err) && err == "too many files");
+
+        // Names compared without case the way Windows and the Shell host do (each character in
+        // upper case on its own): the Kelvin sign and "k" are two names, a dotless "ı" and "I"
+        // are the same, "ß" stays one character.
+        auto twoFiles = [](const QByteArray& a, const QByteArray& b) {
+            return "seq=1\nsnapshot=ab\nentries=2\nbytes=0\nf\t0\t0\t" + a + "\nf\t0\t0\t" + b + "\n";
+        };
+        CHECK(parseFileList(twoFiles("\xE2\x84\xAA.txt", "k.txt"), list, err));
+        CHECK(!parseFileList(twoFiles("\xC4\xB1.txt", "I.TXT"), list, err) && err == "duplicate path");
+        CHECK(!parseFileList(twoFiles("Read.me", "rEAD.ME"), list, err) && err == "duplicate path");
+        CHECK(parseFileList(twoFiles("stra\xC3\x9F" "e", "STRASSE"), list, err));
+        CHECK(foldPath(QString::fromUtf8("stra\xC3\x9F" "e")).size() == 6);
+        CHECK(foldPath(QStringLiteral("Folder/a.txt")) == QStringLiteral("FOLDER/A.TXT"));
+
+        // Name length in UTF-16 code units (255), like the host: 255 Hangul syllables (765 UTF-8
+        // bytes) fit, 256 do not; the whole path stays within 1024 UTF-8 bytes.
+        const QString hangul255(255, QChar(0xD55C));
+        CHECK(isSafeRelativePath(hangul255));
+        CHECK(!isSafeRelativePath(hangul255 + QChar(0xD55C)));
+        CHECK(isSafeRelativePath(QString(255, QLatin1Char('a'))));
+        CHECK(!isSafeRelativePath(QString(256, QLatin1Char('a'))));
+        CHECK(!isSafeRelativePath(hangul255 + QLatin1Char('/') + hangul255));  // 1531 UTF-8 bytes
     }
 
     std::printf(g_Failures ? "\n%d FAILURE(S)\n" : "\nALL PASSED\n", g_Failures);

@@ -25,7 +25,15 @@ constexpr qint64 k_MaxArchiveBytes = (qint64)k_MaxFilesBytes + k_MaxFileEntries 
 // archive) may total more, up to this limit (same as the host).
 constexpr quint64 k_MaxStreamFilesBytes = 4ULL * 1024 * 1024 * 1024;
 
+// A relative path with '/' separators whose every name Windows accepts as it is: no reserved
+// device names, forbidden characters, trailing dots or spaces, at most 255 UTF-16 code units per
+// name and 1024 UTF-8 bytes in all (the same rules as the Shell host).
 bool isSafeRelativePath(const QString& path);
+
+// Key for comparing paths without case, as Windows and the Shell host do (LCMAP_UPPERCASE): each
+// UTF-16 code unit in its simple upper case form, so the length never changes (QString::toUpper
+// would turn "ß" into "SS", which Windows does not).
+QString foldPath(const QString& path);
 
 struct Entry
 {

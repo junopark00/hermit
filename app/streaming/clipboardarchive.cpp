@@ -71,7 +71,8 @@ bool isSafeRelativePath(const QString& path)
     }
     const QStringList parts = path.split(QLatin1Char('/'));
     for (const QString& part : parts) {
-        if (part.isEmpty() || part == QLatin1String(".") || part == QLatin1String("..") || part.toUtf8().size() > 255) {
+        // 255 UTF-16 code units per name, as Windows and the Shell host count them
+        if (part.isEmpty() || part == QLatin1String(".") || part == QLatin1String("..") || part.size() > 255) {
             return false;
         }
         for (QChar c : part) {
@@ -93,6 +94,15 @@ bool isSafeRelativePath(const QString& path)
     return true;
 }
 
+QString foldPath(const QString& path)
+{
+    QString key(path);
+    for (QChar& c : key) {
+        c = c.toUpper();
+    }
+    return key;
+}
+
 // ---- Upload planning ------------------------------------------------------------------------
 
 bool planUpload(const QStringList& roots, QVector<Entry>& entries, qint64& archiveSize, QString& error)
@@ -111,7 +121,7 @@ bool planUpload(const QStringList& roots, QVector<Entry>& entries, qint64& archi
             error = QStringLiteral("unsupported file name: ") + entry.path;
             return false;
         }
-        const QString key = entry.path.toLower();
+        const QString key = foldPath(entry.path);
         if (seen.contains(key)) {
             error = QStringLiteral("duplicate name: ") + entry.path;
             return false;
@@ -523,7 +533,7 @@ bool validateArchive(QIODevice& archive, QVector<Entry>& entries, QString& error
             return false;
         }
 
-        const QString key = entry.path.toLower();
+        const QString key = foldPath(entry.path);
         if (seen.contains(key)) {
             error = QStringLiteral("duplicate path");
             return false;
@@ -540,7 +550,7 @@ bool validateArchive(QIODevice& archive, QVector<Entry>& entries, QString& error
     }
     // A file must not also be used as a parent directory of another entry.
     for (const Entry& entry : entries) {
-        const QString key = entry.path.toLower();
+        const QString key = foldPath(entry.path);
         for (int slash = key.indexOf(QLatin1Char('/')); slash >= 0; slash = key.indexOf(QLatin1Char('/'), slash + 1)) {
             if (files.contains(key.left(slash))) {
                 error = QStringLiteral("file used as directory");
@@ -622,8 +632,9 @@ bool extractArchive(QIODevice& archive, const QVector<Entry>& entries, const QSt
             file.close();
         }
         const QString top = entry.path.section(QLatin1Char('/'), 0, 0);
-        if (!tops.contains(top.toLower())) {
-            tops.insert(top.toLower());
+        const QString topKey = foldPath(top);
+        if (!tops.contains(topKey)) {
+            tops.insert(topKey);
             topLevel.append(QDir::toNativeSeparators(folder + QLatin1Char('/') + top));
         }
     }
@@ -686,7 +697,7 @@ bool parseFileList(const QByteArray& body, RemoteFileList& list, QString& error)
                 error = QStringLiteral("files too large");
                 return false;
             }
-            const QString key = entry.path.toLower();
+            const QString key = foldPath(entry.path);
             if (seen.contains(key)) {
                 error = QStringLiteral("duplicate path");
                 return false;
