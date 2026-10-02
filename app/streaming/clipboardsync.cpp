@@ -2065,10 +2065,10 @@ ClipboardLocalChanges::Content ClipboardSync::localClipboard(quint32& seq) const
     }
     // Hermit: our owner thread may be putting a host file list on the clipboard right now, its
     // formats appearing one by one (the marker possibly not yet). Asked before and after the
-    // formats are read, so a publish that starts or ends in between counts too.
+    // formats are read, so a publish that starts or ends in between counts too; the clipboard's
+    // owner window then tells whether what is there is ours or another program's.
     const quint64 publishBefore = m_VirtualFiles != nullptr ? m_VirtualFiles->publishSteps() : 0;
     view.marker = IsClipboardFormatAvailable(ClipboardVirtualFiles::markerFormat()) != FALSE;
-    view.descriptor = IsClipboardFormatAvailable(ClipboardVirtualFiles::descriptorFormat()) != FALSE;
     view.formats = CountClipboardFormats();
     if (m_VirtualFiles != nullptr) {
         const HWND clipboardOwner = GetClipboardOwner();

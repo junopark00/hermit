@@ -256,7 +256,6 @@ public:
     struct View {
         bool handled = false;     // its sequence number is the one handled last
         bool marker = false;      // our marker format is on it
-        bool descriptor = false;  // file descriptors (FILEDESCRIPTORW) are on it
         // Our owner thread is putting a host file list on the clipboard (OleSetClipboard), or was
         // while the clipboard was read: the formats appear one by one, the marker possibly not yet
         bool publishing = false;
@@ -270,8 +269,10 @@ public:
             return Content::Handled;
         }
         // Never a local copy: sending it would echo the host's files back, and counting it as a
-        // copy would release the list (the owner thread then empties the clipboard).
-        if (view.marker || (view.publishing && (view.descriptor || view.ownerPublishes))) {
+        // copy would release the list (the owner thread then empties the clipboard). While a
+        // publish is in progress, only content our owner thread's window owns is ours: file
+        // descriptors another program put there meanwhile (an e-mail attachment) are a copy.
+        if (view.marker || (view.publishing && view.ownerPublishes)) {
             return Content::OwnHostFiles;
         }
         if (view.formats == 0) {

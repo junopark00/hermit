@@ -598,30 +598,28 @@ static void testClipboardChangeInputs()
     // What the local clipboard holds: our marker, an empty clipboard, and our list while the
     // owner thread is still putting it there are no local copy (round 10, 5).
     {
-        auto classify = [](bool handled, bool marker, bool descriptor, bool publishing, bool ownerPublishes, int formats) {
+        auto classify = [](bool handled, bool marker, bool publishing, bool ownerPublishes, int formats) {
             ClipboardLocalChanges::View view;
             view.handled = handled;
             view.marker = marker;
-            view.descriptor = descriptor;
             view.publishing = publishing;
             view.ownerPublishes = ownerPublishes;
             view.formats = formats;
             return ClipboardLocalChanges::classify(view);
         };
-        CHECK(classify(false, false, false, false, false, 3) == LC::Copy);
-        CHECK(classify(true, false, false, false, false, 3) == LC::Handled);
-        CHECK(classify(false, true, true, false, false, 4) == LC::OwnHostFiles);
-        CHECK(classify(false, true, false, false, false, 1) == LC::OwnHostFiles);  // marker set first
-        CHECK(classify(false, false, false, false, false, 0) == LC::Empty);
-        CHECK(classify(false, false, false, true, false, 0) == LC::Empty);
-        // Partly set while a publish runs: file descriptors without the marker yet, or any format
-        // put there by our owner thread
-        CHECK(classify(false, false, true, true, false, 1) == LC::OwnHostFiles);
-        CHECK(classify(false, false, false, true, true, 1) == LC::OwnHostFiles);
-        // File descriptors copied by another program (an e-mail attachment) are a copy
-        CHECK(classify(false, false, true, false, false, 2) == LC::Copy);
-        // A copy by another program while our publish waited for the clipboard
-        CHECK(classify(false, false, false, true, false, 2) == LC::Copy);
+        CHECK(classify(false, false, false, false, 3) == LC::Copy);
+        CHECK(classify(true, false, false, false, 3) == LC::Handled);
+        CHECK(classify(false, true, false, false, 4) == LC::OwnHostFiles);
+        CHECK(classify(false, true, false, false, 1) == LC::OwnHostFiles);  // marker set first
+        CHECK(classify(false, false, false, false, 0) == LC::Empty);
+        CHECK(classify(false, false, true, false, 0) == LC::Empty);
+        // Partly set while a publish runs: any format put there by our owner thread
+        CHECK(classify(false, false, true, true, 1) == LC::OwnHostFiles);
+        // Our owner thread's window outside a publish, without the marker: not our list
+        CHECK(classify(false, false, false, true, 1) == LC::Copy);
+        // A copy by another program while our publish waited for the clipboard, also file
+        // descriptors (an e-mail attachment copied in Outlook) (round 11, 4)
+        CHECK(classify(false, false, true, false, 2) == LC::Copy);
     }
 
     // Host content arriving while a local copy's clipboard update is still queued behind it: the
