@@ -237,8 +237,10 @@ to sync the clipboard in both directions.
     checked as a whole before it is unpacked. An archive is never held in memory in full.
   - An upload fails if a file changes size while it is being sent. A transfer with no data in either
     direction for 60 seconds fails; reading the local files counts, so an upload waits while OneDrive
-    downloads a placeholder that is being sent. Files received from the host as one archive wait up
-    to 5 minutes, since the host may first download its own placeholders.
+    downloads a placeholder that is being sent. Once the last byte is sent, Hermit waits up to
+    5 minutes for the host's answer, since the host still unpacks the files and places them on its
+    clipboard (an antivirus scan can slow this down). Files received from the host as one archive
+    wait up to 5 minutes, since the host may first download its own placeholders.
   - The host protocol is unchanged: one HTTP request carries the same archive format.
 - Transfers that take longer than a second show their progress under the stream every 0.5 seconds,
   for example "Sending to the host: 45% (12.0 / 26.0 MB)". Pasting files copied on the host shows File

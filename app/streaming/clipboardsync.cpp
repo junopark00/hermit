@@ -164,8 +164,13 @@ constexpr int k_TextTimeoutMs = 5000;
 // the next time the user leaves the stream window.
 constexpr int k_FileListTimeoutMs = 120000;
 // Images and files have no fixed deadline (a 256 MB transfer at 10 Mbps takes minutes); they
-// fail when no data moves for this long, which also covers the host packing or unpacking.
+// fail when no data moves for this long, which also covers the host packing them.
 constexpr qint64 k_TransferInactivityTimeoutMs = 60000;
+// Once an upload's last byte is sent, the host still decodes, unpacks and places it on its
+// clipboard (one worker, and antivirus may scan the files) before it answers. Only this wait
+// counts then, not the upload's inactivity: a reply given up on is a failure here although the
+// host took the files, and they would come back as host files on the next pull.
+constexpr qint64 k_UploadReplyTimeoutMs = 5 * 60000;
 // Host files as one archive: the host may first have to download cloud placeholders (OneDrive
 // Files On-Demand) before it sends their bytes, which can take minutes.
 constexpr qint64 k_ArchiveInactivityTimeoutMs = 5 * 60000;
@@ -624,6 +629,7 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
     qint64 lastActivityMs = 0;
     qint64 lastProgressMs = -1;
     qint64 lastProduced = 0;  // upload: bytes read from the files so far
+    qint64 sentAllMs = -1;    // upload: when the last byte was sent, -1 before
     QEventLoop loop;
 
     auto finish = [&](State newState) {
@@ -718,7 +724,17 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
             lastProduced = upload->produced();
             lastActivityMs = now;
         }
-        if (now - lastActivityMs > inactivityTimeoutMs) {
+        if (isUpload && done >= total) {
+            // The whole body is sent: only the wait for the host's reply counts from here.
+            if (sentAllMs < 0) {
+                sentAllMs = now;
+            }
+            if (now - sentAllMs > k_UploadReplyTimeoutMs) {
+                finish(State::TimedOut);
+                return;
+            }
+        }
+        else if (now - lastActivityMs > inactivityTimeoutMs) {
             finish(State::TimedOut);
             return;
         }
@@ -748,7 +764,8 @@ ClipboardSyncWorker::TransferResult ClipboardSyncWorker::transfer(const QString&
         return TransferResult::Cancelled;
     case State::TimedOut:
         qtError = QNetworkReply::TimeoutError;
-        m_LastError = QStringLiteral("no data moved for %1 s").arg(inactivityTimeoutMs / 1000);
+        m_LastError = sentAllMs >= 0 ? QStringLiteral("no reply for %1 s after the upload").arg(k_UploadReplyTimeoutMs / 1000)
+                                     : QStringLiteral("no data moved for %1 s").arg(inactivityTimeoutMs / 1000);
         return TransferResult::Failed;
     case State::TooLarge:
         qtError = QNetworkReply::UnknownContentError;  // what the host answers with 413
