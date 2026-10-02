@@ -292,6 +292,14 @@
       <translation>%1x%2 · %3 FPS 권장: %4 Mbps (HEVC/AV1은 %5 Mbps)</translation>
     </message>
     <message>
+      <source>Use recommended (%1 Mbps)</source>
+      <translation>권장값 사용 (%1 Mbps)</translation>
+    </message>
+    <message>
+      <source>Sets the recommended bitrate, which then follows the resolution and frame rate when you change them.</source>
+      <translation>권장 비트레이트로 맞추고, 이후 해상도나 프레임 레이트를 바꾸면 그에 맞춰 따라갑니다.</translation>
+    </message>
+    <message>
       <source>This unlocks extremely high video bitrates for use with Shell hosts. It should only be used when streaming over an Ethernet LAN connection.</source>
       <translation>Shell 호스트에서 쓸 수 있는 매우 높은 비트레이트를 허용합니다. 유선 LAN으로 스트리밍할 때만 쓰세요.</translation>
     </message>
@@ -1064,6 +1072,10 @@ Start를 길게 눌러 끄기</translation>
     <message>
       <source>Shows the shortcut list over the stream (also Ctrl+Alt+Shift+H)</source>
       <translation>스트림 위에 단축키 목록을 보여줍니다 (Ctrl+Alt+Shift+H로도 열 수 있습니다)</translation>
+    </message>
+    <message>
+      <source>Use recommended (%1 Mbps)</source>
+      <translation>권장값 사용 (%1 Mbps)</translation>
     </message>
     <message>
       <source>Sizes from 320x240 to 7680x4320 can be entered.</source>

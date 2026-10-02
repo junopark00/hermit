@@ -317,6 +317,10 @@ TRANSLATIONS = {
     ('SettingsView', 'Type the bitrate in Mbps'): '비트레이트를 Mbps 단위로 입력하세요',
     ('SettingsView', 'Recommended for %1x%2 at %3 FPS: %4 Mbps'): '%1x%2 · %3 FPS 권장: %4 Mbps',
     ('SettingsView', 'Recommended for %1x%2 at %3 FPS: %4 Mbps (HEVC/AV1: %5 Mbps)'): '%1x%2 · %3 FPS 권장: %4 Mbps (HEVC/AV1은 %5 Mbps)',
+    ('SettingsView', 'Use recommended (%1 Mbps)'): '권장값 사용 (%1 Mbps)',
+    ('SettingsView', 'Sets the recommended bitrate, which then follows the resolution and frame rate when you change them.'):
+        '권장 비트레이트로 맞추고, 이후 해상도나 프레임 레이트를 바꾸면 그에 맞춰 따라갑니다.',
+    ('StreamPanel', 'Use recommended (%1 Mbps)'): '권장값 사용 (%1 Mbps)',
 
     # Upstream messages that name tools or hosts other than Shell, reworded for Hermit.
     ('PcView', 'Enter the PIN in the Shell web UI on the host PC (https://<host address>:47990).'):

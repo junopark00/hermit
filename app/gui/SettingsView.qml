@@ -787,9 +787,14 @@ Flickable {
                                 return
                             }
                             var kbps = Math.round(Math.min(Math.max(mbps, 0.5), slider.to / 1000) * 10) * 100
+                            text = format(kbps)
+                            if (kbps === StreamingPreferences.bitrateKbps) {
+                                // Nothing new typed (also when the field only loses focus): the
+                                // bitrate keeps following the resolution if it did
+                                return
+                            }
                             StreamingPreferences.autoAdjustBitrate = false
                             slider.value = kbps
-                            text = format(kbps)
                         }
 
                         onEditingFinished: apply()
@@ -836,6 +841,30 @@ Flickable {
                           (StreamingPreferences.videoCodecConfig === StreamingPreferences.VCC_AUTO ?
                               qsTr("Recommended for %1x%2 at %3 FPS: %4 Mbps (HEVC/AV1: %5 Mbps)").arg(StreamingPreferences.width).arg(StreamingPreferences.height).arg(StreamingPreferences.fps).arg(h264).arg(efficient) :
                               qsTr("Recommended for %1x%2 at %3 FPS: %4 Mbps").arg(StreamingPreferences.width).arg(StreamingPreferences.height).arg(StreamingPreferences.fps).arg(efficient))
+                }
+
+                // Hermit: back to the recommended bitrate, which then follows the resolution and
+                // frame rate again (typing or moving the slider stops that; upstream's reset button
+                // went with the old bitrate row)
+                Button {
+                    property int recommendedKbps: StreamingPreferences.getDefaultBitrate(StreamingPreferences.width,
+                                                                                         StreamingPreferences.height,
+                                                                                         StreamingPreferences.fps,
+                                                                                         StreamingPreferences.enableYUV444)
+                    visible: !StreamingPreferences.autoAdjustBitrate || StreamingPreferences.bitrateKbps !== recommendedKbps
+                    text: qsTr("Use recommended (%1 Mbps)").arg(recommendedKbps / 1000)
+                    font.pointSize: 11
+                    flat: true
+                    onClicked: {
+                        StreamingPreferences.bitrateKbps = recommendedKbps
+                        StreamingPreferences.autoAdjustBitrate = true
+                        slider.value = recommendedKbps
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 10000
+                    ToolTip.visible: hovered || activeFocus
+                    ToolTip.text: qsTr("Sets the recommended bitrate, which then follows the resolution and frame rate when you change them.")
                 }
 
                 Label {

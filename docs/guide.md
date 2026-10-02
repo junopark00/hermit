@@ -384,7 +384,10 @@ the same host. **Connect now** connects at once; **Cancel** (Esc, gamepad B) sto
   - Examples: 2560x1440 at 60 FPS → H.264 33 Mbps, HEVC/AV1 23 Mbps. 1920x1080 at 60 FPS → 19 / 13
     Mbps.
   - Until you change the bitrate yourself, the value that follows resolution and FPS changes is this
-    formula's H.264 value.
+    formula's H.264 value. Moving the slider or typing a different value stops that; leaving the
+    field without a new value does not.
+  - **Use recommended (N Mbps)**, under the recommendation in Settings and in the stream panel, sets
+    that value and lets the bitrate follow the resolution and frame rate again.
 - The slow connection warning ("above 5 Mbps") is judged against the bitrate currently applied on the
   host, not the one the stream started with.
 

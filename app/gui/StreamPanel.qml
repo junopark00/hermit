@@ -337,6 +337,22 @@ Window {
                               qsTr("Recommended: %1 Mbps (HEVC/AV1: %2 Mbps)").arg(h264).arg(efficient) :
                               qsTr("Recommended: %1 Mbps").arg(StreamingPreferences.videoCodecConfig === StreamingPreferences.VCC_FORCE_H264 ? h264 : efficient)
                 }
+                // Back to the recommended bitrate, which then follows the resolution and frame rate
+                // again (typing or moving the slider stops that). Only while it does not: when it
+                // follows, a new resolution brings its bitrate on reconnecting.
+                Button {
+                    property int recommendedKbps: StreamingPreferences.getDefaultBitrate(StreamingPreferences.width, StreamingPreferences.height,
+                                                                                         StreamingPreferences.fps, StreamingPreferences.enableYUV444)
+                    visible: !StreamingPreferences.autoAdjustBitrate
+                    text: qsTr("Use recommended (%1 Mbps)").arg(recommendedKbps / 1000)
+                    flat: true
+                    font.pointSize: 9
+                    onClicked: {
+                        StreamingPreferences.bitrateKbps = recommendedKbps
+                        StreamingPreferences.autoAdjustBitrate = true
+                        panel.chooseBitrate(recommendedKbps)
+                    }
+                }
 
                 Divider {}
 
