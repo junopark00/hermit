@@ -299,7 +299,7 @@ private:
 };
 
 // Runs the file requests on the download thread: one request per file being read, all within the
-// clipboard speed limit, cancelled by Ctrl+Alt+Shift+T. The host ends a response after 300 seconds
+// clipboard speed limit, cancelled by Ctrl+Alt+Shift+T. The host ends a response after 30 minutes
 // and a network can drop, so a request that ends early continues from the bytes received.
 class Fetcher : public QObject
 {

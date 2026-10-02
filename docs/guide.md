@@ -202,7 +202,7 @@ to sync the clipboard in both directions.
     them from the clipboard, and a paste still in progress fails.
   - A file that was changed or deleted on the host after you copied it fails to paste (File Explorer
     shows an error); copy it again on the host.
-  - A download that stops (network loss, or the host's 5-minute limit per request) continues from
+  - A download that stops (network loss, or the host's 30-minute limit per request) continues from
     where it stopped; it fails after 60 seconds without data.
   - This needs a current Shell host. With older Shell versions, and for folders with paths over 259
     characters, the files come over as one archive when you leave the stream window (256 MB limit) and
@@ -251,8 +251,9 @@ to sync the clipboard in both directions.
 - **Permissions**: the host grants each direction separately in its device permissions. Clipboard
   Read lets this device fetch the host's clipboard; Clipboard Set lets it send to the host's
   clipboard. Files also need File Download (from the host) or File Upload (to the host). A newly
-  paired device has none of them. When one is missing, only that direction stops: for example, with
-  Clipboard Set alone, what you copy locally still reaches the host. A notice over the stream names
+  paired device has them only if they were granted on the host's pairing page (Shell offers presets
+  there; other hosts start with none). When one is missing, only that direction stops: for example,
+  with Clipboard Set alone, what you copy locally still reaches the host. A notice over the stream names
   the missing permission (once, and once more when you return to the stream window); turn it on in
   the host's device permissions and start a new stream.
 - Image and file sync is available in the Windows client only.
@@ -485,6 +486,7 @@ Hermit.exe quit <host>           Quit the running app on a host
 - **Pairing fails.** Make sure the PIN was entered on the right host and that the host's pairing page
   was open before the PIN dialog timed out. **Open Shell pairing page** uses the address Hermit
   reached the host at and the host's web UI port (HTTP port + 1, normally 47990); if the host's web
-  UI listens elsewhere, open it yourself and enter the PIN.
+  UI listens elsewhere, or the PIN dialog says the page could not be opened (no browser), open it
+  yourself and enter the PIN.
 - **Logs.** Each run writes `%TEMP%\Hermit-<number>.log`. Attach the log of the affected run when
   reporting a problem (it contains host names and addresses, but no clipboard contents).
