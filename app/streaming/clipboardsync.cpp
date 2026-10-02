@@ -1147,8 +1147,21 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Local files not sent to host: %s", qPrintable(packError));
         if (!stopped()) {
-            showClipboardNotice(QCoreApplication::translate("ClipboardSync", "Files not sent: over %1 MB or %2 items, or a file cannot be read")
-                                    .arg(k_MaxFilesBytes / (1024 * 1024)).arg(k_MaxFileEntries), 5000);
+            // The reasons planUpload gives: names the host cannot take, nothing left after links
+            // and junctions are skipped, or the limits and unreadable files
+            QString text;
+            if (packError.startsWith(QLatin1String("unsupported file name")) || packError.startsWith(QLatin1String("duplicate name"))
+                    || packError == QLatin1String("cannot copy a whole drive")) {
+                text = QCoreApplication::translate("ClipboardSync", "Files not sent: unsupported or duplicate names");
+            }
+            else if (packError == QLatin1String("nothing to copy")) {
+                text = QCoreApplication::translate("ClipboardSync", "Files not sent: nothing to copy");
+            }
+            else {
+                text = QCoreApplication::translate("ClipboardSync", "Files not sent: over %1 MB or %2 items, or a file cannot be read")
+                           .arg(k_MaxFilesBytes / (1024 * 1024)).arg(k_MaxFileEntries);
+            }
+            showClipboardNotice(text, 5000);
         }
         return;
     }

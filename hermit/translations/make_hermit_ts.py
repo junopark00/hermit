@@ -217,6 +217,9 @@ TRANSLATIONS = {
         '파일을 보내려면 이 기기에 클립보드·파일 전송을 허용한 Shell 호스트가 필요합니다',
     ('ClipboardSync', 'Files not sent: over %1 MB or %2 items, or a file cannot be read'):
         '파일을 보내지 못했습니다: %1MB 또는 %2개 항목을 넘었거나 읽을 수 없는 파일이 있습니다',
+    ('ClipboardSync', 'Files not sent: unsupported or duplicate names'):
+        '파일을 보내지 못했습니다: 지원하지 않거나 중복된 이름이 있습니다',
+    ('ClipboardSync', 'Files not sent: nothing to copy'): '파일을 보내지 못했습니다: 복사할 항목이 없습니다',
     ('ClipboardSync', 'Files not sent: the host does not allow file upload for this device'):
         '파일을 보내지 못했습니다: 호스트가 이 기기의 파일 업로드를 허용하지 않습니다',
     ('ClipboardSync', 'Files on the host not copied: the host does not allow file download for this device'):
@@ -328,6 +331,8 @@ TRANSLATIONS = {
     ('PcView', "Open Shell pairing page fills in the PIN and this PC's name for you. The browser warns about the host's self-signed certificate and asks for the web UI password."):
         'Shell 페어링 페이지 열기를 누르면 PIN과 이 PC의 이름이 미리 채워집니다. 브라우저가 호스트의 자체 서명 인증서를 경고하고 웹 UI 비밀번호를 묻습니다.',
     ('PcView', 'Open Shell pairing page'): 'Shell 페어링 페이지 열기',
+    ('PcView', 'The pairing page could not be opened. Enter the PIN in the web UI yourself.'):
+        '페어링 페이지를 열지 못했습니다. 웹 UI에서 직접 PIN을 입력하세요.',
     ('SettingsView', 'This unlocks extremely high video bitrates for use with Shell hosts. It should only be used when streaming over an Ethernet LAN connection.'):
         'Shell 호스트에서 쓸 수 있는 매우 높은 비트레이트를 허용합니다. 유선 LAN으로 스트리밍할 때만 쓰세요.',
     ('SettingsView', 'Text you copy locally is sent to the host while streaming, and what you copy on the host is brought back when you switch away from the stream window. With a Shell host, images and files are synced too. Files you copy locally (up to 256 MB) are sent when the stream starts and when you switch back to the stream window. Files copied on the host (up to 4 GB) are offered on the clipboard when you leave the stream window and downloaded while you paste them; they are removed from the clipboard when the stream ends. Older Shell hosts send files up to 256 MB, fetched when you leave the window. Each direction needs its permission on the host: Clipboard Read, Clipboard Set, and File Download or File Upload for files.'):

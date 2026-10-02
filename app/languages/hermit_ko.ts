@@ -62,6 +62,14 @@
       <translation>파일을 보내지 못했습니다: %1MB 또는 %2개 항목을 넘었거나 읽을 수 없는 파일이 있습니다</translation>
     </message>
     <message>
+      <source>Files not sent: unsupported or duplicate names</source>
+      <translation>파일을 보내지 못했습니다: 지원하지 않거나 중복된 이름이 있습니다</translation>
+    </message>
+    <message>
+      <source>Files not sent: nothing to copy</source>
+      <translation>파일을 보내지 못했습니다: 복사할 항목이 없습니다</translation>
+    </message>
+    <message>
       <source>Files not sent: the host does not allow file upload for this device</source>
       <translation>파일을 보내지 못했습니다: 호스트가 이 기기의 파일 업로드를 허용하지 않습니다</translation>
     </message>
@@ -1219,6 +1227,10 @@ Start를 길게 눌러 끄기</translation>
     <message>
       <source>Open Shell pairing page</source>
       <translation>Shell 페어링 페이지 열기</translation>
+    </message>
+    <message>
+      <source>The pairing page could not be opened. Enter the PIN in the web UI yourself.</source>
+      <translation>페어링 페이지를 열지 못했습니다. 웹 UI에서 직접 PIN을 입력하세요.</translation>
     </message>
   </context>
   <context>
