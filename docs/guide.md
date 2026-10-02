@@ -40,7 +40,9 @@ else works with any GameStream host, such as Sunshine or Apollo.
    browser warns about the host's self-signed certificate and asks for the web UI password; the
    PIN dialog stays open until pairing completes. Shell waits 5 minutes for the PIN; after that
    Hermit says no PIN was entered, and the PIN is no longer accepted. **Cancel** stops the attempt
-   and asks the host to drop it; selecting the host again starts a new one with a new PIN.
+   and asks the host to drop it; selecting the host again starts a new one with a new PIN. NVIDIA
+   GameStream hosts are not asked to drop it on Cancel or when no PIN was entered: there Hermit uses
+   the client ID that Moonlight clients share, so that request could unpair all of them.
 3. Once paired, pick an app or the desktop to start streaming.
 
 **Settings from Moonlight.** On its first run, if Hermit has no settings yet and Moonlight is

@@ -665,6 +665,12 @@ private:
     // lock keeps a newer attempt from sending getservercert between the check and the /unpair.
     void abandonUnlessSuperseded(NvPairingManager& pairingManager, const char* why)
     {
+        if (m_Computer->isNvidiaServerSoftware) {
+            // Hermit: GameStream hosts see the client ID shared by all Moonlight clients
+            // (0123456789ABCDEF), so an /unpair there may unpair every client using it
+            qInfo() << "Pairing attempt" << m_Attempt << why << "- not asking an NVIDIA host to drop its pairing session";
+            return;
+        }
         QMutexLocker lock(&m_ComputerManager->m_PairingAbandonMutex);
         if (m_ComputerManager->isCurrentPairingAttempt(m_Attempt) || m_ComputerManager->isPairingIdle()) {
             qInfo() << "Pairing attempt" << m_Attempt << why << "- asking the host to drop its pairing session";
