@@ -4,7 +4,8 @@
 Builds and runs Hermit's standalone tests (no app build, no stream, no host needed).
 .DESCRIPTION
   hermit_core_test       branding translator, session summary maths and history file,
-                         performance overlay text, connection profile property names
+                         performance overlay text, automatic bitrate, display aspect
+                         resolution presets, connection profile property names
   clipboard_archive_test clipboard file archive: streamed upload, throttling, validation,
                          extraction, cancel (uses a loopback HTTP server)
   check-qml-members.py   QML uses only members the exposed C++ objects have (a misspelt or

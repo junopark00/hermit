@@ -117,8 +117,9 @@ powershell -ExecutionPolicy Bypass -File hermit\tests\run-tests.ps1
 ```
 
 - `hermit_core_test`: the translation layer (Hermit's translation file is consulted first), session
-  summary maths and the history file (including CSV quoting), performance overlay text, and that the
-  settings stored by connection profiles exist.
+  summary maths and the history file (including CSV quoting), performance overlay text, automatic
+  bitrate, resolution presets for the display's aspect ratio, and that the settings stored by
+  connection profiles exist.
 - `clipboard_archive_test`: the clipboard file archive: streamed upload (byte-identical to the
   existing format), throttling, validation of received archives (19 kinds of bad paths, sizes and
   duplicates are rejected), extraction and cancel, and real transfer speed over a loopback HTTP

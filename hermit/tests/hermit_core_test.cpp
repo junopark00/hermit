@@ -1,6 +1,6 @@
 // Tests for Hermit's own logic that does not need a stream: the layered translator, the session
-// summary (maths and history file), the performance overlay text and the connection profile
-// property list. Built and run by hermit/tests/run-tests.ps1.
+// summary (maths and history file), the performance overlay text, automatic bitrate, resolution
+// presets for the display's aspect ratio and the connection profile property list. Built and run by hermit/tests/run-tests.ps1.
 
 // The headers pull in SDL, which would otherwise rename main().
 #define SDL_MAIN_HANDLED
@@ -8,6 +8,7 @@
 #include "streaming/sessionsummary.h"
 #include "streaming/video/statsoverlay.h"
 #include "streaming/autobitrate.h"
+#include "settings/resolutionpresets.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -254,6 +255,48 @@ static void testAutoBitrate()
     CHECK_EQ(ab.current(), 50000);
 }
 
+static QString sizesText(const QList<QSize>& sizes)
+{
+    QStringList parts;
+    for (const QSize& size : sizes) {
+        parts.append(QString("%1x%2").arg(size.width()).arg(size.height()));
+    }
+    return parts.join(' ');
+}
+
+// Resolution presets with the aspect ratio of the client display
+static void testResolutionPresets()
+{
+    using ResolutionPresets::forDisplay;
+    using ResolutionPresets::matchDisplay;
+
+    // 16:9: the standard presets themselves (the UI leaves out sizes it already has)
+    CHECK_EQ(sizesText(forDisplay(QSize(1920, 1080), true)), QString("1280x720 1920x1080 2560x1440 3840x2160"));
+    CHECK_EQ(sizesText(forDisplay(QSize(1366, 768), true)), QString("1280x720 1920x1080 2560x1440 3840x2160"));
+    // 21:9 ultrawides, widths rounded to a multiple of 8
+    CHECK_EQ(sizesText(forDisplay(QSize(3440, 1440), true)), QString("1720x720 2584x1080 3440x1440 5160x2160"));
+    CHECK_EQ(sizesText(forDisplay(QSize(2560, 1080), true)), QString("1704x720 2560x1080 3416x1440 5120x2160"));
+    // 16:10 and 3:2
+    CHECK_EQ(sizesText(forDisplay(QSize(1920, 1200), true)), QString("1152x720 1728x1080 2304x1440 3456x2160"));
+    CHECK_EQ(sizesText(forDisplay(QSize(2256, 1504), true)), QString("1080x720 1624x1080 2160x1440 3240x2160"));
+    // 2160 lines only when 4K is offered; nothing wider than 7680
+    CHECK_EQ(sizesText(forDisplay(QSize(1920, 1200), false)), QString("1152x720 1728x1080 2304x1440"));
+    CHECK_EQ(sizesText(forDisplay(QSize(5120, 1440), true)), QString("2560x720 3840x1080 5120x1440 7680x2160"));
+    CHECK_EQ(sizesText(forDisplay(QSize(5760, 1080), true)), QString("3840x720 5760x1080 7680x1440"));
+    // Portrait: the standard values are the width
+    CHECK_EQ(sizesText(forDisplay(QSize(1200, 1920), true)), QString("720x1152 1080x1728 1440x2304 2160x3456"));
+    CHECK(forDisplay(QSize(), true).isEmpty());
+
+    // The display: the native resolution near the screen size, else the screen size, else the
+    // first (primary) display
+    const QList<QSize> natives {QSize(1920, 1080), QSize(3440, 1440)};
+    CHECK_EQ(matchDisplay(natives, QSize(3439, 1440)), QSize(3440, 1440));
+    CHECK_EQ(matchDisplay(natives, QSize(1920, 1080)), QSize(1920, 1080));
+    CHECK_EQ(matchDisplay(natives, QSize(2752, 1152)), QSize(2752, 1152));
+    CHECK_EQ(matchDisplay(natives, QSize(0, 0)), QSize(1920, 1080));
+    CHECK(!matchDisplay({}, QSize(0, 0)).isValid());
+}
+
 // Every StreamingPreferences property a connection profile stores must exist, or the value is
 // silently skipped (this is how YUV 4:4:4 once went unsaved).
 static void testProfileProperties(const QString& repo)
@@ -294,6 +337,7 @@ int main(int argc, char** argv)
     testSessionSummary();
     testStatsOverlay();
     testAutoBitrate();
+    testResolutionPresets();
     testProfileProperties(repo);
 
     std::printf("%d checks, %d failed\n", g_Checks, g_Failures);

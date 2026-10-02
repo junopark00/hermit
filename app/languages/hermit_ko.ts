@@ -264,6 +264,10 @@
       <translation>창 모드</translation>
     </message>
     <message>
+      <source>%1x%2 (display aspect)</source>
+      <translation>%1x%2 (화면 비율)</translation>
+    </message>
+    <message>
       <source>Unlock bitrate limit (Experimental)</source>
       <translation>비트레이트 제한 해제 (실험적)</translation>
     </message>
@@ -1012,6 +1016,10 @@ Start를 길게 눌러 끄기</translation>
     <message>
       <source>Cancel</source>
       <translation>취소</translation>
+    </message>
+    <message>
+      <source>%1x%2 (display aspect)</source>
+      <translation>%1x%2 (화면 비율)</translation>
     </message>
   </context>
   <context>

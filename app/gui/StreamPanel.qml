@@ -353,20 +353,52 @@ Window {
                         Layout.fillWidth: true
                         editable: true
                         font.pointSize: 10
-                        property var presets: ["1280x720", "1920x1080", "2560x1440", "3840x2160", "720x1280", "1080x1920"]
+                        property var landscapePresets: ["1280x720", "1920x1080", "2560x1440", "3840x2160"]
+                        property var portraitPresets: ["720x1280", "1080x1920"]
+                        // Hermit: sizes with the aspect ratio of the display the stream is on, for
+                        // 21:9, 16:10, 3:2 and other displays (none for a 16:9 display)
+                        property var aspectPresets: {
+                            var sizes = SystemProperties.getDisplayAspectResolutions(Math.round(Screen.width * Screen.devicePixelRatio),
+                                                                                     Math.round(Screen.height * Screen.devicePixelRatio),
+                                                                                     true)
+                            var list = []
+                            for (var i = 0; i < sizes.length; i++) {
+                                var size = sizes[i].width + "x" + sizes[i].height
+                                if (landscapePresets.indexOf(size) < 0 && portraitPresets.indexOf(size) < 0) {
+                                    list.push(qsTr("%1x%2 (display aspect)").arg(sizes[i].width).arg(sizes[i].height))
+                                }
+                            }
+                            return list
+                        }
                         model: {
                             var current = StreamingPreferences.width + "x" + StreamingPreferences.height
-                            var list = presets.slice()
-                            if (list.indexOf(current) < 0) {
+                            var list = landscapePresets.concat(aspectPresets, portraitPresets)
+                            if (indexOfSize(list, current) < 0) {
                                 list.unshift(current)
                             }
                             return list
                         }
-                        currentIndex: model.indexOf(StreamingPreferences.width + "x" + StreamingPreferences.height)
-                        validator: RegularExpressionValidator { regularExpression: /^\s*\d{3,5}\s*[xX×]\s*\d{3,5}\s*$/ }
+                        currentIndex: indexOfSize(model, StreamingPreferences.width + "x" + StreamingPreferences.height)
+                        // A size, optionally followed by a label in parentheses (the aspect presets)
+                        validator: RegularExpressionValidator { regularExpression: /^\s*\d{3,5}\s*[xX×]\s*\d{3,5}\s*(\([^()]*\))?\s*$/ }
+
+                        // "WxH" of an entry or typed text, or "" if it has no size
+                        function sizeOf(text) {
+                            var match = /^\s*(\d{3,5})\s*[xX×]\s*(\d{3,5})\s*(\([^()]*\))?\s*$/.exec(text)
+                            return match ? parseInt(match[1]) + "x" + parseInt(match[2]) : ""
+                        }
+
+                        function indexOfSize(list, size) {
+                            for (var i = 0; i < list.length; i++) {
+                                if (sizeOf(list[i]) === size) {
+                                    return i
+                                }
+                            }
+                            return -1
+                        }
 
                         function applyText(text) {
-                            var match = /^\s*(\d{3,5})\s*[xX×]\s*(\d{3,5})\s*$/.exec(text)
+                            var match = /^\s*(\d{3,5})\s*[xX×]\s*(\d{3,5})\s*(\([^()]*\))?\s*$/.exec(text)
                             // Even sizes only; odd sizes do not work well with the encoders
                             var w = match ? parseInt(match[1]) & ~1 : 0
                             var h = match ? parseInt(match[2]) & ~1 : 0

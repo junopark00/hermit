@@ -1,5 +1,6 @@
 #include "systemproperties.h"
 #include "utils.h"
+#include "settings/resolutionpresets.h"
 
 #include <QGuiApplication>
 #include <QLibraryInfo>
@@ -155,6 +156,21 @@ int SystemProperties::getRefreshRate(int displayIndex)
 {
     // Returns 0 if out of bounds
     return monitorRefreshRates.value(displayIndex);
+}
+
+QVariantList SystemProperties::getDisplayAspectResolutions(int screenWidth, int screenHeight, bool include2160)
+{
+    QList<QSize> natives;
+    for (const QRect& rect : std::as_const(monitorNativeResolutions)) {
+        natives.append(rect.size());
+    }
+
+    const QSize display = ResolutionPresets::matchDisplay(natives, QSize(screenWidth, screenHeight));
+    QVariantList result;
+    for (const QSize& size : ResolutionPresets::forDisplay(display, include2160)) {
+        result.append(size);
+    }
+    return result;
 }
 
 void SystemProperties::startAsyncLoad()

@@ -350,6 +350,8 @@ TRANSLATIONS = {
     ('SettingsView', 'A Shell host sets its virtual display to this resolution.'): 'Shell 호스트는 가상 디스플레이를 이 해상도로 맞춥니다.',
     ('SettingsView', 'Streaming conveniences'): '스트리밍 편의 기능',
     ('SettingsView', 'Windowed'): '창 모드',
+    ('SettingsView', '%1x%2 (display aspect)'): '%1x%2 (화면 비율)',
+    ('StreamPanel', '%1x%2 (display aspect)'): '%1x%2 (화면 비율)',
     ('SettingsView', 'Unlock bitrate limit (Experimental)'): '비트레이트 제한 해제 (실험적)',
 
     # Upstream sentences that were not true for Hermit and Shell

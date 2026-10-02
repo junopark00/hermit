@@ -149,6 +149,11 @@ Flickable {
                         property int lastIndexValue
 
                         function addDetectedResolution(friendlyNamePrefix, rect) {
+                            insertResolution(friendlyNamePrefix+" ("+rect.width+"x"+rect.height+")", rect)
+                        }
+
+                        // Inserts a preset in order of size, unless the list already has that size
+                        function insertResolution(text, rect) {
                             var indexToAdd = 0
                             for (var j = 0; j < resolutionComboBox.count; j++) {
                                 var existing_width = parseInt(resolutionListModel.get(j).video_width);
@@ -169,7 +174,7 @@ Flickable {
                             if (indexToAdd >= 0) {
                                 resolutionListModel.insert(indexToAdd,
                                                            {
-                                                               "text": friendlyNamePrefix+" ("+rect.width+"x"+rect.height+")",
+                                                               "text": text,
                                                                "video_width": ""+rect.width,
                                                                "video_height": ""+rect.height,
                                                                "is_custom": false
@@ -209,6 +214,26 @@ Flickable {
                                         resolutionListModel.remove(j)
                                         j--
                                     }
+                                }
+                            }
+
+                            // Hermit: presets with the aspect ratio of the display this window is on
+                            // (the primary display if unknown), for 21:9, 16:10, 3:2 and other
+                            // displays. 2160 lines only if 4K is offered; sizes already in the list
+                            // and sizes over the decoder's maximum are left out.
+                            var offers4K = false
+                            for (var k = 0; k < resolutionListModel.count; k++) {
+                                if (resolutionListModel.get(k).video_width === "3840" && resolutionListModel.get(k).video_height === "2160") {
+                                    offers4K = true
+                                }
+                            }
+                            var aspectSizes = SystemProperties.getDisplayAspectResolutions(Math.round(Screen.width * Screen.devicePixelRatio),
+                                                                                           Math.round(Screen.height * Screen.devicePixelRatio),
+                                                                                           offers4K)
+                            for (var a = 0; a < aspectSizes.length; a++) {
+                                var size = aspectSizes[a]
+                                if (max_pixels <= 0 || size.width * size.height <= max_pixels) {
+                                    insertResolution(qsTr("%1x%2 (display aspect)").arg(size.width).arg(size.height), size)
                                 }
                             }
 

@@ -22,6 +22,7 @@ else works with any GameStream host, such as Sunshine or Apollo.
 - [Automatic reconnect](#automatic-reconnect)
 - [Shutting down or restarting a host (Shell)](#shutting-down-or-restarting-a-host-shell)
 - [Bitrate entry and recommended values](#bitrate-entry-and-recommended-values)
+- [Resolutions for your display's shape](#resolutions-for-your-displays-shape)
 - [Other streaming options](#other-streaming-options)
 - [Settings layout and language](#settings-layout-and-language)
 - [Command line](#command-line)
@@ -89,8 +90,10 @@ of other remote desktop clients.
   keys apply 0.6 s after the last key press; the text field applies on Enter or when it loses focus,
   and does nothing if the value did not change. On other hosts or encoders, the panel says so and the
   bitrate is applied by reconnecting (see below).
-- **Resolution, frame rate, codec (applied by reconnecting)**: resolution (sizes that are not in the
-  list can be typed as `WIDTHxHEIGHT`, for example `720x1280` for a portrait screen; 320x240 to
+- **Resolution, frame rate, codec (applied by reconnecting)**: resolution (the list includes sizes
+  with the aspect ratio of your display, see
+  [Resolutions for your display's shape](#resolutions-for-your-displays-shape); sizes that are not in
+  the list can be typed as `WIDTHxHEIGHT`, for example `720x1280` for a portrait screen; 320x240 to
   7680x4320), frame rate, video codec, and HDR (when this PC supports HDR). If you never picked a
   bitrate yourself (the bitrate follows the resolution, as in Settings), reconnecting also sets the
   bitrate for the new resolution and frame rate, and the panel shows that value in advance.
@@ -347,6 +350,32 @@ the same host. **Connect now** connects at once; **Cancel** (Esc, gamepad B) sto
     formula's H.264 value.
 - The slow connection warning ("above 5 Mbps") is judged against the bitrate currently applied on the
   host, not the one the stream started with.
+
+## Resolutions for your display's shape
+
+The standard resolution presets (720p, 1080p, 1440p, 4K) are 16:9. On a display with another shape,
+such as a 21:9 ultrawide, a 16:10 laptop or a 3:2 tablet, Hermit also offers presets with the aspect
+ratio of that display, labeled "(display aspect)", in Settings and in the stream panel.
+
+- They use the display Hermit's window is on (in the stream panel, the display the stream is on),
+  or the primary display if that is unknown.
+- For the heights 720, 1080, 1440 and, when 4K is offered, 2160, the width is the height times the
+  display's aspect ratio, rounded to a multiple of 8 (or to an even number, if a multiple of 8 would
+  change the aspect by more than 1%). Portrait displays use these values for the width instead.
+- Sizes that are already in the list (the 16:9 presets or the native resolution) are not repeated,
+  so a 16:9 display shows nothing new. Sizes larger than the video decoder supports are left out,
+  as with the other presets.
+
+| Display | Presets added |
+|---|---|
+| 3440x1440 (21:9) | 1720x720, 2584x1080, 5160x2160, and 3440x1440 in the stream panel (Settings lists it as the native resolution) |
+| 1920x1200 (16:10) | 1152x720, 1728x1080, 2304x1440, 3456x2160 |
+| 2256x1504 (3:2) | 1080x720, 1624x1080, 2160x1440, 3240x2160 |
+| 1920x1080 (16:9) | none |
+
+The chosen size is saved like any other resolution and selected again the next time Settings
+opens. If Hermit later runs on a display with another shape, the saved size stays in effect and is
+shown as a custom resolution.
 
 ## Other streaming options
 

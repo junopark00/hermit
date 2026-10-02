@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QRect>
+#include <QVariantList>
 
 #include "SDL_compat.h"
 
@@ -37,6 +38,11 @@ public:
     Q_INVOKABLE QRect getNativeResolution(int displayIndex);
     Q_INVOKABLE QRect getSafeAreaResolution(int displayIndex);
     Q_INVOKABLE int getRefreshRate(int displayIndex);
+
+    // Hermit: resolution presets with the aspect ratio of the display a window is on
+    // (settings/resolutionpresets.h). screenWidth x screenHeight is that screen's approximate size
+    // in physical pixels (0 x 0: the primary display). Returns a list of sizes.
+    Q_INVOKABLE QVariantList getDisplayAspectResolutions(int screenWidth, int screenHeight, bool include2160);
 
     Q_INVOKABLE void startAsyncLoad();
     Q_INVOKABLE void waitForAsyncLoad();

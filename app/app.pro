@@ -227,6 +227,7 @@ HEADERS += \
     settings/streamingpreferences.h \
     settings/brandingtranslator.h \
     settings/connectionprofiles.h \
+    settings/resolutionpresets.h \
     streaming/input/input.h \
     streaming/clipboardarchive.h \
     streaming/clipboardsync.h \
