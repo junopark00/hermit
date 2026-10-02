@@ -1466,6 +1466,13 @@ private:
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files could not be put on the clipboard (0x%08lx)", (unsigned long)result);
             object->Release();
+            // The main thread forgets the host sequence number, so the next pull offers it again.
+            auto* failed = new ClipboardHostContent;
+            failed->kind = ClipboardHostContent::RemoteFilesFailed;
+            failed->generation = m_Generation;
+            failed->listGeneration = generation;
+            failed->hostSeq = list.seq;
+            pushContent(failed);
             return;
         }
         const DWORD sequence = GetClipboardSequenceNumber();
@@ -1492,6 +1499,12 @@ private:
         content->listGeneration = generation;
         content->localSeq = sequence;
         content->itemCount = list.topLevelCount();
+        pushContent(content);
+    }
+
+    // Hands content to the main thread (onHostContent), which takes ownership.
+    void pushContent(ClipboardHostContent* content)
+    {
         SDL_Event event = {};
         event.type = SDL_USEREVENT;
         event.user.code = m_SdlEventCode;

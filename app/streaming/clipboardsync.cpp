@@ -900,9 +900,18 @@ void ClipboardSyncWorker::handleFailure(const char* operation, int qtError, Dire
     }
 }
 
-void ClipboardSyncWorker::forgetHostSequence()
+void ClipboardSyncWorker::forgetHostContent(quint32 seq, const QByteArray& text)
 {
-    m_HostSeqValid = false;
+    if (m_Mode == Mode::Legacy) {
+        // No sequence numbers: the next pull compares the host's text with this hash.
+        if (m_HostTextHashValid && m_HostTextHash == hashOf(text)) {
+            m_HostTextHashValid = false;
+        }
+        return;
+    }
+    if (m_HostSeqValid && m_HostSeq == seq) {
+        m_HostSeqValid = false;
+    }
 }
 
 void ClipboardSyncWorker::recordHostSequence(const QByteArray& responseBody)
@@ -917,6 +926,9 @@ void ClipboardSyncWorker::recordHostSequence(const QByteArray& responseBody)
 void ClipboardSyncWorker::deliver(ClipboardHostContent* content)
 {
     content->generation = m_Generation;
+    // The sequence number this content was fetched at, recorded just before, so a failed write
+    // forgets only this content and not newer content seen meanwhile.
+    content->hostSeq = m_HostSeq;
     if (stopped()) {
         delete content;
         return;
@@ -1812,6 +1824,16 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
                                                         owned->itemCount));
         return;
     }
+    if (owned->kind == ClipboardHostContent::RemoteFilesFailed) {
+        // The clipboard stayed busy: the next pull fetches the list again (unless newer host
+        // content came meanwhile).
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Clipboard files from host could not be offered; fetched again on the next pull");
+        ClipboardSyncWorker* worker = m_Worker;
+        const quint32 seq = owned->hostSeq;
+        post([worker, seq]() { worker->forgetHostContent(seq); });
+        return;
+    }
 #endif
 
     // Before writing: a host file list still waiting to go on the clipboard must not cover this
@@ -1850,7 +1872,9 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Failed to update the local clipboard with host %s; fetched again on the next pull", what);
         ClipboardSyncWorker* worker = m_Worker;
-        post([worker]() { worker->forgetHostSequence(); });
+        const quint32 seq = owned->hostSeq;
+        const QByteArray text = owned->kind == ClipboardHostContent::Text ? owned->text : QByteArray();
+        post([worker, seq, text]() { worker->forgetHostContent(seq, text); });
         return;
     }
     markLocalHandled();

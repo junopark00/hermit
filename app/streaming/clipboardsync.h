@@ -43,10 +43,13 @@ struct ClipboardTransferControl
 // Clipboard content fetched from the host, handed to the SDL main thread in an SDL user event.
 struct ClipboardHostContent
 {
-    enum Kind { Text, Image, Files, RemoteFiles, RemoteFilesReady };
+    enum Kind { Text, Image, Files, RemoteFiles, RemoteFilesReady, RemoteFilesFailed };
 
     int generation = 0;
     Kind kind = Text;
+    // Host clipboard sequence number the content was fetched at (Shell hosts); RemoteFilesFailed:
+    // that of the list that could not be put on the clipboard
+    quint32 hostSeq = 0;
     QByteArray text;    // UTF-8
     QByteArray png;     // Image: PNG bytes
     QByteArray dib;     // Image: CF_DIBV5 block (Windows)
@@ -54,7 +57,7 @@ struct ClipboardHostContent
     ClipboardArchive::RemoteFileList remoteFiles;  // RemoteFiles: host files to offer as virtual files
     quint32 localSeq = 0;  // RemoteFilesReady: local clipboard sequence number once they were offered
     int itemCount = 0;     // RemoteFilesReady: items the user copied on the host
-    quint64 listGeneration = 0;  // RemoteFilesReady: which publish of the virtual files it answers
+    quint64 listGeneration = 0;  // RemoteFilesReady/Failed: which publish of the virtual files it answers
 };
 
 // Runs every host request on its own thread, so the SDL streaming loop is never blocked by the
@@ -88,9 +91,10 @@ public:
     // Brings the host clipboard to the client if it changed since we last saw or set it.
     void pull();
 
-    // The content of the last pull could not be written to the local clipboard: the next pull
-    // fetches it again.
-    void forgetHostSequence();
+    // Host content fetched at sequence number seq (text: in Legacy mode, the host's text) could
+    // not be put on the local clipboard: the next pull fetches it again, unless newer host content
+    // was seen or sent meanwhile.
+    void forgetHostContent(quint32 seq, const QByteArray& text = QByteArray());
 
 private:
     enum class Mode { Unknown, Extended, Legacy, Disabled };
