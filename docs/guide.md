@@ -38,7 +38,8 @@ else works with any GameStream host, such as Sunshine or Apollo.
    pairing page** in the PIN dialog opens that page in your browser with the PIN and this PC's name
    filled in (the PIN travels in the URL fragment, which the browser does not send to the host). The
    browser warns about the host's self-signed certificate and asks for the web UI password; the
-   PIN dialog stays open until pairing completes.
+   PIN dialog stays open until pairing completes. **Cancel** stops the attempt; selecting the host
+   again starts a new one with a new PIN.
 3. Once paired, pick an app or the desktop to start streaming.
 
 **Settings from Moonlight.** On its first run, if Hermit has no settings yet and Moonlight is
