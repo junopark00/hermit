@@ -88,6 +88,10 @@ public:
     // Brings the host clipboard to the client if it changed since we last saw or set it.
     void pull();
 
+    // The content of the last pull could not be written to the local clipboard: the next pull
+    // fetches it again.
+    void forgetHostSequence();
+
 private:
     enum class Mode { Unknown, Extended, Legacy, Disabled };
     enum class Direction { Pull, Push };

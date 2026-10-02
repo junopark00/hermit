@@ -209,6 +209,14 @@ int main(int argc, char** argv)
         CHECK(!queue.isLatest(pending));
         CHECK(queue.take().size() == 1);
 
+        // The owner asks before every OleSetClipboard attempt whether the list is still wanted:
+        // a superseded one is never set (E_ABORT, the clipboard untouched)
+        const quint64 stale = queue.post(CommandQueue::Publish, older);
+        queue.post(CommandQueue::Release);
+        CHECK(setClipboardWithRetry(nullptr, [&]() { return queue.isLatest(stale); }) == E_ABORT);
+        batch = queue.take();
+        CHECK(batch.size() == 1 && batch[0].kind == CommandQueue::Release);
+
         // Quit never supersedes a publish, and is always run
         const quint64 last = queue.post(CommandQueue::Publish, newer);
         CHECK(queue.post(CommandQueue::Quit) == 0);

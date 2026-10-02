@@ -900,6 +900,11 @@ void ClipboardSyncWorker::handleFailure(const char* operation, int qtError, Dire
     }
 }
 
+void ClipboardSyncWorker::forgetHostSequence()
+{
+    m_HostSeqValid = false;
+}
+
 void ClipboardSyncWorker::recordHostSequence(const QByteArray& responseBody)
 {
     quint32 seq = 0;
@@ -1794,9 +1799,13 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
                         "Clipboard files from host superseded before they were offered");
             return;
         }
-        // The sequence number right after our data object went on the clipboard: not sent back
-        m_LocalSeq = owned->localSeq;
-        m_LocalSeqValid = true;
+        // The sequence number right after our data object went on the clipboard: not sent back.
+        // Unless the user copied something locally since then (pushLocalToHost already saw that
+        // newer number), which an older number would send once more on the next focus change.
+        if (GetClipboardSequenceNumber() == owned->localSeq || !m_LocalSeqValid || (qint32)(owned->localSeq - m_LocalSeq) > 0) {
+            m_LocalSeq = owned->localSeq;
+            m_LocalSeqValid = true;
+        }
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Clipboard files from host ready to paste (%d items)", owned->itemCount);
         showClipboardNotice(QCoreApplication::translate("ClipboardSync", "%n item(s) from the host are ready to paste", nullptr,
@@ -1835,8 +1844,13 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
     }
 
     if (!ok) {
+        // The clipboard was busy (another program, or our own host file list being set). The
+        // worker already recorded this host content as seen; forgotten, so the next pull fetches
+        // it again instead of dropping it.
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "Failed to update the local clipboard with host %s", what);
+                    "Failed to update the local clipboard with host %s; fetched again on the next pull", what);
+        ClipboardSyncWorker* worker = m_Worker;
+        post([worker]() { worker->forgetHostSequence(); });
         return;
     }
     markLocalHandled();

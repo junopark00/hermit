@@ -1016,11 +1016,15 @@ inline void waitHandlingMessages(DWORD ms)
 }
 
 // OleSetClipboard (nullptr empties the clipboard), tried again for a moment while another program
-// holds the clipboard.
-inline HRESULT setClipboardWithRetry(IDataObject* object)
+// holds the clipboard. stillWanted, if given, is asked before every attempt (the wait between them
+// handles messages, so a newer command can arrive meanwhile); E_ABORT once it says no.
+inline HRESULT setClipboardWithRetry(IDataObject* object, const std::function<bool()>& stillWanted = {})
 {
     HRESULT result = E_FAIL;
     for (int attempt = 0; attempt < 20; attempt++) {
+        if (stillWanted && !stillWanted()) {
+            return E_ABORT;
+        }
         result = OleSetClipboard(object);
         if (result != CLIPBRD_E_CANT_OPEN) {
             break;
@@ -1430,13 +1434,15 @@ private:
 
     void setClipboard(const ClipboardArchive::RemoteFileList& list, quint64 generation)
     {
-        // An earlier command in this batch may have taken a while (the retry below handles
-        // messages): checked once more right before.
-        if (!m_Commands.isLatest(generation)) {
+        // An earlier command in this batch may have taken a while, and the retry below handles
+        // messages while it waits: checked before every attempt, so a list that newer host
+        // content superseded is not put on the clipboard.
+        auto* object = new HostFilesDataObject(m_Hub, list, m_Published);
+        const HRESULT result = setClipboardWithRetry(object, [this, generation]() { return m_Commands.isLatest(generation); });
+        if (result == E_ABORT) {
+            object->Release();
             return;
         }
-        auto* object = new HostFilesDataObject(m_Hub, list, m_Published);
-        const HRESULT result = setClipboardWithRetry(object);
         if (FAILED(result)) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files could not be put on the clipboard (0x%08lx)", (unsigned long)result);
@@ -1446,6 +1452,18 @@ private:
         const DWORD sequence = GetClipboardSequenceNumber();
         releaseCurrent();
         m_Current = object;
+        if (!m_Commands.isLatest(generation)) {
+            // Superseded between the last check and the set: the main thread may already have
+            // written the newer content, which this list would now cover. Handled like the Release
+            // that is on its way, right now: emptied while the clipboard still holds this list.
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host files superseded as they went on the clipboard; removed again");
+            if (OleIsCurrentClipboard(object) == S_OK) {
+                setClipboardWithRetry(nullptr);
+            }
+            releaseCurrent();
+            return;
+        }
 
         // The main thread marks this clipboard content as handled, so it is not sent back, unless
         // newer host content superseded this list meanwhile (listGeneration).
