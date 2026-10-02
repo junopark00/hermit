@@ -633,6 +633,13 @@ private:
         } catch (const HostHttpResponseException& e) {
             emit pairingCompleted(m_Computer, tr("The host returned an error: %1").arg(e.toQString()), m_Attempt);
         } catch (const QtNetworkReplyException& e) {
+            // Hermit: a cancelled attempt asks the host to drop its session, so a PIN entered on
+            // the host later is not handed to it. Not when a newer attempt superseded it: the
+            // host drops sessions by client ID, which would drop the newer one.
+            if (e.getError() == QNetworkReply::OperationCanceledError && computerManager->isPairingIdle()) {
+                qInfo() << "Pairing attempt" << attempt << "cancelled: asking the host to drop its pairing session";
+                pairingManager.abandonPairing();
+            }
             emit pairingCompleted(m_Computer, e.toQString(), m_Attempt);
         }
     }
@@ -668,6 +675,11 @@ void ComputerManager::cancelPairing(int attempt)
 bool ComputerManager::isCurrentPairingAttempt(int attempt) const
 {
     return m_PairingAttempt.loadAcquire() == attempt;
+}
+
+bool ComputerManager::isPairingIdle() const
+{
+    return m_PairingAttempt.loadAcquire() == 0;
 }
 
 class PendingQuitTask : public QObject, public QRunnable

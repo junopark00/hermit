@@ -10,6 +10,7 @@
 #include <openssl/evp.h>
 
 #define REQUEST_TIMEOUT_MS 5000
+#define ABANDON_TIMEOUT_MS 3000
 
 NvPairingManager::NvPairingManager(NvComputer* computer) :
     m_Http(computer)
@@ -206,10 +207,24 @@ NvPairingManager::setCancelCheck(std::function<bool()> cancelled)
 void
 NvPairingManager::cleanupPairing()
 {
+    sendUnpair(REQUEST_TIMEOUT_MS);
+}
+
+void
+NvPairingManager::abandonPairing()
+{
+    // The cancel check would stop this request before it is sent
+    m_Http.setCancelCheck(nullptr);
+    sendUnpair(ABANDON_TIMEOUT_MS);
+}
+
+void
+NvPairingManager::sendUnpair(int timeoutMs)
+{
     // Hermit: hosts without /unpair (Apollo, Shell before it) answer 404. That must not replace
     // the pairing result (PIN_WRONG would turn into a raw "Error transferring .../unpair" error).
     try {
-        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, REQUEST_TIMEOUT_MS);
+        m_Http.openConnectionToString(m_Http.m_BaseUrlHttp, "unpair", nullptr, timeoutMs);
     } catch (const HostHttpResponseException& e) {
         qWarning() << "Pairing cleanup: unpair failed:" << e.toQString();
     } catch (const QtNetworkReplyException& e) {

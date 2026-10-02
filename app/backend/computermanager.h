@@ -239,6 +239,9 @@ public:
 
     bool isCurrentPairingAttempt(int attempt) const;
 
+    // Hermit: no attempt is running (the last one was cancelled or none was started)
+    bool isPairingIdle() const;
+
     void quitRunningApp(NvComputer* computer);
 
     QVector<NvComputer*> getComputers();

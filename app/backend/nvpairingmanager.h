@@ -29,10 +29,19 @@ public:
     void
     setCancelCheck(std::function<bool()> cancelled);
 
+    // Hermit: after a cancelled pair(): tells the host to drop the unfinished pairing session
+    // (no longer cancellable, short timeout), so a PIN entered on the host later is not handed
+    // to it. Failures are only logged.
+    void
+    abandonPairing();
+
 private:
     // Hermit: tells the host to drop the unfinished pairing session; failures are only logged
     void
     cleanupPairing();
+
+    void
+    sendUnpair(int timeoutMs);
 
     QByteArray
     generateRandomBytes(int length);
