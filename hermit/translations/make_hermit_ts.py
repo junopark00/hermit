@@ -220,6 +220,7 @@ TRANSLATIONS = {
     ('ClipboardSync', 'Files not sent: unsupported or duplicate names'):
         '파일을 보내지 못했습니다: 지원하지 않거나 중복된 이름이 있습니다',
     ('ClipboardSync', 'Files not sent: nothing to copy'): '파일을 보내지 못했습니다: 복사할 항목이 없습니다',
+    ('ClipboardSync', 'Files not sent: a whole drive cannot be sent'): '파일을 보내지 못했습니다: 드라이브 전체는 보낼 수 없습니다',
     ('ClipboardSync', 'Files not sent: the host does not allow file upload for this device'):
         '파일을 보내지 못했습니다: 호스트가 이 기기의 파일 업로드를 허용하지 않습니다',
     ('ClipboardSync', 'Files on the host not copied: the host does not allow file download for this device'):
@@ -232,6 +233,8 @@ TRANSLATIONS = {
     # Clipboard content that did not move, and permissions per direction
     ('ClipboardSync', "Host files can't be copied: unsupported or duplicate names"):
         '호스트의 파일을 가져올 수 없습니다: 지원하지 않거나 중복된 이름이 있습니다',
+    ('ClipboardSync', "Host files can't be copied: only links or nothing to copy"):
+        '호스트의 파일을 가져올 수 없습니다: 링크뿐이거나 복사할 항목이 없습니다',
     ('ClipboardSync', 'Host files could not be copied'): '호스트의 파일을 가져오지 못했습니다',
     ('ClipboardSync', 'Image on the host not copied: over %1 MB or %2x%2 pixels'):
         '호스트의 이미지를 가져오지 못했습니다: %1MB 또는 %2x%2 픽셀을 넘었습니다',

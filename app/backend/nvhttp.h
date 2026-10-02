@@ -67,11 +67,14 @@ class QtNetworkReplyException : public std::exception
 {
 public:
     // Hermit: httpStatus is the HTTP status code of the reply, 0 if there was none (Qt maps
-    // several codes, 413 and 422 for example, to the same NetworkError)
-    QtNetworkReplyException(QNetworkReply::NetworkError error, QString errorText, int httpStatus = 0) :
+    // several codes, 413 and 422 for example, to the same NetworkError); body is the start of the
+    // reply's body, where the host may say why it refused
+    QtNetworkReplyException(QNetworkReply::NetworkError error, QString errorText, int httpStatus = 0,
+                            QByteArray body = QByteArray()) :
         m_Error(error),
         m_ErrorText(errorText.toUtf8()),
-        m_HttpStatus(httpStatus)
+        m_HttpStatus(httpStatus),
+        m_Body(body)
     {
 
     }
@@ -96,6 +99,11 @@ public:
         return m_HttpStatus;
     }
 
+    const QByteArray& getBody() const
+    {
+        return m_Body;
+    }
+
     QString toQString() const
     {
         return QString::fromUtf8(m_ErrorText) + " (Error " + QString::number(m_Error) + ")";
@@ -105,6 +113,7 @@ private:
     QNetworkReply::NetworkError m_Error;
     QByteArray m_ErrorText;
     int m_HttpStatus;
+    QByteArray m_Body;
 };
 
 class NvHTTP : public QObject

@@ -43,7 +43,7 @@ struct ClipboardTransferControl
 // Clipboard content fetched from the host, handed to the SDL main thread in an SDL user event.
 struct ClipboardHostContent
 {
-    enum Kind { Text, Image, Files, RemoteFiles, RemoteFilesReady, RemoteFilesFailed };
+    enum Kind { Text, Image, Files, RemoteFiles, RemoteFilesReady, RemoteFilesFailed, LocalNotSent };
 
     int generation = 0;
     Kind kind = Text;
@@ -55,7 +55,9 @@ struct ClipboardHostContent
     QByteArray dib;     // Image: CF_DIBV5 block (Windows)
     QStringList files;  // Files: top-level local paths in the staging folder
     ClipboardArchive::RemoteFileList remoteFiles;  // RemoteFiles: host files to offer as virtual files
-    quint32 localSeq = 0;  // RemoteFilesReady: local clipboard sequence number once they were offered
+    // RemoteFilesReady: local clipboard sequence number once they were offered; LocalNotSent: that
+    // of the local content the host could not take yet (its clipboard was busy)
+    quint32 localSeq = 0;
     int itemCount = 0;     // RemoteFilesReady: items the user copied on the host
     quint64 listGeneration = 0;  // RemoteFilesReady/Failed: which publish of the virtual files it answers
 };
@@ -83,10 +85,12 @@ public:
     // clipboard (GET) and setting it (POST) separately, so either direction may be refused alone.
     void init();
 
-    void pushText(const QByteArray& utf8);
-    void pushImage(const QByteArray& data, bool isDib);
+    // localSeq: the local clipboard sequence number of the content (Windows), handed back in a
+    // LocalNotSent event when the host's clipboard was busy, so the next trigger sends it again
+    void pushText(const QByteArray& utf8, quint32 localSeq = 0);
+    void pushImage(const QByteArray& data, bool isDib, quint32 localSeq = 0);
     // dropped: files dropped on the stream window, so every outcome is announced
-    void pushFiles(const QStringList& paths, bool dropped = false);
+    void pushFiles(const QStringList& paths, bool dropped = false, quint32 localSeq = 0);
 
     // Brings the host clipboard to the client if it changed since we last saw or set it.
     void pull();
@@ -127,6 +131,13 @@ private:
     void notify(int notice, bool repeat);
     void recordHostSequence(const QByteArray& responseBody);
     void deliver(ClipboardHostContent* content);
+    // 503 on the last request: another program held the host's clipboard
+    bool hostClipboardBusy() const { return m_LastHttpStatus == 503; }
+    // Local content the host's busy clipboard could not take: the main thread sends it again on
+    // the next trigger.
+    void localNotSent(quint32 localSeq);
+    // A 422 for host files: a notice for the reason the host gave.
+    void notifyHostFilesRefused();
     bool stopped() const { return m_Stopped->load(); }
 
     NvAddress m_Address;
@@ -156,6 +167,7 @@ private:
     bool m_PushDenied;    // 401 on POST: this device may not set the host clipboard
     bool m_PushAccepted;  // a POST succeeded, so a later 401 on files means no file upload permission
     QString m_LastError;
+    QByteArray m_LastErrorBody;  // start of the last failed request's body (the host's reason)
     int m_LastHttpStatus;  // of the last failed request, 0 if none
 };
 

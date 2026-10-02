@@ -70,6 +70,10 @@
       <translation>파일을 보내지 못했습니다: 복사할 항목이 없습니다</translation>
     </message>
     <message>
+      <source>Files not sent: a whole drive cannot be sent</source>
+      <translation>파일을 보내지 못했습니다: 드라이브 전체는 보낼 수 없습니다</translation>
+    </message>
+    <message>
       <source>Files not sent: the host does not allow file upload for this device</source>
       <translation>파일을 보내지 못했습니다: 호스트가 이 기기의 파일 업로드를 허용하지 않습니다</translation>
     </message>
@@ -84,6 +88,10 @@
     <message>
       <source>Host files can't be copied: unsupported or duplicate names</source>
       <translation>호스트의 파일을 가져올 수 없습니다: 지원하지 않거나 중복된 이름이 있습니다</translation>
+    </message>
+    <message>
+      <source>Host files can't be copied: only links or nothing to copy</source>
+      <translation>호스트의 파일을 가져올 수 없습니다: 링크뿐이거나 복사할 항목이 없습니다</translation>
     </message>
     <message>
       <source>Host files could not be copied</source>

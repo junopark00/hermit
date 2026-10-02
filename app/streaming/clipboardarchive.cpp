@@ -791,4 +791,33 @@ bool parseFileList(const QByteArray& body, RemoteFileList& list, QString& error)
     return true;
 }
 
+Refusal parseRefusal(const QByteArray& body)
+{
+    const int newline = body.indexOf('\n');
+    const QByteArray reason = (newline >= 0 ? body.left(newline) : body).trimmed();
+    if (reason == "unsupported-name") {
+        return Refusal::UnsupportedName;
+    }
+    if (reason == "duplicate-name") {
+        return Refusal::DuplicateName;
+    }
+    if (reason == "nothing-to-copy") {
+        return Refusal::NothingToCopy;
+    }
+    if (reason == "image-not-convertible") {
+        return Refusal::ImageNotConvertible;
+    }
+    // Older hosts: the message of the file walk or the archive check
+    if (reason.startsWith("unsupported file name") || reason == "unsafe path") {
+        return Refusal::UnsupportedName;
+    }
+    if (reason.startsWith("duplicate name") || reason == "duplicate path" || reason == "file used as directory") {
+        return Refusal::DuplicateName;
+    }
+    if (reason == "nothing to copy") {
+        return Refusal::NothingToCopy;
+    }
+    return Refusal::Unknown;
+}
+
 }  // namespace ClipboardArchive

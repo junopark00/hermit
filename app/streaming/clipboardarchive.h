@@ -176,6 +176,15 @@ struct RemoteFileList
 // Unknown "key=value" lines are ignored so the host can add fields later.
 bool parseFileList(const QByteArray& body, RemoteFileList& list, QString& error);
 
+// Why the host refused clipboard content with 422 Unprocessable Entity.
+enum class Refusal { Unknown, UnsupportedName, DuplicateName, NothingToCopy, ImageNotConvertible };
+
+// Reads the reason from a 422 body. Shell hosts start it with a machine-readable line
+// ("unsupported-name", "duplicate-name", "nothing-to-copy", "image-not-convertible"); older ones
+// sent only the planner's message ("unsupported file name: ...", "duplicate path", ...), which is
+// still recognized. Anything else is Unknown.
+Refusal parseRefusal(const QByteArray& body);
+
 // Checks a downloaded archive without writing anything: magic, version, entry count, every path,
 // size, duplicate and the overall limits. Fills entries (with data offsets) on success.
 bool validateArchive(QIODevice& archive, QVector<Entry>& entries, QString& error);

@@ -485,6 +485,22 @@ int main(int argc, char** argv)
         CHECK(!isSafeRelativePath(hangul255 + QLatin1Char('/') + hangul255));  // 1531 UTF-8 bytes
     }
 
+    // ---- 422 reasons: the host's first line, or the message older hosts sent ----
+    {
+        CHECK(parseRefusal("unsupported-name\nunsupported file name: con.txt") == Refusal::UnsupportedName);
+        CHECK(parseRefusal("duplicate-name\r\nduplicate name: A.txt") == Refusal::DuplicateName);
+        CHECK(parseRefusal("nothing-to-copy\n") == Refusal::NothingToCopy);
+        CHECK(parseRefusal("image-not-convertible") == Refusal::ImageNotConvertible);
+        CHECK(parseRefusal("unsupported file name: a.") == Refusal::UnsupportedName);
+        CHECK(parseRefusal("unsafe path") == Refusal::UnsupportedName);
+        CHECK(parseRefusal("duplicate name: Read.me") == Refusal::DuplicateName);
+        CHECK(parseRefusal("duplicate path") == Refusal::DuplicateName);
+        CHECK(parseRefusal("file used as directory") == Refusal::DuplicateName);
+        CHECK(parseRefusal("nothing to copy") == Refusal::NothingToCopy);
+        CHECK(parseRefusal("some-new-reason\nnothing-to-copy") == Refusal::Unknown);
+        CHECK(parseRefusal(QByteArray()) == Refusal::Unknown);
+    }
+
     std::printf(g_Failures ? "\n%d FAILURE(S)\n" : "\nALL PASSED\n", g_Failures);
     return g_Failures ? 1 : 0;
 }
