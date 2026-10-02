@@ -1,4 +1,11 @@
 // Standalone test for app/streaming/clipboardarchive.{h,cpp}.
+#ifdef _WIN32
+// Before anything that may include windows.h
+#include <winsock2.h>
+#include <afunix.h>
+#undef small  // rpcndr.h; a variable name below
+#endif
+
 #include "streaming/clipboardarchive.h"
 
 #include <QBuffer>
@@ -206,6 +213,44 @@ int main(int argc, char** argv)
         }
         else {
             std::printf("junction not created (mklink returned %d); skipped\n", made);
+        }
+
+        // A Unix domain socket is a reparse point that cannot be opened as a file: skipped, not
+        // a reason to fail the whole upload
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0) {
+            const QString socketPath = links + "/unix.sock";
+            const QByteArray native = QDir::toNativeSeparators(socketPath).toLocal8Bit();
+            const SOCKET sock = socket(AF_UNIX, SOCK_STREAM, 0);
+            sockaddr_un address = {};
+            address.sun_family = AF_UNIX;
+            if (sock != INVALID_SOCKET && native.size() < (int)sizeof(address.sun_path)) {
+                memcpy(address.sun_path, native.constData(), (size_t)native.size());
+                if (bind(sock, reinterpret_cast<const sockaddr*>(&address), (int)sizeof(address)) == 0) {
+                    CHECK(planUpload({links}, p, s, e) && p.size() == 2 && p[1].path == "links/plain.txt");
+                    CHECK(!planUpload({socketPath}, p, s, e) && e == "nothing to copy");
+                    std::printf("unix socket skipped: %d entries (%s)\n", (int)p.size(), qPrintable(e));
+                }
+                else {
+                    std::printf("unix socket not created (%d); skipped\n", WSAGetLastError());
+                }
+            }
+            if (sock != INVALID_SOCKET) {
+                closesocket(sock);
+            }
+            QFile::remove(socketPath);
+            WSACleanup();
+        }
+
+        // An app execution alias (WindowsApps) cannot be opened as a file either
+        const QDir apps(QDir::fromNativeSeparators(qEnvironmentVariable("LOCALAPPDATA")) + "/Microsoft/WindowsApps");
+        const QStringList aliases = apps.entryList({"*.exe"}, QDir::Files | QDir::System | QDir::Hidden);
+        if (!aliases.isEmpty()) {
+            CHECK(!planUpload({apps.filePath(aliases.first())}, p, s, e) && e == "nothing to copy");
+            std::printf("app execution alias skipped: %s\n", qPrintable(e));
+        }
+        else {
+            std::printf("no app execution alias found; skipped\n");
         }
 #endif
     }

@@ -24,21 +24,28 @@ constexpr qint64 k_HeaderBytes = 12;          // "APCF" | version | count
 constexpr qint64 k_EntryFixedBytes = 1 + 4 + 8; // kind | path length | size
 constexpr qint64 k_CopyChunkBytes = 1024 * 1024;
 
-// A symbolic link or junction, which uploads do not follow (as the Shell host does not). Only
-// reparse points that stand for another name count: OneDrive Files On-Demand placeholders,
-// deduplicated and ProjFS files are reparse points too, but read like ordinary files (a
-// placeholder is downloaded as it is read).
-bool isLinkOrJunction(const QFileInfo& info)
+// A symbolic link or junction, which uploads do not follow (as the Shell host does not), or an
+// item that is no file to read: an app execution alias (the commands in WindowsApps) or a Unix
+// domain socket. Those two are not links, but cannot be opened like files and would fail the whole
+// upload. Other reparse points stay: OneDrive Files On-Demand placeholders, deduplicated and
+// ProjFS files read like ordinary files (a placeholder is downloaded as it is read).
+bool isLinkOrUnreadable(const QFileInfo& info)
 {
 #ifdef Q_OS_WIN32
+    constexpr DWORD k_AppExecLinkTag = 0x8000001B;  // IO_REPARSE_TAG_APPEXECLINK
+    constexpr DWORD k_UnixSocketTag = 0x80000023;   // IO_REPARSE_TAG_AF_UNIX
     const QString native = QDir::toNativeSeparators(info.absoluteFilePath());
     WIN32_FIND_DATAW data;
     const HANDLE find = FindFirstFileExW(reinterpret_cast<LPCWSTR>(native.utf16()), FindExInfoBasic, &data,
                                          FindExSearchNameMatch, nullptr, 0);
     if (find != INVALID_HANDLE_VALUE) {
         FindClose(find);
+        if (!(data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            return false;
+        }
         // dwReserved0 is the reparse tag when the attribute is set
-        return (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && IsReparseTagNameSurrogate(data.dwReserved0);
+        const DWORD tag = data.dwReserved0;
+        return IsReparseTagNameSurrogate(tag) || tag == k_AppExecLinkTag || tag == k_UnixSocketTag;
     }
     // Not found that way (a drive root, for example)
     return info.isSymbolicLink() || info.isJunction();
@@ -175,7 +182,7 @@ bool planUpload(const QStringList& roots, QVector<Entry>& entries, qint64& archi
 
     for (const QString& root : roots) {
         const QFileInfo info(root);
-        if (!info.exists() || isLinkOrJunction(info)) {
+        if (!info.exists() || isLinkOrUnreadable(info)) {
             continue;
         }
         if (info.fileName().isEmpty()) {
@@ -200,7 +207,7 @@ bool planUpload(const QStringList& roots, QVector<Entry>& entries, qint64& archi
             const QDir dir(pending.takeLast());
             const QFileInfoList children = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::Name);
             for (const QFileInfo& child : children) {
-                if (isLinkOrJunction(child)) {
+                if (isLinkOrUnreadable(child)) {
                     continue;
                 }
                 if (child.isDir()) {

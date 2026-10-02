@@ -46,8 +46,9 @@ struct Entry
     qint64 dataOffset = 0; // download: offset of the data in the archive file
 };
 
-// Walks files and folders (recursively, never following links or junctions), checks names,
-// duplicates and limits, and returns what would be packed together with the exact archive size.
+// Walks files and folders (recursively, never following links or junctions, and skipping app
+// execution aliases and Unix sockets, which cannot be read), checks names, duplicates and limits,
+// and returns what would be packed together with the exact archive size.
 // Nothing is read yet; each file is only opened once to check that it is readable.
 bool planUpload(const QStringList& roots, QVector<Entry>& entries, qint64& archiveSize, QString& error);
 
