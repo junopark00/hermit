@@ -14,8 +14,9 @@ class ConnectionProfiles : public QObject
     Q_OBJECT
 
     Q_PROPERTY(QStringList names READ names NOTIFY profilesChanged)
-    // Name of the profile whose values equal the current settings, or empty.
-    Q_PROPERTY(QString current READ current NOTIFY profilesChanged)
+    // Name of the profile whose values equal the current settings, or empty. Settings
+    // changed elsewhere are picked up by refresh(), which notifies only this property.
+    Q_PROPERTY(QString current READ current NOTIFY currentChanged)
 
 public:
     explicit ConnectionProfiles(StreamingPreferences* preferences, QObject* parent = nullptr);
@@ -36,6 +37,7 @@ public:
 
 signals:
     void profilesChanged();
+    void currentChanged();
 
 private:
     QVariantMap snapshot() const;

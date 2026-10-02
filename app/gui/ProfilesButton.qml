@@ -18,6 +18,19 @@ NavigableToolButton {
     ToolTip.text: ConnectionProfiles.current ? qsTr("Profile: %1").arg(ConnectionProfiles.current)
                                              : qsTr("Connection profiles")
 
+    // The settings may have changed elsewhere since (Settings page, stream panel), and "current"
+    // is only re-evaluated on request: checked whenever the button appears or is pointed at.
+    onVisibleChanged: {
+        if (visible) {
+            ConnectionProfiles.refresh()
+        }
+    }
+    onHoveredChanged: {
+        if (hovered) {
+            ConnectionProfiles.refresh()
+        }
+    }
+
     onClicked: {
         ConnectionProfiles.refresh()
         profileMenu.popup(button, 0, button.height)

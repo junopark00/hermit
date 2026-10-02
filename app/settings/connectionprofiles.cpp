@@ -70,6 +70,7 @@ bool ConnectionProfiles::saveCurrent(const QString& name)
     }
     store();
     emit profilesChanged();
+    emit currentChanged();
     return true;
 }
 
@@ -86,6 +87,7 @@ bool ConnectionProfiles::apply(const QString& name)
     }
     m_Preferences->save();
     emit profilesChanged();
+    emit currentChanged();
     return true;
 }
 
@@ -98,6 +100,7 @@ void ConnectionProfiles::remove(const QString& name)
     m_Profiles.removeAt(index);
     store();
     emit profilesChanged();
+    emit currentChanged();
 }
 
 QString ConnectionProfiles::describe(const QString& name) const
@@ -133,7 +136,7 @@ QString ConnectionProfiles::describe(const QString& name) const
 
 void ConnectionProfiles::refresh()
 {
-    emit profilesChanged();
+    emit currentChanged();
 }
 
 QVariantMap ConnectionProfiles::snapshot() const
