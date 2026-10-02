@@ -17,7 +17,11 @@
 //   count at the time its pull was posted: newer than every local change seen before that pull,
 //   older than every local change seen after it;
 // - content this side put on the host takes the order of its local change; dropped files the count
-//   when they were dropped (newer on the host than every local change so far).
+//   when they were dropped (newer on the host than every local change so far);
+// - host content found when sync is set up is not a change only at stream start; a setup that
+//   succeeds later takes it for a host change seen then (hostSetUp);
+// - files whose every byte reached the host without its confirmation count as sent, and the next
+//   new host files as those files, unless a local change came first (localSentUnconfirmed).
 //
 // So:
 // - local content is sent (again, after a busy host or a network error) only while no host change
@@ -46,6 +50,28 @@ public:
         m_HostKnown = true;
         m_HostKey = key;
         m_HostPending = false;
+        m_Unconfirmed = false;
+    }
+
+    // Sync was set up and found host content key. Only the setup at stream start records it as
+    // the host's content before the stream (hostRecorded). A setup that failed then and succeeds
+    // later cannot tell whether the host's clipboard changed in between (the user copied there
+    // during the stream), so the content is a host change seen now by a job posted after
+    // localChanges local changes: local content older than that (the content from stream start,
+    // waiting to be sent again) no longer replaces it, and the next pull fetches it while no newer
+    // local change came. The trade-off: when the host did not change after all, its older content
+    // wins over the local content from stream start, which is then not sent (copy it again).
+    void hostSetUp(uint64_t key, bool atStart, uint64_t localChanges)
+    {
+        if (atStart) {
+            hostRecorded(key);
+            return;
+        }
+        m_HostKnown = true;
+        m_HostKey = key;
+        m_HostOrder = (std::max)(m_HostOrder, localChanges);
+        m_HostPending = true;
+        m_Unconfirmed = false;
     }
 
     // A pull posted after localChanges local changes found host content key (its clipboard sequence
@@ -90,6 +116,35 @@ public:
         }
         m_HostPending = false;
         m_HostOrder = (std::max)(m_HostOrder, localOrder);
+        m_Unconfirmed = false;
+    }
+
+    // Every byte of the files of local change localOrder reached the host, but it did not confirm
+    // taking them in time (it was still unpacking them). It most likely did, under a sequence
+    // number we do not know yet: recorded as sent, and the next host files seen are taken for them
+    // (hostIsUnconfirmedUpload) instead of being fetched back over the local copy.
+    void localSentUnconfirmed(uint64_t localOrder)
+    {
+        localSent(false, 0, localOrder);
+        m_Unconfirmed = true;
+        m_UnconfirmedOrder = localOrder;
+    }
+
+    // A pull posted after localChanges local changes found host content key; files: it is a file
+    // list. True when these are most likely the files of an unconfirmed upload: new host content,
+    // the first host change since that upload, files, and no local change since. They are then
+    // recorded as ours (not fetched). Any other host change ends the wait for them.
+    bool hostIsUnconfirmedUpload(uint64_t key, bool files, uint64_t localChanges)
+    {
+        if (!m_Unconfirmed || (m_HostKnown && key == m_HostKey)) {
+            return false;
+        }
+        m_Unconfirmed = false;
+        if (!files || localChanges > m_UnconfirmedOrder) {
+            return false;
+        }
+        localSent(true, key, m_UnconfirmedOrder);
+        return true;
     }
 
     // Whether local change localOrder may still replace the host's content: no host change (nor a
@@ -112,10 +167,14 @@ public:
     uint64_t hostOrder() const { return m_HostOrder; }
     // Host content waiting to be fetched again
     bool hostPending() const { return m_HostPending; }
+    // Files sent without a confirmation, not seen on the host yet
+    bool unconfirmedUpload() const { return m_Unconfirmed; }
 
 private:
     bool m_HostKnown = false;
     uint64_t m_HostKey = 0;
     uint64_t m_HostOrder = 0;
     bool m_HostPending = false;
+    bool m_Unconfirmed = false;
+    uint64_t m_UnconfirmedOrder = 0;
 };

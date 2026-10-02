@@ -91,7 +91,10 @@ public:
     // Detects the host protocol (Shell extensions or the text-only clipboard endpoint) and records
     // the host's current clipboard state without transferring it. The host grants reading its
     // clipboard (GET) and setting it (POST) separately, so either direction may be refused alone.
-    void init();
+    // Hermit: the first attempt (at stream start) records the host's content as no change; a later
+    // one, after that failed, as a host change seen by a job posted after localChanges local
+    // changes (ClipboardChangeOrder::hostSetUp).
+    void init(quint64 localChanges = 0);
 
     // localSeq: the local clipboard sequence number of the content (Windows), handed back in a
     // LocalNotSent event when the host's clipboard was busy (Hermit: or a network error stopped
@@ -133,8 +136,9 @@ private:
     // A cancelled transfer, or one that failed without a more specific notice.
     void showTransferEnd(TransferResult result, int qtError);
     // Hermit: localSeq: local content being sent, left to the next trigger (LocalNotSent) when sync
-    // could not be set up yet (a network error, a busy host, or no active stream seen by the host)
-    bool ensureReady(quint32 localSeq = 0);
+    // could not be set up yet (a network error, a busy host, or no active stream seen by the host);
+    // localChanges: the local changes observed when the job was posted (init)
+    bool ensureReady(quint32 localSeq = 0, quint64 localChanges = 0);
     // A Shell host, asked in a way that needs no clipboard permission (when reading its clipboard
     // is refused, the clipboard itself cannot tell).
     bool hostIsShell();
@@ -199,6 +203,7 @@ private:
     bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error
     quint32 m_LocalNetworkNoticeSeq;
     bool m_UploadSentAll;  // Hermit: the last upload sent every byte (transfer)
+    bool m_SetupTried;     // Hermit: init ran once (the setup at stream start)
     // Hermit: the host text last seen or sent, so identical text is not echoed back without local
     // change tracking
     bool m_HostTextHashValid;

@@ -560,6 +560,7 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_LocalNetworkNoticeSeqValid(false),
       m_LocalNetworkNoticeSeq(0),
       m_UploadSentAll(false),
+      m_SetupTried(false),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -1045,19 +1046,31 @@ void ClipboardSyncWorker::notifyHostFilesRefused()
     }
 }
 
-void ClipboardSyncWorker::init()
+void ClipboardSyncWorker::init(quint64 localChanges)
 {
     if (stopped() || m_Mode != Mode::Unknown) {
         return;
+    }
+    // Hermit: only the setup at stream start sees the host's content from before the stream. One
+    // that failed then and succeeds later cannot tell whether the host's clipboard changed
+    // meanwhile, so what it finds is a host change seen now: the local content from stream start,
+    // still waiting to be sent, does not overwrite it, and the next pull fetches it. When the host
+    // did not change after all, its content wins over that local content (copy it again to send
+    // it), which is better than overwriting a copy made on the host during the stream.
+    const bool atStart = !m_SetupTried;
+    m_SetupTried = true;
+    if (!atStart) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Clipboard sync: setting up again after it failed at stream start");
     }
 
     QByteArray body;
     int error = QNetworkReply::NoError;
     quint32 seq = 0;
     if (request(QStringLiteral("info"), nullptr, k_InfoTimeoutMs, body, error) && parseSeq(body, seq)) {
-        // Shell host: remember its current state, but do not copy it yet.
+        // Shell host: remember its current state, but do not copy it yet (Hermit: at stream start).
         m_Mode = Mode::Extended;
-        m_Order.hostRecorded(seq);
+        m_Order.hostSetUp(seq, atStart, localChanges);
         QByteArray files;
         m_HostStreamsFiles = parseField(body, "files", files) && files == "stream";
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1083,7 +1096,7 @@ void ClipboardSyncWorker::init()
         if (request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
             m_HostTextHash = hashOf(body);
             m_HostTextHashValid = true;
-            m_Order.hostRecorded(textKey(m_HostTextHash));
+            m_Order.hostSetUp(textKey(m_HostTextHash), atStart, localChanges);
         }
         else if (error == QNetworkReply::AuthenticationRequiredError) {
             denyDirection(Direction::Pull);
@@ -1107,13 +1120,13 @@ bool ClipboardSyncWorker::hostIsShell()
     }
 }
 
-bool ClipboardSyncWorker::ensureReady(quint32 localSeq)
+bool ClipboardSyncWorker::ensureReady(quint32 localSeq, quint64 localChanges)
 {
     if (stopped()) {
         return false;
     }
     if (m_Mode == Mode::Unknown) {
-        init();
+        init(localChanges);
     }
     if (m_Mode == Mode::Unknown && localSeq != 0 && !stopped()) {
         // Hermit: the host could not be asked (a network error, a busy host, or no active stream
@@ -1126,7 +1139,7 @@ bool ClipboardSyncWorker::ensureReady(quint32 localSeq)
 
 void ClipboardSyncWorker::pushText(const QByteArray& utf8, quint32 localSeq, quint64 localOrder)
 {
-    if (utf8.isEmpty() || !ensureReady(localSeq) || m_PushDenied) {
+    if (utf8.isEmpty() || !ensureReady(localSeq, localOrder) || m_PushDenied) {
         return;
     }
     if (!m_Order.localMayReplaceHost(localOrder)) {
@@ -1178,7 +1191,7 @@ void ClipboardSyncWorker::pushText(const QByteArray& utf8, quint32 localSeq, qui
 
 void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 localSeq, quint64 localOrder)
 {
-    if (!ensureReady(localSeq) || m_PushDenied) {
+    if (!ensureReady(localSeq, localOrder) || m_PushDenied) {
         return;
     }
     if (m_Mode != Mode::Extended) {
@@ -1287,7 +1300,7 @@ void ClipboardSyncWorker::pushImage(const QByteArray& data, bool isDib, quint32 
 void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quint32 localSeq, quint64 localOrder)
 {
     // Dropped files are not sent again by themselves
-    const bool ready = ensureReady(dropped ? 0 : localSeq);
+    const bool ready = ensureReady(dropped ? 0 : localSeq, localOrder);
     if (ready && m_PushDenied) {
         if (dropped) {
             notify(WriteNotAllowed, false);
@@ -1407,6 +1420,11 @@ void ClipboardSyncWorker::pushFiles(const QStringList& paths, bool dropped, quin
         // Hermit: every byte reached the host, which was still unpacking the files and placing them
         // on its clipboard when the wait for its answer ended. It most likely took them, so they
         // are not sent again (up to 256 MB once more); the notice says they may still arrive.
+        // They count as sent, under a sequence number not known yet: the next new host files are
+        // taken for them rather than fetched back over the local copy (unless a local change
+        // comes first; ClipboardChangeOrder::localSentUnconfirmed).
+        m_Order.localSentUnconfirmed(localOrder);
+        m_HostTextHashValid = false;
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "Sending files to host: %s; not sent again", qPrintable(m_LastError));
         if (!stopped()) {
@@ -1475,7 +1493,7 @@ static bool shouldFetch(ClipboardChangeOrder::HostContent decision)
 
 void ClipboardSyncWorker::pull(quint64 localChanges)
 {
-    if (!ensureReady() || m_PullDenied) {
+    if (!ensureReady(0, localChanges) || m_PullDenied) {
         return;
     }
 
@@ -1523,6 +1541,13 @@ void ClipboardSyncWorker::pull(quint64 localChanges)
     }
     QByteArray files;
     m_HostStreamsFiles = parseField(body, "files", files) && files == "stream";
+    if (m_Order.hostIsUnconfirmedUpload(seq, type == "files", localChanges)) {
+        // Hermit: the files sent before without the host's confirmation, placed on its clipboard
+        // after all: our own, not fetched back over the local copy.
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host clipboard files taken for the ones sent without a confirmation; not fetched");
+        return;
+    }
     // Unchanged since we last pushed or pulled, or waiting to be fetched again but older than a
     // local change
     if (!shouldFetch(m_Order.hostSeen(seq, localChanges))) {
