@@ -10,6 +10,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 
+#include <functional>
+
 class NvComputer;
 
 class NvDisplayMode
@@ -164,6 +166,11 @@ public:
     void setHttpsPort(uint16_t port);
     void setTrueUid(bool useTrueUid);
 
+    // Hermit: polled while a request runs (and before one is sent); once it returns true, the
+    // request is aborted and throws QtNetworkReplyException(OperationCanceledError). Used to
+    // abandon a superseded pairing attempt, whose PIN request has no timeout.
+    void setCancelCheck(std::function<bool()> cancelled);
+
     NvAddress address();
 
     QSslCertificate serverCert();
@@ -252,4 +259,5 @@ private:
     QNetworkAccessManager* m_Nam;
     QSslCertificate m_ServerCert;
     bool m_UseTrueUid;
+    std::function<bool()> m_CancelCheck;
 };

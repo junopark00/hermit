@@ -580,66 +580,94 @@ class PendingPairingTask : public QObject, public QRunnable
     Q_OBJECT
 
 public:
-    PendingPairingTask(ComputerManager* computerManager, NvComputer* computer, QString pin)
+    PendingPairingTask(ComputerManager* computerManager, NvComputer* computer, QString pin, int attempt)
         : m_ComputerManager(computerManager),
           m_Computer(computer),
-          m_Pin(pin)
+          m_Pin(pin),
+          m_Attempt(attempt)
     {
         connect(this, &PendingPairingTask::pairingCompleted,
                 computerManager, &ComputerManager::pairingCompleted);
     }
 
 signals:
-    void pairingCompleted(NvComputer* computer, QString error);
+    void pairingCompleted(NvComputer* computer, QString error, int attempt);
 
 private:
     void run()
     {
         NvPairingManager pairingManager(m_Computer);
 
+        // Hermit: a superseded attempt stops at once, even while waiting for the PIN
+        ComputerManager* computerManager = m_ComputerManager;
+        int attempt = m_Attempt;
+        pairingManager.setCancelCheck([computerManager, attempt] {
+            return !computerManager->isCurrentPairingAttempt(attempt);
+        });
+
         try {
            NvPairingManager::PairState result = pairingManager.pair(m_Computer->appVersion, m_Pin, m_Computer->serverCert);
            switch (result)
            {
            case NvPairingManager::PairState::PIN_WRONG:
-               emit pairingCompleted(m_Computer, tr("The PIN from the PC didn't match. Please try again."));
+               emit pairingCompleted(m_Computer, tr("The PIN from the PC didn't match. Please try again."), m_Attempt);
                break;
            case NvPairingManager::PairState::FAILED:
                if (m_Computer->currentGameId != 0) {
-                   emit pairingCompleted(m_Computer, tr("You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again."));
+                   emit pairingCompleted(m_Computer, tr("You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again."), m_Attempt);
                }
                else {
-                   emit pairingCompleted(m_Computer, tr("Pairing failed. Please try again."));
+                   emit pairingCompleted(m_Computer, tr("Pairing failed. Please try again."), m_Attempt);
                }
                break;
            case NvPairingManager::PairState::ALREADY_IN_PROGRESS:
-               emit pairingCompleted(m_Computer, tr("Another pairing attempt is already in progress."));
+               emit pairingCompleted(m_Computer, tr("Another pairing attempt is already in progress."), m_Attempt);
                break;
            case NvPairingManager::PairState::PAIRED:
                // Persist the newly pinned server certificate for this host
                m_ComputerManager->saveHost(m_Computer);
 
-               emit pairingCompleted(m_Computer, nullptr);
+               emit pairingCompleted(m_Computer, nullptr, m_Attempt);
                break;
            }
         } catch (const HostHttpResponseException& e) {
-            emit pairingCompleted(m_Computer, tr("The host returned an error: %1").arg(e.toQString()));
+            emit pairingCompleted(m_Computer, tr("The host returned an error: %1").arg(e.toQString()), m_Attempt);
         } catch (const QtNetworkReplyException& e) {
-            emit pairingCompleted(m_Computer, e.toQString());
+            emit pairingCompleted(m_Computer, e.toQString(), m_Attempt);
         }
     }
 
     ComputerManager* m_ComputerManager;
     NvComputer* m_Computer;
     QString m_Pin;
+    int m_Attempt;
 };
 
-void ComputerManager::pairHost(NvComputer* computer, QString pin)
+int ComputerManager::pairHost(NvComputer* computer, QString pin)
 {
+    if (++m_LastPairingAttempt <= 0) {
+        m_LastPairingAttempt = 1;
+    }
+    int attempt = m_LastPairingAttempt;
+    m_PairingAttempt.storeRelease(attempt);
+
     // Punt to a worker thread to avoid stalling the
     // UI while waiting for pairing to complete
-    PendingPairingTask* pairing = new PendingPairingTask(this, computer, pin);
+    PendingPairingTask* pairing = new PendingPairingTask(this, computer, pin, attempt);
     QThreadPool::globalInstance()->start(pairing);
+    return attempt;
+}
+
+void ComputerManager::cancelPairing(int attempt)
+{
+    if (attempt != 0 && m_PairingAttempt.testAndSetOrdered(attempt, 0)) {
+        qInfo() << "Pairing attempt" << attempt << "cancelled";
+    }
+}
+
+bool ComputerManager::isCurrentPairingAttempt(int attempt) const
+{
+    return m_PairingAttempt.loadAcquire() == attempt;
 }
 
 class PendingQuitTask : public QObject, public QRunnable

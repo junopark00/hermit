@@ -198,6 +198,12 @@ NvPairingManager::signMessage(const QByteArray& message)
 }
 
 void
+NvPairingManager::setCancelCheck(std::function<bool()> cancelled)
+{
+    m_Http.setCancelCheck(std::move(cancelled));
+}
+
+void
 NvPairingManager::cleanupPairing()
 {
     // Hermit: hosts without /unpair (Apollo, Shell before it) answer 404. That must not replace

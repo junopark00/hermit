@@ -24,6 +24,11 @@ public:
     PairState
     pair(QString appVersion, QString pin, QSslCertificate& serverCert);
 
+    // Hermit: once cancelled() returns true, the pending request is aborted and pair() throws
+    // QtNetworkReplyException(OperationCanceledError)
+    void
+    setCancelCheck(std::function<bool()> cancelled);
+
 private:
     // Hermit: tells the host to drop the unfinished pairing session; failures are only logged
     void

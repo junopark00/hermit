@@ -311,7 +311,16 @@ void ComputerModel::pairComputer(int computerIndex, QString pin)
 {
     Q_ASSERT(computerIndex < m_Computers.count());
 
-    m_ComputerManager->pairHost(m_Computers[computerIndex], pin);
+    // Hermit: a newer attempt supersedes the previous one (its result is ignored)
+    m_PairingAttempt = m_ComputerManager->pairHost(m_Computers[computerIndex], pin);
+}
+
+void ComputerModel::cancelPairing()
+{
+    if (m_PairingAttempt != 0) {
+        m_ComputerManager->cancelPairing(m_PairingAttempt);
+        m_PairingAttempt = 0;
+    }
 }
 
 bool ComputerModel::openPairingPage(QString uuid, QString pin)
@@ -363,8 +372,16 @@ bool ComputerModel::openPairingPage(QString uuid, QString pin)
     return true;
 }
 
-void ComputerModel::handlePairingCompleted(NvComputer*, QString error)
+void ComputerModel::handlePairingCompleted(NvComputer*, QString error, int attempt)
 {
+    // Hermit: a cancelled or superseded attempt must not close the dialog of a newer one or
+    // show its error (the aborted request, or the host's "Superseded")
+    if (attempt == 0 || attempt != m_PairingAttempt) {
+        qInfo() << "Ignoring the result of superseded pairing attempt" << attempt << ":" << error;
+        return;
+    }
+    m_PairingAttempt = 0;
+
     emit pairingCompleted(error.isEmpty() ? QVariant() : error);
 }
 

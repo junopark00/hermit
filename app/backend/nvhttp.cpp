@@ -50,6 +50,11 @@ void NvHTTP::setServerCert(QSslCertificate serverCert)
     m_ServerCert = serverCert;
 }
 
+void NvHTTP::setCancelCheck(std::function<bool()> cancelled)
+{
+    m_CancelCheck = std::move(cancelled);
+}
+
 void NvHTTP::setAddress(NvAddress address)
 {
     Q_ASSERT(!address.isNull());
@@ -600,6 +605,11 @@ NvHTTP::openConnection(QUrl baseUrl,
         request.setHeader(QNetworkRequest::ContentTypeHeader, "text/plain; charset=utf-8");
     }
 
+    // Hermit: an abandoned request (a superseded pairing attempt) is not sent at all
+    if (m_CancelCheck && m_CancelCheck()) {
+        throw QtNetworkReplyException(QNetworkReply::OperationCanceledError, "Request cancelled");
+    }
+
     auto sslErrorsConnection = connect(m_Nam, &QNetworkAccessManager::sslErrors, this, &NvHTTP::handleSslErrors);
     QNetworkReply* reply = (postBody != nullptr) ? m_Nam->post(request, *postBody) : m_Nam->get(request);
 
@@ -610,6 +620,17 @@ NvHTTP::openConnection(QUrl baseUrl,
     if (timeoutMs) {
         QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
     }
+    QTimer cancelPoll;
+    bool cancelled = false;
+    if (m_CancelCheck) {
+        connect(&cancelPoll, &QTimer::timeout, &loop, [this, &loop, &cancelled] {
+            if (m_CancelCheck()) {
+                cancelled = true;
+                loop.quit();
+            }
+        });
+        cancelPoll.start(100);
+    }
     if (logLevel >= NvLogLevel::NVLL_VERBOSE) {
         qInfo() << "Executing request:" << url.toString();
     }
@@ -619,9 +640,12 @@ NvHTTP::openConnection(QUrl baseUrl,
     if (!reply->isFinished())
     {
         if (logLevel >= NvLogLevel::NVLL_ERROR) {
-            qWarning() << "Aborting timed out request for" << url.toString();
+            qWarning() << (cancelled ? "Aborting cancelled request for" : "Aborting timed out request for") << url.toString();
         }
         reply->abort();
+    }
+    else {
+        cancelled = false;
     }
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 3, 0)
@@ -641,6 +665,11 @@ NvHTTP::openConnection(QUrl baseUrl,
             // This will trigger falling back to HTTP for the serverinfo query
             // then pairing again to get the updated certificate.
             HostHttpResponseException exception(401, "Server certificate mismatch");
+            delete reply;
+            throw exception;
+        }
+        else if (reply->error() == QNetworkReply::OperationCanceledError && cancelled) {
+            QtNetworkReplyException exception(QNetworkReply::OperationCanceledError, "Request cancelled");
             delete reply;
             throw exception;
         }

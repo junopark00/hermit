@@ -230,7 +230,14 @@ public:
 
     QString generatePinString();
 
-    void pairHost(NvComputer* computer, QString pin);
+    // Hermit: returns the attempt's id (never 0), which pairingCompleted carries. Starting
+    // another attempt or cancelPairing() supersedes it: its pending request is aborted, and its
+    // pairingCompleted (an error, or success if it got that far) is for the caller to ignore.
+    int pairHost(NvComputer* computer, QString pin);
+
+    void cancelPairing(int attempt);
+
+    bool isCurrentPairingAttempt(int attempt) const;
 
     void quitRunningApp(NvComputer* computer);
 
@@ -246,7 +253,7 @@ public:
 signals:
     void computerStateChanged(NvComputer* computer);
 
-    void pairingCompleted(NvComputer* computer, QString error);
+    void pairingCompleted(NvComputer* computer, QString error, int attempt);
 
     void computerAddCompleted(QVariant success);
 
@@ -281,4 +288,6 @@ private:
     QMutex m_DelayedFlushMutex; // Lock ordering: Must never be acquired while holding NvComputer lock
     QWaitCondition m_DelayedFlushCondition;
     bool m_NeedsDelayedFlush;
+    QAtomicInt m_PairingAttempt; // Hermit: the current pairing attempt, 0 if none
+    int m_LastPairingAttempt = 0; // Hermit: main thread only
 };

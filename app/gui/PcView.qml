@@ -308,7 +308,9 @@ CenteredGridView {
             notice = ""
         }
         onRejected: {
-            // FIXME: We should interrupt pairing here
+            // Hermit: Cancel or Escape abandons the attempt: its request is aborted and its
+            // result ignored, so it can't close the dialog of a newer attempt
+            computerModel.cancelPairing()
         }
     }
 

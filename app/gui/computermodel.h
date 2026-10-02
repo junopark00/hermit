@@ -36,6 +36,10 @@ public:
 
     Q_INVOKABLE void pairComputer(int computerIndex, QString pin);
 
+    // Hermit: abandons the attempt pairComputer() started (the PIN dialog was closed): its
+    // pending request is aborted and pairingCompleted is not emitted for it
+    Q_INVOKABLE void cancelPairing();
+
     // Hermit: opens the host's web UI pairing page (Shell: https://<address>:<web UI port>/pin) in
     // the default browser with the PIN and this PC's name in the URL fragment, which the browser
     // keeps to itself. The PC is named by its uuid (computerUuid()) like the power actions.
@@ -65,11 +69,12 @@ signals:
 private slots:
     void handleComputerStateChanged(NvComputer* computer);
 
-    void handlePairingCompleted(NvComputer* computer, QString error);
+    void handlePairingCompleted(NvComputer* computer, QString error, int attempt);
 
 private:
     NvComputer* findComputer(const QString& uuid) const;
 
     QVector<NvComputer*> m_Computers;
     ComputerManager* m_ComputerManager;
+    int m_PairingAttempt = 0; // Hermit: the attempt pairComputer() started, 0 if none
 };
