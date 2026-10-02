@@ -1015,9 +1015,9 @@ inline void waitHandlingMessages(DWORD ms)
     }
 }
 
-// OleSetClipboard (nullptr empties the clipboard), tried again for a moment while another program
-// holds the clipboard. stillWanted, if given, is asked before every attempt (the wait between them
-// handles messages, so a newer command can arrive meanwhile); E_ABORT once it says no.
+// OleSetClipboard, tried again for a moment while another program holds the clipboard. stillWanted,
+// if given, is asked before every attempt (the wait between them handles messages, so a newer
+// command can arrive meanwhile); E_ABORT once it says no.
 inline HRESULT setClipboardWithRetry(IDataObject* object, const std::function<bool()>& stillWanted = {})
 {
     HRESULT result = E_FAIL;
@@ -1032,6 +1032,25 @@ inline HRESULT setClipboardWithRetry(IDataObject* object, const std::function<bo
         waitHandlingMessages(15);
     }
     return result;
+}
+
+// Empties the clipboard only while stillOurs() says it holds our content, asked with the
+// clipboard open so no other program (nor the main thread writing newer host content) can change it
+// in between. OleSetClipboard(nullptr) would empty it whoever owns it. Tried again for a moment
+// while another program holds the clipboard; false if it could not be opened. Emptying sends
+// WM_DESTROYCLIPBOARD to OLE's clipboard window on this thread, which releases our data object.
+inline bool emptyClipboardIfOurs(const std::function<bool()>& stillOurs)
+{
+    for (int attempt = 0; attempt < 20; attempt++) {
+        if (OpenClipboard(nullptr)) {
+            const bool ours = stillOurs();
+            const bool emptied = ours && EmptyClipboard();
+            CloseClipboard();
+            return !ours || emptied;
+        }
+        waitHandlingMessages(15);
+    }
+    return false;
 }
 
 // The data object on the clipboard: file descriptors, file contents by index, "copy" as the
@@ -1456,11 +1475,11 @@ private:
             // Superseded between the last check and the set: the main thread may already have
             // written the newer content, which this list would now cover. Handled like the Release
             // that is on its way, right now: emptied while the clipboard still holds this list.
+            // Emptied only while this list is still the clipboard content, asked with the
+            // clipboard open on every attempt: newer content written meanwhile stays.
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                         "Host files superseded as they went on the clipboard; removed again");
-            if (OleIsCurrentClipboard(object) == S_OK) {
-                setClipboardWithRetry(nullptr);
-            }
+            emptyClipboardIfOurs([object]() { return OleIsCurrentClipboard(object) == S_OK; });
             releaseCurrent();
             return;
         }
@@ -1493,14 +1512,15 @@ private:
 
     // End of the stream: empties the clipboard if any list we put there is still on it (their
     // downloads stop with the stream), then drops our reference. Emptied rather than flushed:
-    // OleFlushClipboard would download every file.
+    // OleFlushClipboard would download every file. Whether one is still there is asked again with
+    // the clipboard open, so content another program wrote meanwhile is not emptied.
     void finish(bool oleReady)
     {
         if (oleReady && m_Published->anyOnClipboard()) {
-            const HRESULT result = setClipboardWithRetry(nullptr);
-            if (FAILED(result)) {
+            std::shared_ptr<PublishedObjects> published = m_Published;
+            if (!emptyClipboardIfOurs([published]() { return published->anyOnClipboard(); })) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "Host files could not be removed from the clipboard (0x%08lx)", (unsigned long)result);
+                            "Host files could not be removed from the clipboard (it stayed busy)");
             }
         }
         releaseCurrent();
