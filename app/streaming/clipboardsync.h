@@ -40,6 +40,9 @@ struct ClipboardTransferControl
     // the cancel shortcut increments to stop those downloads.
     std::atomic<int> streams {0};
     std::atomic<int> streamCancel {0};
+    // Hermit: focus changes of the stream window (lost or gained) so far, so a pull tried again
+    // shortly after a focus loss (ClipboardPullRetries) stops once the focus changed.
+    std::atomic<uint64_t> focusChanges {0};
 };
 
 // Clipboard content fetched from the host, handed to the SDL main thread in an SDL user event.
@@ -112,8 +115,11 @@ public:
     // Brings the host clipboard to the client if it changed since we last saw or set it.
     // Hermit: localChanges: the local changes observed when this pull was posted
     // (ClipboardChangeOrder); host content waiting to be fetched again is dropped when a local
-    // change came after it.
-    void pull(quint64 localChanges = 0);
+    // change came after it. focusLoss: the focus changes of the stream window counted when it
+    // was posted (ClipboardTransferControl::focusChanges): a pull that finds the host's clipboard
+    // busy, or empty under a new sequence number, is tried again shortly while that count stands
+    // (ClipboardPullRetries).
+    void pull(quint64 localChanges = 0, quint64 focusLoss = 0);
 
     // Host content key (ClipboardHostContent::hostKey) could not be put on the local clipboard:
     // a later pull fetches it again, unless newer host content was seen or sent meanwhile, or a
@@ -144,6 +150,10 @@ private:
     // A Shell host, asked in a way that needs no clipboard permission (when reading its clipboard
     // is refused, the clipboard itself cannot tell).
     bool hostIsShell();
+    // One pull (pull without the retries): what it found, for ClipboardPullRetries. A busy host
+    // leaves the content to be fetched again as before; nothing under a new sequence number is
+    // recorded as seen, and pull then has it looked at again when it is tried again.
+    ClipboardPullRetries::Pull pullOnce(quint64 localChanges);
     // Host files (Windows): a file list for virtual files when the host can stream files, else
     // the whole archive.
     void pullFileList(quint64 localChanges);
@@ -205,6 +215,7 @@ private:
     bool m_HostFilesErrorKeyValid;  // Hermit: host files of m_HostFilesErrorKey failed once with a host error
     quint64 m_HostFilesErrorKey;
     ClipboardHostNetworkErrors m_HostNetworkErrors;  // Hermit: host content that had a network error, by transfer
+    ClipboardPullRetries m_PullRetries;  // Hermit: pulls tried again shortly after a focus loss (busy host, empty under a new number)
     bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error
     quint32 m_LocalNetworkNoticeSeq;
     bool m_UploadSentAll;  // Hermit: the last upload sent every byte (transfer)

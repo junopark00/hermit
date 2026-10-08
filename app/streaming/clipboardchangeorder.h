@@ -368,6 +368,55 @@ private:
     Seen m_Seen[3];
 };
 
+// Hermit: a pull right after the user leaves the stream window may come a moment too early: the
+// host's clipboard is busy (503: another program holds it, such as a messenger or a clipboard
+// manager reading every change), or the program copying there has emptied the clipboard and not
+// written its formats yet (type=none under a new sequence number). Both pass within a moment,
+// but the next pull would only come on the next focus loss, so the pull is tried again shortly
+// (k_RetryDelayMs), a few times (k_MaxRetries) while the window stays unfocused; after that, as
+// before, on the next focus loss. Only the pull is repeated: a local copy made meanwhile still
+// wins (ClipboardChangeOrder), and a pull that delivered, found nothing new or failed in another
+// way is not repeated, so its once-per-content notices and its retry on the next focus loss stay
+// as they are. The clipboard worker keeps one of these (its jobs run one at a time).
+class ClipboardPullRetries
+{
+public:
+    enum class Pull {
+        Done,     // delivered, nothing new, or failed in a way handled on the next focus loss
+        Busy,     // 503 on a request of the pull (info, text, image, file list or archive)
+        NoneNew,  // the host holds nothing, under a sequence number not seen before (or seen with nothing)
+    };
+
+    static constexpr int k_RetryDelayMs = 300;
+    static constexpr int k_MaxRetries = 4;  // per focus loss: about 1.2 s in all
+
+    // The pull posted for focus loss focusLoss (the count of focus changes of the stream window
+    // when it was posted; a retry keeps its pull's) ended with result. True: pull again after
+    // k_RetryDelayMs, unless the window's focus changed by then (the count moved on: the user is
+    // back in the stream, or a later focus loss has a pull of its own).
+    bool again(Pull result, uint64_t focusLoss)
+    {
+        if (!m_FocusLossValid || focusLoss != m_FocusLoss) {
+            m_FocusLossValid = true;
+            m_FocusLoss = focusLoss;
+            m_Retries = 0;
+        }
+        if (result == Pull::Done || m_Retries >= k_MaxRetries) {
+            return false;
+        }
+        m_Retries++;
+        return true;
+    }
+
+    // Retries made for the focus loss seen last
+    int retries() const { return m_Retries; }
+
+private:
+    bool m_FocusLossValid = false;
+    uint64_t m_FocusLoss = 0;
+    int m_Retries = 0;
+};
+
 // Hermit: the main thread's side: which local clipboard content is a local change, and the count
 // of local changes observed (the order ClipboardChangeOrder puts changes in).
 class ClipboardLocalChanges

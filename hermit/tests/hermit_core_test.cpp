@@ -812,6 +812,65 @@ static void testClipboardChangeInputs()
     }
 }
 
+// Pulls tried again shortly after a focus loss (round 12, 1): a busy host, or nothing on the host
+// clipboard under a new sequence number (the program copying there has not written its formats
+// yet), is pulled again up to k_MaxRetries times within the same focus loss, about a second in
+// all, and then left to the next focus loss as before. A pull that delivered, found nothing new or
+// failed in a way with its own retry is not repeated, so its notices stay once per content.
+static void testClipboardPullRetries()
+{
+    using P = ClipboardPullRetries::Pull;
+    const int retries = ClipboardPullRetries::k_MaxRetries;
+    const int delay = ClipboardPullRetries::k_RetryDelayMs;
+    CHECK(retries * delay >= 1000 && retries * delay <= 2000);  // about a second after leaving the window
+    CHECK(delay >= 200);  // the program copying on the host gets a moment to write its formats
+
+    // A busy host: tried again k_MaxRetries times for this focus loss, then not until the next one,
+    // which starts over
+    {
+        ClipboardPullRetries r;
+        for (int i = 0; i < retries; i++) {
+            CHECK(r.again(P::Busy, 1));
+        }
+        CHECK(r.retries() == retries);
+        CHECK(!r.again(P::Busy, 1));
+        CHECK(!r.again(P::NoneNew, 1));
+        CHECK(r.again(P::Busy, 2));
+        CHECK(r.retries() == 1);
+    }
+    // Nothing under a new number: looked at again the same number of times; busy and empty share
+    // the count of one focus loss
+    {
+        ClipboardPullRetries r;
+        CHECK(r.again(P::NoneNew, 1));
+        CHECK(r.again(P::Busy, 1));
+        CHECK(r.again(P::NoneNew, 1));
+        CHECK(r.again(P::NoneNew, 1));
+        CHECK(r.retries() == retries);
+        CHECK(!r.again(P::NoneNew, 1));
+    }
+    // Delivered, nothing new, or failed in a way handled on the next focus loss: never repeated,
+    // whatever came before; the count of this focus loss is kept
+    {
+        ClipboardPullRetries r;
+        CHECK(!r.again(P::Done, 1));
+        CHECK(r.retries() == 0);
+        CHECK(r.again(P::Busy, 1));
+        CHECK(!r.again(P::Done, 1));
+        CHECK(r.retries() == 1);
+        CHECK(r.again(P::Busy, 1));
+        CHECK(r.retries() == 2);
+    }
+    // The first focus loss counted is a focus loss like any other, whatever its count
+    {
+        ClipboardPullRetries r;
+        CHECK(r.again(P::Busy, 0));
+        CHECK(r.retries() == 1);
+        CHECK(r.again(P::Busy, 7));
+        CHECK(r.retries() == 1);
+    }
+}
+
 static QString sizesText(const QList<QSize>& sizes)
 {
     QStringList parts;
@@ -910,6 +969,7 @@ int main(int argc, char** argv)
     testAutoBitrate();
     testClipboardChangeOrder();
     testClipboardChangeInputs();
+    testClipboardPullRetries();
     testResolutionPresets();
     testProfileProperties(repo);
 
