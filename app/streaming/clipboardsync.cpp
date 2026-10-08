@@ -1711,6 +1711,9 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
                 if (m_HostRetries.failures(kind) == ClipboardHostRetries::maxRetries(kind) + 1) {
                     SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                                 "Host clipboard text failed again; not fetched again until the host clipboard changes");
+                    // The host's text is not the one hashed any more: a local copy equal to that
+                    // old text is not an echo
+                    m_HostTextHashValid = false;
                 }
             }
             else {
