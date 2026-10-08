@@ -253,7 +253,9 @@ to sync the clipboard in both directions.
     (copy again to send yours); what you copied after it is sent.
 - When another program on the host holds its clipboard at that moment, the host answers that it is
   busy (HTTP 503). Nothing is shown; the content moves the next time you leave or return to the stream
-  window. Files dropped on the stream window are not sent again by themselves: the notice says the
+  window. Host content is also tried again for about a second after you leave the stream window (four
+  times, 300 ms apart) while the host clipboard is busy or, right after a copy there, still empty.
+  Files dropped on the stream window are not sent again by themselves: the notice says the
   host clipboard is busy, and you drop them again. When the host refuses content (HTTP 422), it names
   the reason (names it can't create, only links, an image it can't convert), and the notice says
   which.
