@@ -267,7 +267,9 @@ to sync the clipboard in both directions.
   then every second as usual. Leaving the stream window starts such a quick run as well.
   Likewise, a copy made on this PC while another program still holds the clipboard (a screenshot
   with Win+Shift+S, for example) is read again for about a second before it waits for the next
-  focus change.
+  focus change. Note that global screenshot hotkeys (PrtSc tools, Win+Shift+S) act on the PC whose
+  keyboard you press, so a screenshot taken while streaming lands on this PC's clipboard and is sent
+  to the host, not the other way round.
   Files dropped on the stream window are not sent again by themselves: the notice says the
   host clipboard is busy, and you drop them again. When the host refuses content (HTTP 422), it names
   the reason (names it can't create, only links, an image it can't convert), and the notice says
@@ -316,8 +318,9 @@ to sync the clipboard in both directions.
 - Content that does not move also gets a short notice: an image over 32 MB or 8192×8192 pixels or in
   a format that can't be converted, text over 1 MB, host files over the limit, host files with names
   the host can't copy ("unsupported or duplicate names") or only links ("only links or nothing to
-  copy"), a whole drive copied locally, host text the host could not read (HTTP 500; after a network
-  error or timeout, text is fetched again silently on a later check), a host image that did not
+  copy"), a whole drive copied locally, host text the host could not read (HTTP 500) or refused as
+  too large (HTTP 413; after a network error or timeout, text is fetched again silently on a later
+  check), a host image that did not
   arrive because of a network error or timeout (said once for that image, which is fetched once
   more on a later check, and after a second failure not until the host clipboard changes), a local
   image or copied files that a network error stopped (said once; sent once more as described

@@ -1601,7 +1601,13 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
     if (type == "text") {
         if (!request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
             handleFailure("fetch", error, Direction::Pull);
-            if (m_LastHttpStatus >= 500 && !hostClipboardBusy()) {
+            if (m_LastHttpStatus == 413) {
+                // The host refused to send its text as too large: said once, and this content is
+                // not fetched again on every poll.
+                m_HostTextHashValid = false;
+                notify(HostTextTooLarge, true);
+            }
+            else if (m_LastHttpStatus >= 500 && !hostClipboardBusy()) {
                 // The host could not read its text (500, for example): said once, and this
                 // content is not fetched again on every poll. Busy (503), no active stream (403)
                 // and network errors without a reply (a timeout) are retried.
