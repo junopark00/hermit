@@ -871,6 +871,78 @@ static void testClipboardPullRetries()
     }
 }
 
+// A local copy that cannot be read yet because the program that copied still holds the clipboard
+// (a screenshot right after Win+Shift+S) is read again shortly, a few times, instead of waiting
+// for the next focus change
+static void testClipboardPushRetries()
+{
+    using R = ClipboardPushRetries::Read;
+    const int retries = ClipboardPushRetries::k_MaxRetries;
+    const int delay = ClipboardPushRetries::k_RetryDelayMs;
+    CHECK(retries * delay >= 1000 && retries * delay <= 2000);  // about a second after the copy
+    CHECK(delay >= 200);  // the program that copied gets a moment to let go of the clipboard
+    CHECK(delay == ClipboardPullRetries::k_RetryDelayMs && retries == ClipboardPullRetries::k_MaxRetries);
+
+    // A busy clipboard: read again k_MaxRetries times for this content (its sequence number),
+    // then not until the next trigger, which reads it once more and gives up again
+    {
+        ClipboardPushRetries r;
+        for (int i = 0; i < retries; i++) {
+            CHECK(r.again(R::Busy, 10));
+            CHECK(r.retries() == i + 1);
+        }
+        CHECK(!r.again(R::Busy, 10));
+        CHECK(!r.again(R::Busy, 10));
+        CHECK(r.retries() == retries);
+    }
+    // A newer copy (a new sequence number) starts over, and the older content's retries are no
+    // longer about what the clipboard holds
+    {
+        ClipboardPushRetries r;
+        CHECK(r.again(R::Busy, 10));
+        CHECK(r.again(R::Busy, 10));
+        CHECK(r.again(R::Busy, 11));
+        CHECK(r.retries() == 1);
+        CHECK(ClipboardPushRetries::applies(11, 11));
+        CHECK(!ClipboardPushRetries::applies(10, 11));
+        // Back to an earlier number after a wrap or a reset counts as new too
+        CHECK(r.again(R::Busy, 10));
+        CHECK(r.retries() == 1);
+    }
+    // Sent, nothing to send, or left to the next trigger for another reason: never repeated,
+    // whatever came before; the count of this content is kept
+    {
+        ClipboardPushRetries r;
+        CHECK(!r.again(R::Done, 10));
+        CHECK(r.retries() == 0);
+        CHECK(r.again(R::Busy, 10));
+        CHECK(!r.again(R::Done, 10));
+        CHECK(r.retries() == 1);
+        CHECK(r.again(R::Busy, 10));
+        CHECK(r.retries() == 2);
+    }
+    // Sequence number 0 (the first content seen) is content like any other
+    {
+        ClipboardPushRetries r;
+        CHECK(r.again(R::Busy, 0));
+        CHECK(r.retries() == 1);
+        CHECK(r.again(R::Busy, 0));
+        CHECK(r.retries() == 2);
+    }
+    // The two sides count on their own: the host's busy clipboard does not use up the local
+    // retries
+    {
+        ClipboardPullRetries pull;
+        ClipboardPushRetries push;
+        for (int i = 0; i < retries; i++) {
+            CHECK(pull.again(ClipboardPullRetries::Pull::Busy, 1));
+        }
+        CHECK(!pull.again(ClipboardPullRetries::Pull::Busy, 1));
+        CHECK(push.again(R::Busy, 1));
+        CHECK(push.retries() == 1);
+    }
+}
+
 static QString sizesText(const QList<QSize>& sizes)
 {
     QStringList parts;
@@ -970,6 +1042,7 @@ int main(int argc, char** argv)
     testClipboardChangeOrder();
     testClipboardChangeInputs();
     testClipboardPullRetries();
+    testClipboardPushRetries();
     testResolutionPresets();
     testProfileProperties(repo);
 

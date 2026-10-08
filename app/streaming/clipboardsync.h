@@ -49,8 +49,10 @@ struct ClipboardTransferControl
 struct ClipboardHostContent
 {
     // RemoteFilesSuperseded: a superseded host file list went on the clipboard over host content
-    // written just before it and was emptied again, taking that content with it
-    enum Kind { Text, Image, Files, RemoteFiles, RemoteFilesReady, RemoteFilesFailed, RemoteFilesSuperseded, LocalNotSent };
+    // written just before it and was emptied again, taking that content with it. Hermit:
+    // LocalRetry: the local clipboard could not be read a moment ago (another program held it):
+    // read again now, for the content at localSeq, on trigger localTrigger (ClipboardPushRetries)
+    enum Kind { Text, Image, Files, RemoteFiles, RemoteFilesReady, RemoteFilesFailed, RemoteFilesSuperseded, LocalNotSent, LocalRetry };
 
     int generation = 0;
     Kind kind = Text;
@@ -68,8 +70,9 @@ struct ClipboardHostContent
     ClipboardArchive::RemoteFileList remoteFiles;  // RemoteFiles: host files to offer as virtual files
     // RemoteFilesReady: local clipboard sequence number once they were offered; LocalNotSent: that
     // of the local content the host could not take yet (its clipboard was busy, or Hermit: a
-    // network error, or sync could not be set up yet)
+    // network error, or sync could not be set up yet); LocalRetry: that of the content to read again
     quint32 localSeq = 0;
+    int localTrigger = 0;  // LocalRetry: the ClipboardSync::Trigger of the push to repeat
     int itemCount = 0;     // RemoteFilesReady: items the user copied on the host
     quint64 listGeneration = 0;  // RemoteFilesReady/Failed: which publish of the virtual files it answers
 };
@@ -125,6 +128,13 @@ public:
     // a later pull fetches it again, unless newer host content was seen or sent meanwhile, or a
     // local change came after it.
     void forgetHostContent(quint64 key);
+
+    // Hermit: the main thread could not read the local clipboard content at localSeq (another
+    // program held it): hands it a LocalRetry event after ClipboardPushRetries::k_RetryDelayMs
+    // so it reads again, on trigger (a ClipboardSync::Trigger). Timed here because the main
+    // thread runs no Qt timers while it streams; called with a queued invocation, not as a job,
+    // so a transfer in progress does not hold it up.
+    void retryLocalPush(int trigger, quint32 localSeq);
 
 private:
     enum class Mode { Unknown, Extended, Legacy, Disabled };
@@ -243,7 +253,9 @@ private:
 //
 // Local -> host: text and images when the stream starts, when the stream window regains focus
 // and whenever the local clipboard changes; files when the stream starts and when the stream
-// window regains focus (not on every copy, since they can be large).
+// window regains focus (not on every copy, since they can be large). Hermit: a copy that cannot
+// be read yet because the program that copied still holds the clipboard is read again shortly,
+// a few times (ClipboardPushRetries).
 // Host -> local: when the stream window loses focus, so "copy on the host, switch to a local
 // app, paste" works like RDP. Files from a host that can stream them are offered as virtual files
 // and only downloaded while they are pasted (clipboardvirtualfiles.h).
@@ -296,6 +308,13 @@ private:
     // Hermit (Windows): what the local clipboard holds now, without sending anything; seq: its
     // sequence number, read before the content
     ClipboardLocalChanges::Content localClipboard(quint32& seq) const;
+    // Hermit: pushLocalToHost without what a trigger does once (a focus gain's bookkeeping): also
+    // a retry's push (onHostContent, LocalRetry)
+    void pushLocal(Trigger trigger);
+    // Hermit: the local clipboard content at localSeq (what: text, image or files, for the log)
+    // could not be read because another program holds the clipboard: read again shortly while
+    // the clipboard still holds it (ClipboardPushRetries), through the worker's timer
+    void localClipboardBusy(Trigger trigger, quint32 localSeq, const char* what);
     void post(const std::function<void()>& job);
     void releaseHostFileList();
 
@@ -321,6 +340,8 @@ private:
     // Hermit: local changes observed so far (ClipboardChangeOrder), and the local clipboard
     // sequence number of the last one
     ClipboardLocalChanges m_Local;
+    // Hermit: pushes tried again shortly while another program holds the local clipboard
+    ClipboardPushRetries m_PushRetries;
 
     // Hermit: the host content last written to the local clipboard (its ClipboardHostContent
     // hostKey), forgotten again if a superseded host file list removed it

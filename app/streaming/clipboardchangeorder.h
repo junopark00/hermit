@@ -368,6 +368,45 @@ private:
     Seen m_Seen[3];
 };
 
+// Hermit: a clipboard job that came a moment too early (another program still holds a clipboard,
+// or has not written its formats yet) is tried again shortly (k_RetryDelayMs), a few times
+// (k_MaxRetries) for the same occasion; after that, as before, on the next trigger. The occasion
+// is a key (a focus loss, a local clipboard sequence number): a new key starts over, and a retry
+// scheduled for a key that moved on meanwhile is dropped (the new occasion has a job of its own).
+// Only the job is repeated, so what it decides (which change wins, once-per-content notices) stays
+// as it is. ClipboardPullRetries (the host side) and ClipboardPushRetries (the local side) name the
+// results that count as such a passing condition.
+class ClipboardShortRetries
+{
+public:
+    static constexpr int k_RetryDelayMs = 300;
+    static constexpr int k_MaxRetries = 4;  // per key: about 1.2 s in all
+
+    // The job for key ended with a passing condition (passing) or not. True: run it again after
+    // k_RetryDelayMs (unless the key moved on by then).
+    bool again(bool passing, uint64_t key)
+    {
+        if (!m_KeyValid || key != m_Key) {
+            m_KeyValid = true;
+            m_Key = key;
+            m_Retries = 0;
+        }
+        if (!passing || m_Retries >= k_MaxRetries) {
+            return false;
+        }
+        m_Retries++;
+        return true;
+    }
+
+    // Retries made for the key seen last
+    int retries() const { return m_Retries; }
+
+private:
+    bool m_KeyValid = false;
+    uint64_t m_Key = 0;
+    int m_Retries = 0;
+};
+
 // Hermit: a pull right after the user leaves the stream window may come a moment too early: the
 // host's clipboard is busy (503: another program holds it, such as a messenger or a clipboard
 // manager reading every change), or the program copying there has emptied the clipboard and not
@@ -387,8 +426,8 @@ public:
         NoneNew,  // the host holds nothing, under a sequence number not seen before (or seen with nothing)
     };
 
-    static constexpr int k_RetryDelayMs = 300;
-    static constexpr int k_MaxRetries = 4;  // per focus loss: about 1.2 s in all
+    static constexpr int k_RetryDelayMs = ClipboardShortRetries::k_RetryDelayMs;
+    static constexpr int k_MaxRetries = ClipboardShortRetries::k_MaxRetries;  // per focus loss
 
     // The pull posted for focus loss focusLoss (the count of focus changes of the stream window
     // when it was posted; a retry keeps its pull's) ended with result. True: pull again after
@@ -396,25 +435,57 @@ public:
     // back in the stream, or a later focus loss has a pull of its own).
     bool again(Pull result, uint64_t focusLoss)
     {
-        if (!m_FocusLossValid || focusLoss != m_FocusLoss) {
-            m_FocusLossValid = true;
-            m_FocusLoss = focusLoss;
-            m_Retries = 0;
-        }
-        if (result == Pull::Done || m_Retries >= k_MaxRetries) {
-            return false;
-        }
-        m_Retries++;
-        return true;
+        return m_Retries.again(result != Pull::Done, focusLoss);
     }
 
     // Retries made for the focus loss seen last
-    int retries() const { return m_Retries; }
+    int retries() const { return m_Retries.retries(); }
 
 private:
-    bool m_FocusLossValid = false;
-    uint64_t m_FocusLoss = 0;
-    int m_Retries = 0;
+    ClipboardShortRetries m_Retries;
+};
+
+// Hermit: a push right after a local copy may come a moment too early as well: the program that
+// copied still holds the local clipboard (the snipping tool after Win+Shift+S holds it for a
+// while), so the content cannot be read: SDL's text read gives nothing while text is listed (it
+// opens the clipboard once, without waiting), the image read cannot open the clipboard, the file
+// read gives no files while files are listed. Without this, the content waited for the next focus
+// change, and a paste in the stream meanwhile gave the host's older content. So the push is tried
+// again shortly, a few times, while the local clipboard still holds the same content (its sequence
+// number: a newer copy has a trigger, and retries, of its own); after the last retry, as before,
+// on the next trigger. Only the read is repeated: a push that sent, found content it cannot send
+// or found the clipboard handled is not repeated, so the content is sent once and its notices
+// shown once. The main thread keeps one of these (every push runs there).
+class ClipboardPushRetries
+{
+public:
+    enum class Read {
+        Done,  // sent, nothing to send, or not read for a reason the next trigger handles
+        Busy,  // the local clipboard could not be read: another program holds it
+    };
+
+    static constexpr int k_RetryDelayMs = ClipboardShortRetries::k_RetryDelayMs;
+    static constexpr int k_MaxRetries = ClipboardShortRetries::k_MaxRetries;  // per local sequence number
+
+    // The push for the local clipboard content at sequence number seq ended with result. True:
+    // read it again after k_RetryDelayMs, unless the clipboard changed by then (applies).
+    bool again(Read result, uint32_t seq)
+    {
+        return m_Retries.again(result == Read::Busy, seq);
+    }
+
+    // Whether a retry scheduled for the content at seq is still about what the local clipboard
+    // holds when it fires (currentSeq): a copy made since has a trigger of its own.
+    static bool applies(uint32_t seq, uint32_t currentSeq)
+    {
+        return seq == currentSeq;
+    }
+
+    // Retries made for the sequence number seen last
+    int retries() const { return m_Retries.retries(); }
+
+private:
+    ClipboardShortRetries m_Retries;
 };
 
 // Hermit: the main thread's side: which local clipboard content is a local change, and the count

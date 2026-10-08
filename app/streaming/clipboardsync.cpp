@@ -1012,6 +1012,20 @@ void ClipboardSyncWorker::localNotSent(quint32 localSeq)
     deliver(content);
 }
 
+void ClipboardSyncWorker::retryLocalPush(int trigger, quint32 localSeq)
+{
+    // Fires on this thread (the worker lives here) and is dropped with the worker; nested event
+    // loops of a request in progress deliver it as well. The main thread reads the clipboard
+    // itself (deliver drops the event once sync stopped).
+    QTimer::singleShot(ClipboardPushRetries::k_RetryDelayMs, this, [this, trigger, localSeq]() {
+        auto* content = new ClipboardHostContent;
+        content->kind = ClipboardHostContent::LocalRetry;
+        content->localSeq = localSeq;
+        content->localTrigger = trigger;
+        deliver(content);
+    });
+}
+
 bool ClipboardSyncWorker::firstLocalNetworkError(quint32 localSeq)
 {
     if (m_LocalNetworkNoticeSeqValid && m_LocalNetworkNoticeSeq == localSeq) {
@@ -2159,13 +2173,42 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
     if (m_Stopped->load()) {
         return;
     }
-    ClipboardSyncWorker* worker = m_Worker;
-
     if (trigger == Trigger::FocusGained) {
         // Hermit: ends the short retries of the pull posted when the focus was lost
         m_Control->focusChanges.fetch_add(1);
         showNotice(m_Control->pendingNotice.exchange(NoNotice));
     }
+    pushLocal(trigger);
+}
+
+void ClipboardSync::localClipboardBusy(Trigger trigger, quint32 localSeq, const char* what)
+{
+    // Hermit: the program that copied still holds the clipboard (the snipping tool does for a
+    // while after Win+Shift+S). Read again shortly while the clipboard still holds this content,
+    // a few times; after the last retry, as before, on the next trigger. The content stays
+    // unhandled meanwhile, so a trigger that comes first reads it, and the retry then finds it
+    // handled. The worker times the retry (the main thread runs no Qt timers while it streams)
+    // and hands it back as a LocalRetry event (onHostContent).
+    if (!m_PushRetries.again(ClipboardPushRetries::Read::Busy, localSeq)) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Local clipboard %s not read: the clipboard is busy; tried again on the next trigger", what);
+        return;
+    }
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Local clipboard %s read again in %d ms (%d of %d): the clipboard is busy",
+                what, ClipboardPushRetries::k_RetryDelayMs, m_PushRetries.retries(), ClipboardPushRetries::k_MaxRetries);
+    ClipboardSyncWorker* worker = m_Worker;
+    const int kind = static_cast<int>(trigger);
+    QMetaObject::invokeMethod(worker, [worker, kind, localSeq]() { worker->retryLocalPush(kind, localSeq); },
+                              Qt::QueuedConnection);
+}
+
+void ClipboardSync::pushLocal(Trigger trigger)
+{
+    if (m_Stopped->load()) {
+        return;
+    }
+    ClipboardSyncWorker* worker = m_Worker;
 
 #ifdef Q_OS_WIN32
     // Each clipboard write bumps the sequence number, so this skips content we already sent
@@ -2202,17 +2245,22 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         char* text = SDL_GetClipboardText();
         QByteArray utf8(text != nullptr ? text : "");
         SDL_free(text);
-        markHandled();
-        if (!utf8.isEmpty()) {
-            post([worker, utf8, localSeq, localOrder]() { worker->pushText(utf8, localSeq, localOrder); });
+        if (utf8.isEmpty()) {
+            // Hermit: text is listed, but SDL opens the clipboard once without waiting and gives
+            // nothing while another program holds it: read again shortly (left unhandled)
+            localClipboardBusy(trigger, localSeq, "text");
+            return;
         }
+        markHandled();
+        post([worker, utf8, localSeq, localOrder]() { worker->pushText(utf8, localSeq, localOrder); });
         return;
     }
     if (localHasImage()) {
         QByteArray data;
         bool isDib = false;
         if (!readLocalImage(owner, data, isDib)) {
-            return;  // clipboard busy: try again on the next trigger
+            localClipboardBusy(trigger, localSeq, "image");  // Hermit: read again shortly (left unhandled)
+            return;
         }
         markHandled();
         if (data.isEmpty()) {
@@ -2234,7 +2282,10 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         }
         const QStringList paths = readLocalFiles(owner);
         if (paths.isEmpty()) {
-            return;  // clipboard busy or empty list: leave unhandled so the next trigger retries
+            // Clipboard busy or empty list: left unhandled so the next trigger retries; Hermit:
+            // and read again shortly while files are listed
+            localClipboardBusy(trigger, localSeq, "files");
+            return;
         }
         markHandled();
         post([worker, paths, localSeq, localOrder]() { worker->pushFiles(paths, false, localSeq, localOrder); });
@@ -2283,6 +2334,18 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         if (m_LocalSeqValid && m_LocalSeq == owned->localSeq) {
             m_LocalSeqValid = false;
         }
+        return;
+    }
+    if (owned->kind == ClipboardHostContent::LocalRetry) {
+#ifdef Q_OS_WIN32
+        // Hermit: the local clipboard could not be read a moment ago (another program held it):
+        // read again, unless it changed since (a copy made since has a trigger, and retries, of
+        // its own). A trigger that read it first has marked it handled, and the push then does
+        // nothing (ClipboardPushRetries).
+        if (ClipboardPushRetries::applies(owned->localSeq, GetClipboardSequenceNumber())) {
+            pushLocal(static_cast<Trigger>(owned->localTrigger));
+        }
+#endif
         return;
     }
     const bool hostContent = owned->kind == ClipboardHostContent::Text || owned->kind == ClipboardHostContent::Image ||
