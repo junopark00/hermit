@@ -186,20 +186,27 @@ to sync the clipboard in both directions.
 
 | Type | Hosts | Local to host | Host to local | Limit |
 |---|---|---|---|---|
-| Text | Shell, and hosts with the text clipboard extension | At stream start, when you return to the stream window, and immediately on copy | When you leave the stream window | 1 MB |
-| Images | Shell | At stream start, when you return to the stream window, and immediately on copy | When you leave the stream window | PNG, 32 MB, 8192×8192 |
-| Files and folders | Shell | At stream start and when you return to the stream window | When you leave the stream window (the list; each file downloads while you paste it) | To the host 256 MB, from the host 4 GB; 1,000 items |
+| Text | Shell, and hosts with the text clipboard extension | At stream start, when you return to the stream window, and immediately on copy | Within about a second of the copy on the host (every 2 seconds with text-only hosts) | 1 MB |
+| Images | Shell | At stream start, when you return to the stream window, and immediately on copy | Within about a second of the copy on the host | PNG, 32 MB, 8192×8192 |
+| Files and folders | Shell | At stream start and when you return to the stream window | Within about a second of the copy on the host (the list; each file downloads while you paste it) | To the host 256 MB, from the host 4 GB; 1,000 items |
 
+- **What you copy on the host arrives while you stream.** Hermit asks the host every second
+  whether its clipboard changed (a small request; with hosts that only have the text clipboard
+  extension, it fetches the text every 2 seconds) and brings a change over at once, whether or not
+  the stream window has the focus: text, images (up to the 32 MB limit) and the list of copied files
+  follow the same rule. You do not need to leave the stream window; leaving it checks right away
+  as well, so what you just copied on the host is there before you paste it locally. Image and file
+  transfers keep the speed limit described below.
 - When a clipboard holds both text and an image (for example, copied spreadsheet cells), the text is
   sent. The priority is text, then image, then files.
 - Files can be large, so they are not sent on every copy, only at stream start and when you return to
   the stream window. The host pastes the copy sent at that moment: after editing a file, copy it again
   and click the stream window once to send the new content.
-- **Pasting files copied on the host**: when you leave the stream window, Hermit fetches only the
-  list of copied files and folders (names, sizes, times) and puts it on the clipboard at once, like
-  Remote Desktop. When you paste in File Explorer, Explorer shows its own copy progress and each file
-  is downloaded from the host while Explorer copies it, so pasting starts right away and nothing is
-  downloaded unless you paste.
+- **Pasting files copied on the host**: when you copy files or folders on the host, Hermit fetches
+  only their list (names, sizes, times) and puts it on the clipboard at once, like Remote Desktop.
+  When you paste in File Explorer, Explorer shows its own copy progress and each file is downloaded
+  from the host while Explorer copies it, so pasting starts right away and nothing is downloaded
+  unless you paste.
   - The speed limit applies. Explorer's Cancel stops the download; Ctrl+Alt+Shift+T in the stream
     window does too, and Explorer then reports the file as cancelled.
   - Up to 4 GB and 1,000 items. Files can be pasted as often as you like while the stream runs; each
@@ -214,15 +221,15 @@ to sync the clipboard in both directions.
     same file (HTTP 503), for example one that just stopped, the paste asks again every 1 to 2 seconds
     for up to 5 minutes; these answers do not count as attempts.
   - The list itself may take up to 2 minutes (folders in OneDrive, for example). If it does not
-    arrive, or the network fails while it is fetched, it is fetched again the next time you leave
-    the stream window (unless you copied something locally since), with one notice for those files.
+    arrive, or the network fails while it is fetched, it is fetched again on a later check (unless
+    you copied something locally since), with one notice for those files.
     Files that come over as one archive (described below) are fetched once more after a network
     error or timeout, with a notice of their own also when their list failed before; when that
     fails too, they are not fetched again until the host clipboard changes. After an error on the host (HTTP 500, for example), host files are fetched once more;
     when that fails too, they are not fetched again until the host clipboard changes.
   - This needs a current Shell host. With older Shell versions, and for folders with paths over 259
-    characters, the files come over as one archive when you leave the stream window (256 MB limit) and
-    are pasted from a temporary folder, as described next.
+    characters, the files come over as one archive (256 MB limit) and are pasted from a temporary
+    folder, as described next.
 - Files received as an archive are unpacked to a temporary folder (`%TEMP%\HermitClipboard` on the
   client; Shell uses `%LOCALAPPDATA%\Temp\ShellClipboard` of the user) and placed on the clipboard as
   "copied", so they can be pasted in File Explorer. The last 5 transfers are kept; older ones are
@@ -238,23 +245,26 @@ to sync the clipboard in both directions.
   retried until something newer replaces it:
   - Something you copied locally that did not reach the host (busy host, network error) is sent
     again the next time you return to the stream window, unless the host's clipboard changed after
-    you copied it: then the host's content wins and comes over when you leave the stream window.
+    you copied it: then the host's content wins and comes over.
   - Host content that did not arrive (busy host, network error, or the local clipboard could not be
-    written) is fetched again the next time you leave the stream window, unless you copied something
-    locally after it: then your copy wins and is sent to the host. The same applies to host content
-    still on its way when you copy locally, also when Hermit has not handled that copy yet.
+    written) is fetched again on a later check, unless you copied something locally after it: then
+    your copy wins and is sent to the host. The same applies to host content still on its way when
+    you copy locally, also when Hermit has not handled that copy yet. A host change counts from the
+    check that found it: what you copy locally before that check loses to it, what you copy after
+    wins.
   - An empty local clipboard does not count as a copy, nor does a list of host files that Hermit is
     still putting on the clipboard. What another program copies meanwhile does (an e-mail
     attachment, for example).
-  - When sync could not be set up (the host could not be reached at stream start, for example) and
-    is set up later, Hermit cannot tell whether the host's clipboard changed in between, so the
-    host's content counts as a change made at the last attempt that failed: what you copied before
-    that attempt is not sent, and the host's content comes over when you leave the stream window
-    (copy again to send yours); what you copied after it is sent.
+  - When sync could not be set up (the host could not be reached at stream start, for example), it
+    is tried again every 2 seconds (and whenever you copy). Once it is set up, Hermit cannot tell
+    whether the host's clipboard changed in between, so the host's content counts as a change made
+    at the last attempt that failed: what you copied before that attempt is not sent, and the
+    host's content comes over (copy again to send yours); what you copied after it is sent.
 - When another program on the host holds its clipboard at that moment, the host answers that it is
-  busy (HTTP 503). Nothing is shown; the content moves the next time you leave or return to the stream
-  window. Host content is also tried again for about a second after you leave the stream window (four
-  times, 300 ms apart) while the host clipboard is busy or, right after a copy there, still empty.
+  busy (HTTP 503). Nothing is shown; local content moves the next time you return to the stream
+  window, and host content on a later check: the next four checks come quickly (300 ms apart,
+  about a second in all) while the host clipboard is busy or, right after a copy there, still empty,
+  then every second as usual. Leaving the stream window starts such a quick run as well.
   Likewise, a copy made on this PC while another program still holds the clipboard (a screenshot
   with Win+Shift+S, for example) is read again for about a second before it waits for the next
   focus change.
@@ -307,14 +317,13 @@ to sync the clipboard in both directions.
   a format that can't be converted, text over 1 MB, host files over the limit, host files with names
   the host can't copy ("unsupported or duplicate names") or only links ("only links or nothing to
   copy"), a whole drive copied locally, host text the host could not read (HTTP 500; after a network
-  error or timeout, text is fetched again silently the next time you leave the stream window), a host
-  image that did not arrive because of a network error or timeout (said once for that image, which
-  is fetched once more the next time you leave the stream window, and after a second failure not
-  until the host clipboard changes), a local image or copied files that a network error stopped
-  (said once; sent once more as described above, local text silently and each time), or a
-  transfer that failed. Content retried this way is dropped without a notice once newer content
-  replaces it.
-  Host content is fetched when you leave the stream window, where the notice is easy to miss, so a
+  error or timeout, text is fetched again silently on a later check), a host image that did not
+  arrive because of a network error or timeout (said once for that image, which is fetched once
+  more on a later check, and after a second failure not until the host clipboard changes), a local
+  image or copied files that a network error stopped (said once; sent once more as described
+  above, local text silently and each time), or a transfer that failed. Content retried this way
+  is dropped without a notice once newer content replaces it.
+  Host content may arrive while you work in another app, where the notice is easy to miss, so a
   notice about host content (or a missing permission) is shown once more when you return to the
   stream window.
 - Turn it off with Settings → Streaming conveniences → "Sync clipboard with the host" (on by
