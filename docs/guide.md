@@ -255,6 +255,9 @@ to sync the clipboard in both directions.
   busy (HTTP 503). Nothing is shown; the content moves the next time you leave or return to the stream
   window. Host content is also tried again for about a second after you leave the stream window (four
   times, 300 ms apart) while the host clipboard is busy or, right after a copy there, still empty.
+  Likewise, a copy made on this PC while another program still holds the clipboard (a screenshot
+  with Win+Shift+S, for example) is read again for about a second before it waits for the next
+  focus change.
   Files dropped on the stream window are not sent again by themselves: the notice says the
   host clipboard is busy, and you drop them again. When the host refuses content (HTTP 422), it names
   the reason (names it can't create, only links, an image it can't convert), and the notice says
