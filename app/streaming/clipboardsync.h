@@ -21,6 +21,7 @@ class NvHTTP;
 class NvComputer;
 class QIODevice;
 class QThread;
+class QTimer;
 struct SDL_Window;
 
 namespace ClipboardVirtualFiles {
@@ -33,16 +34,17 @@ struct ClipboardTransferControl
     std::atomic<bool> active {false};
     std::atomic<bool> cancel {false};
     // Why clipboard content did not move (ClipboardNotice), shown again when the user returns to
-    // the stream window: host content is fetched when they switch away, and local content may be
-    // sent while they work in another app, so the first notice is easy to miss.
+    // the stream window: host content may be fetched and local content sent while they work in
+    // another app, so the first notice is easy to miss.
     std::atomic<int> pendingNotice {0};
     // Host files being downloaded while File Explorer pastes them (virtual files), and a counter
     // the cancel shortcut increments to stop those downloads.
     std::atomic<int> streams {0};
     std::atomic<int> streamCancel {0};
-    // Hermit: focus changes of the stream window (lost or gained) so far, so a pull tried again
-    // shortly after a focus loss (ClipboardPullRetries) stops once the focus changed.
-    std::atomic<uint64_t> focusChanges {0};
+    // Hermit: the local changes the main thread has observed so far (ClipboardLocalChanges::count),
+    // read by the worker when a host poll starts: a host change the poll finds is newer than
+    // these, older than every local change observed after (ClipboardChangeOrder).
+    std::atomic<uint64_t> localChanges {0};
 };
 
 // Clipboard content fetched from the host, handed to the SDL main thread in an SDL user event.
@@ -115,14 +117,16 @@ public:
     // localOrder then being the local changes observed when they were dropped
     void pushFiles(const QStringList& paths, bool dropped = false, quint32 localSeq = 0, quint64 localOrder = 0);
 
-    // Brings the host clipboard to the client if it changed since we last saw or set it.
-    // Hermit: localChanges: the local changes observed when this pull was posted
-    // (ClipboardChangeOrder); host content waiting to be fetched again is dropped when a local
-    // change came after it. focusLoss: the focus changes of the stream window counted when it
-    // was posted (ClipboardTransferControl::focusChanges): a pull that finds the host's clipboard
-    // busy, or empty under a new sequence number, is tried again shortly while that count stands
-    // (ClipboardPullRetries).
-    void pull(quint64 localChanges = 0, quint64 focusLoss = 0);
+    // Hermit: starts polling the host clipboard (ClipboardHostPolling) once sync is set up: a
+    // Shell host's info request every second, a text-only host's text every two seconds, while
+    // the stream runs. Each poll brings the host clipboard to the client if it changed since we
+    // last saw or set it (pullOnce), unless a local change came after it (ClipboardChangeOrder;
+    // the local changes observed when the poll starts: ClipboardTransferControl::localChanges).
+    // Timed on this thread, after the job in progress like a posted one.
+    void startPolling();
+    // Hermit: polls now rather than at the cadence (the user left the stream window), and starts
+    // a new run of quick polls should the host's clipboard be busy or still empty.
+    void pollNow();
 
     // Host content key (ClipboardHostContent::hostKey) could not be put on the local clipboard:
     // a later pull fetches it again, unless newer host content was seen or sent meanwhile, or a
@@ -160,10 +164,19 @@ private:
     // A Shell host, asked in a way that needs no clipboard permission (when reading its clipboard
     // is refused, the clipboard itself cannot tell).
     bool hostIsShell();
-    // One pull (pull without the retries): what it found, for ClipboardPullRetries. A busy host
-    // leaves the content to be fetched again as before; nothing under a new sequence number is
-    // recorded as seen, and pull then has it looked at again when it is tried again.
-    ClipboardPullRetries::Pull pullOnce(quint64 localChanges);
+    // One pull: what it found, for ClipboardHostPolling. A busy host leaves the content to be
+    // fetched again as before; nothing under a new sequence number is recorded as seen, and poll
+    // then has it looked at again by the quick polls that follow.
+    ClipboardHostPolling::Pull pullOnce(quint64 localChanges);
+    // Hermit: one poll (a job): pullOnce for the local changes observed now, then the next poll
+    // is timed from what it found (ClipboardHostPolling::next), or polling ends.
+    void poll();
+    // Hermit: times the next poll in delayMs, or stops polling (ClipboardHostPolling::k_Stop)
+    void schedulePoll(int delayMs);
+    // Hermit: the host's clipboard can no longer be read: the stream ended, reading its clipboard
+    // is refused (401) or the host has no clipboard endpoint (404)
+    bool pollingEnded() const;
+    ClipboardHostPolling::Host pollingHost() const;
     // Host files (Windows): a file list for virtual files when the host can stream files, else
     // the whole archive.
     void pullFileList(quint64 localChanges);
@@ -225,7 +238,8 @@ private:
     bool m_HostFilesErrorKeyValid;  // Hermit: host files of m_HostFilesErrorKey failed once with a host error
     quint64 m_HostFilesErrorKey;
     ClipboardHostNetworkErrors m_HostNetworkErrors;  // Hermit: host content that had a network error, by transfer
-    ClipboardPullRetries m_PullRetries;  // Hermit: pulls tried again shortly after a focus loss (busy host, empty under a new number)
+    ClipboardHostPolling m_Polling;  // Hermit: when the host clipboard is polled next (cadence, quick polls after a busy host)
+    QTimer* m_PollTimer;             // Hermit: single-shot, created on this thread for the first poll
     bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error
     quint32 m_LocalNetworkNoticeSeq;
     bool m_UploadSentAll;  // Hermit: the last upload sent every byte (transfer)
@@ -256,9 +270,13 @@ private:
 // window regains focus (not on every copy, since they can be large). Hermit: a copy that cannot
 // be read yet because the program that copied still holds the clipboard is read again shortly,
 // a few times (ClipboardPushRetries).
-// Host -> local: when the stream window loses focus, so "copy on the host, switch to a local
-// app, paste" works like RDP. Files from a host that can stream them are offered as virtual files
-// and only downloaded while they are pasted (clipboardvirtualfiles.h).
+// Host -> local: Hermit: the host clipboard is polled while the stream runs (a Shell host's cheap
+// info request every second, a text-only host's text every two seconds; ClipboardHostPolling),
+// whether or not the stream window has the focus, and a change is fetched at once: text, images
+// and file lists alike, so "copy on the host, switch to a local app, paste" works like RDP
+// without leaving the window first. Leaving the window polls right away as well. Files from a
+// host that can stream them are offered as virtual files and only downloaded while they are
+// pasted (clipboardvirtualfiles.h).
 //
 // Images and files move at most at the configured rate (clipboardRateMbps), so a large
 // transfer does not starve the video stream or the input packets, and can be cancelled with
@@ -270,8 +288,9 @@ private:
 //
 // Hermit: when both sides changed, the most recent change wins; content that could not be
 // delivered (a busy host, a network error, a failed local write) is retried until something newer
-// replaces it (clipboardchangeorder.h). This side counts the local changes it observes and hands
-// the count to every pull and push; content from the host carries the order of its change.
+// replaces it (clipboardchangeorder.h). This side counts the local changes it observes, hands the
+// count to every push and publishes it for every poll; content from the host carries the order of
+// its change.
 //
 // All public methods must be called on the SDL main thread.
 class ClipboardSync
@@ -288,7 +307,9 @@ public:
     // Files and folders dropped on the stream window: put on the host clipboard, to be pasted
     // there with Ctrl+V.
     void pushDroppedFiles(const QStringList& paths);
-    void pullHostToLocal();
+    // Hermit: looks at the host clipboard now rather than at the next poll (the stream window
+    // lost the focus: what was copied on the host is wanted in the local app right away).
+    void pollHostNow();
 
     // Applies content from the SDL user event and takes ownership of it.
     void onHostContent(ClipboardHostContent* content);
@@ -305,6 +326,9 @@ private:
     // Hermit: the order of the local change at local clipboard sequence seq, a real copy: the next
     // one the first time this sequence is seen, the same one when it is handled again
     quint64 observeLocalChange(quint32 seq);
+    // Hermit: hands the count of local changes observed to the worker's polls
+    // (ClipboardTransferControl::localChanges)
+    void publishLocalChanges();
     // Hermit (Windows): what the local clipboard holds now, without sending anything; seq: its
     // sequence number, read before the content
     ClipboardLocalChanges::Content localClipboard(quint32& seq) const;

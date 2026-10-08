@@ -164,7 +164,7 @@ constexpr int k_InfoTimeoutMs = 5000;
 constexpr int k_TextTimeoutMs = 5000;
 // The host walks the copied folders for a file list (at most 1,000 items, no file data). It can
 // take a while for files in a cloud folder (OneDrive), so a list that times out is fetched again
-// the next time the user leaves the stream window.
+// on a later poll.
 constexpr int k_FileListTimeoutMs = 120000;
 // Images and files have no fixed deadline (a 256 MB transfer at 10 Mbps takes minutes); they
 // fail when no data moves for this long, which also covers the host packing them.
@@ -558,6 +558,7 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_LocalNetworkNoticeSeqValid(false),
       m_LocalNetworkNoticeSeq(0),
       m_UploadSentAll(false),
+      m_PollTimer(nullptr),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -1524,11 +1525,11 @@ static bool shouldFetch(ClipboardChangeOrder::HostContent decision)
            decision == ClipboardChangeOrder::HostContent::FetchAndMatch;
 }
 
-ClipboardPullRetries::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
+ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
 {
-    using Pull = ClipboardPullRetries::Pull;
+    using Pull = ClipboardHostPolling::Pull;
     if (!ensureReady(0, localChanges)) {
-        // Hermit: a setup that found the host's clipboard busy is tried again shortly too
+        // Hermit: a setup that found the host's clipboard busy is polled again shortly too
         return m_Mode == Mode::Unknown && hostClipboardBusy() ? Pull::Busy : Pull::Done;
     }
     if (m_PullDenied) {
@@ -1602,8 +1603,8 @@ ClipboardPullRetries::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
             handleFailure("fetch", error, Direction::Pull);
             if (m_LastHttpStatus >= 500 && !hostClipboardBusy()) {
                 // The host could not read its text (500, for example): said once, and this
-                // content is not fetched again on every focus change. Busy (503), no active
-                // stream (403) and network errors without a reply (a timeout) are retried.
+                // content is not fetched again on every poll. Busy (503), no active stream (403)
+                // and network errors without a reply (a timeout) are retried.
                 m_HostTextHashValid = false;
                 notify(HostTextFailed, true);
             }
@@ -1630,13 +1631,13 @@ ClipboardPullRetries::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
     }
 
     // For images and files, the content stays taken even on failure so the same content is not
-    // retried on every focus change (Hermit: except after a busy host or a network error).
+    // retried on every poll (Hermit: except after a busy host or a network error).
     m_HostTextHashValid = false;
 
     if (type == "none") {
         // Hermit: nothing under a new sequence number (recorded as seen above): the program
         // copying on the host may have emptied its clipboard and not written its formats yet, so
-        // pull looks at this number again shortly.
+        // poll looks at this number again shortly.
         return Pull::NoneNew;
     }
 
@@ -1724,39 +1725,101 @@ ClipboardPullRetries::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
         }
     }
 #endif
-    // Hermit: a busy host on the file list or archive (the last request made) is tried again
+    // Hermit: a busy host on the file list or archive (the last request made) is polled again
     // shortly as well; the content was left to be fetched again
     return hostClipboardBusy() ? Pull::Busy : Pull::Done;
 }
 
-void ClipboardSyncWorker::pull(quint64 localChanges, quint64 focusLoss)
+bool ClipboardSyncWorker::pollingEnded() const
 {
-    const ClipboardPullRetries::Pull result = pullOnce(localChanges);
-    if (stopped() || !m_PullRetries.again(result, focusLoss)) {
+    return stopped() || m_Mode == Mode::Disabled || m_PullDenied;
+}
+
+ClipboardHostPolling::Host ClipboardSyncWorker::pollingHost() const
+{
+    switch (m_Mode) {
+    case Mode::Extended:
+        return ClipboardHostPolling::Host::Extended;
+    case Mode::Legacy:
+        return ClipboardHostPolling::Host::Legacy;
+    default:
+        return ClipboardHostPolling::Host::Unknown;
+    }
+}
+
+void ClipboardSyncWorker::schedulePoll(int delayMs)
+{
+    if (delayMs == ClipboardHostPolling::k_Stop || stopped()) {
+        if (m_PollTimer != nullptr) {
+            m_PollTimer->stop();
+        }
         return;
     }
-    // Hermit: the host's clipboard was busy (another program held it), or empty under a new
-    // sequence number (the program copying there may not have written its formats yet): both
-    // usually pass within a moment, so the pull is tried again shortly while the window stays
-    // unfocused, not only on the next focus loss (ClipboardPullRetries). It is an ordinary pull: a
-    // local copy made meanwhile still wins. Nothing under a new number was recorded as seen: the
-    // retry looks at it again, and it stays recorded when it is still nothing after the last one.
-    if (result == ClipboardPullRetries::Pull::NoneNew) {
-        m_Order.hostRetry(m_Order.hostKey());
+    if (m_PollTimer == nullptr) {
+        // Lives on this thread (the worker does) and is dropped with the worker; nested event
+        // loops of a transfer in progress deliver it as well, and the poll then runs after that
+        // job, like a posted one (run).
+        m_PollTimer = new QTimer(this);
+        m_PollTimer->setSingleShot(true);
+        connect(m_PollTimer, &QTimer::timeout, this, [this]() { run([this]() { poll(); }); });
+    }
+    m_PollTimer->start(delayMs);
+}
+
+void ClipboardSyncWorker::startPolling()
+{
+    if (pollingEnded()) {
+        return;
     }
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "Clipboard pull tried again in %d ms (%d of %d): %s",
-                ClipboardPullRetries::k_RetryDelayMs, m_PullRetries.retries(), ClipboardPullRetries::k_MaxRetries,
-                result == ClipboardPullRetries::Pull::Busy ? "the host clipboard is busy"
-                                                           : "nothing on the host clipboard yet");
-    // Fires on this thread (the worker lives here) and is dropped with the worker; the pull runs
-    // after the job in progress, like a posted one.
-    QTimer::singleShot(ClipboardPullRetries::k_RetryDelayMs, this, [this, localChanges, focusLoss]() {
-        if (stopped() || m_Control->focusChanges.load() != focusLoss) {
-            return;  // the user is back in the stream (or left it again: that focus loss has its own pull)
+                "Clipboard: polling the host clipboard every %d ms%s",
+                ClipboardHostPolling::interval(pollingHost()),
+                m_Mode == Mode::Unknown ? " (setting sync up again first)" : "");
+    schedulePoll(m_Polling.next(ClipboardHostPolling::Pull::Done, pollingHost(), false));
+}
+
+void ClipboardSyncWorker::pollNow()
+{
+    if (pollingEnded()) {
+        return;
+    }
+    m_Polling.pollNow();
+    poll();
+}
+
+void ClipboardSyncWorker::poll()
+{
+    if (pollingEnded()) {
+        schedulePoll(ClipboardHostPolling::k_Stop);
+        return;
+    }
+    // Hermit: a host change this poll finds is newer than the local changes observed by now,
+    // older than every one the main thread observes after (ClipboardChangeOrder); read before the
+    // request, so a copy made while the host answers wins over what the host held when asked.
+    const quint64 localChanges = m_Control->localChanges.load();
+    const ClipboardHostPolling::Pull result = pullOnce(localChanges);
+    const int delayMs = m_Polling.next(result, pollingHost(), pollingEnded());
+    if (delayMs == ClipboardHostPolling::k_RetryDelayMs) {
+        // Hermit: the host's clipboard was busy (another program held it), or empty under a new
+        // sequence number (the program copying there may not have written its formats yet): both
+        // usually pass within a moment, so the next poll comes shortly, a few times, then at the
+        // usual cadence (ClipboardHostPolling). It is an ordinary poll: a local copy made meanwhile
+        // still wins. Nothing under a new number was recorded as seen: the quick poll looks at it
+        // again, and it stays recorded when it is still nothing after the last one.
+        if (result == ClipboardHostPolling::Pull::NoneNew) {
+            m_Order.hostRetry(m_Order.hostKey());
         }
-        run([this, localChanges, focusLoss]() { pull(localChanges, focusLoss); });
-    });
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Clipboard: host polled again in %d ms (%d of %d): %s",
+                    delayMs, m_Polling.retries(), ClipboardHostPolling::k_MaxRetries,
+                    result == ClipboardHostPolling::Pull::Busy ? "the host clipboard is busy"
+                                                               : "nothing on the host clipboard yet");
+    }
+    else if (delayMs == ClipboardHostPolling::k_Stop) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Clipboard: polling the host clipboard stopped");
+    }
+    schedulePoll(delayMs);
 }
 
 #ifdef Q_OS_WIN32
@@ -1846,12 +1909,11 @@ void ClipboardSyncWorker::failedHostFiles(int qtError, bool archive)
 {
     if (qtError == QNetworkReply::TimeoutError || (m_LastHttpStatus == 0 && qtError > 0)) {
         // A timeout: the host may still be preparing the files (cloud placeholders it has to fetch
-        // first, for example), so they are offered again when the user next leaves the stream
-        // window. Hermit: so are they after a network error without a reply (connection refused
-        // or reset, a transfer cut off), which may be passing too. One notice per content (and
-        // transfer), as such an error can come every time. The archive (up to 256 MB) is fetched
-        // once more at most, then not until the host's clipboard changes; the list (no file data)
-        // each time.
+        // first, for example), so they are offered again on a later poll. Hermit: so are they
+        // after a network error without a reply (connection refused or reset, a transfer cut
+        // off), which may be passing too. One notice per content (and transfer), as such an
+        // error can come every time. The archive (up to 256 MB) is fetched once more at most,
+        // then not until the host's clipboard changes; the list (no file data) each time.
         if (retryAfterNetworkError(archive ? ClipboardHostNetworkErrors::Transfer::Archive
                                            : ClipboardHostNetworkErrors::Transfer::FileList)) {
             notify(HostFilesFailed, true);
@@ -1865,7 +1927,7 @@ void ClipboardSyncWorker::failedHostFiles(int qtError, bool archive)
     if (m_LastHttpStatus >= 500) {
         // Hermit: an error of the host's own (500, for example; 503 is handled as busy) may be
         // passing, so it is fetched once more, with one notice. A second failure for the same
-        // content is recorded, so a lasting host error is not fetched on every focus change.
+        // content is recorded, so a lasting host error is not fetched on every poll.
         if (!m_HostFilesErrorKeyValid || m_HostFilesErrorKey != m_Order.hostKey()) {
             m_HostFilesErrorKey = m_Order.hostKey();
             m_HostFilesErrorKeyValid = true;
@@ -2078,7 +2140,12 @@ ClipboardSync::~ClipboardSync()
 void ClipboardSync::start()
 {
     ClipboardSyncWorker* worker = m_Worker;
-    post([worker]() { worker->init(); });
+    // Hermit: the host clipboard is polled from here on; a setup that failed is tried again by
+    // the polls (and by the pushes) until it succeeds
+    post([worker]() {
+        worker->init();
+        worker->startPolling();
+    });
     pushLocalToHost(Trigger::Start);
 }
 
@@ -2136,8 +2203,14 @@ quint64 ClipboardSync::observeLocalChange(quint32 seq)
         // Newer than host content still on its way: a host file list waiting to go on the
         // clipboard must not cover this copy (other host content is dropped in onHostContent).
         releaseHostFileList();
+        publishLocalChanges();
     }
     return order;
+}
+
+void ClipboardSync::publishLocalChanges()
+{
+    m_Control->localChanges.store(m_Local.count());
 }
 
 #ifdef Q_OS_WIN32
@@ -2174,8 +2247,6 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
         return;
     }
     if (trigger == Trigger::FocusGained) {
-        // Hermit: ends the short retries of the pull posted when the focus was lost
-        m_Control->focusChanges.fetch_add(1);
         showNotice(m_Control->pendingNotice.exchange(NoNotice));
     }
     pushLocal(trigger);
@@ -2308,18 +2379,16 @@ void ClipboardSync::pushLocal(Trigger trigger)
 #endif
 }
 
-void ClipboardSync::pullHostToLocal()
+void ClipboardSync::pollHostNow()
 {
     if (m_Stopped->load()) {
         return;
     }
     ClipboardSyncWorker* worker = m_Worker;
-    // Hermit: host changes this pull sees are newer than the local changes observed by now; the
-    // pull is tried again shortly when the host's clipboard is busy or empty under a new sequence
-    // number, while this focus loss stands (the count moves on when the focus changes)
-    const quint64 localChanges = m_Local.count();
-    const quint64 focusLoss = m_Control->focusChanges.fetch_add(1) + 1;
-    post([worker, localChanges, focusLoss]() { worker->pull(localChanges, focusLoss); });
+    // Hermit: a poll is at most a second away, but what was just copied on the host is wanted in
+    // the local app right away: polled now, after the job in progress, with the quick polls of a
+    // focus loss should the host's clipboard be busy or still empty (ClipboardHostPolling)
+    post([worker]() { worker->pollNow(); });
 }
 
 void ClipboardSync::onHostContent(ClipboardHostContent* content)
@@ -2360,7 +2429,11 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         current = localClipboard(seq);
 #endif
         bool newCopy = false;
-        if (!m_Local.hostMayReplace(owned->changeOrder, current, seq, &newCopy)) {
+        const bool mayReplace = m_Local.hostMayReplace(owned->changeOrder, current, seq, &newCopy);
+        if (newCopy) {
+            publishLocalChanges();
+        }
+        if (!mayReplace) {
             // The user copied something locally while this was on its way: the newer local copy
             // stays (and is sent to the host on its trigger).
             if (newCopy) {

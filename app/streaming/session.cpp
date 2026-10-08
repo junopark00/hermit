@@ -2697,9 +2697,10 @@ void Session::exec()
                     m_AudioMuted = true;
                 }
                 m_InputHandler->notifyFocusLost();
-                // Bring text copied on the host back before the user pastes it locally
+                // Hermit: the host clipboard is polled every second anyway; looked at now so what
+                // was copied on the host is there before the user pastes it locally
                 if (m_ClipboardSync != nullptr) {
-                    m_ClipboardSync->pullHostToLocal();
+                    m_ClipboardSync->pollHostNow();
                 }
                 break;
             case SDL_WINDOWEVENT_FOCUS_GAINED:

@@ -18,8 +18,8 @@
 //   clipboard sequence that is a real copy: not content we wrote from the host, not our own list of
 //   host files, not an empty clipboard (we empty it ourselves, and a failed write leaves it empty);
 // - a host change (a new host clipboard sequence number; for text-only hosts, new text) gets the
-//   count at the time its pull was posted: newer than every local change seen before that pull,
-//   older than every local change seen after it;
+//   count at the time the poll that found it started (ClipboardHostPolling): newer than every
+//   local change seen before that poll, older than every local change seen after it;
 // - content this side put on the host takes the order of its local change; dropped files the count
 //   when they were dropped (newer on the host than every local change so far);
 // - host content found when sync is set up is not a change while no setup failed before (at stream
@@ -40,8 +40,9 @@
 //   is sent.
 //
 // The clipboard worker keeps one of these for the host side; it runs its jobs one at a time, so the
-// state needs no lock. The main thread keeps the count of local changes and hands it to every pull
-// and push. Order 0 is a change this side cannot place (no local change tracking): never held back.
+// state needs no lock. The main thread keeps the count of local changes, hands it to every push
+// and publishes it for every poll (ClipboardTransferControl::localChanges). Order 0 is a change
+// this side cannot place (no local change tracking): never held back.
 class ClipboardChangeOrder
 {
 public:
@@ -370,12 +371,12 @@ private:
 
 // Hermit: a clipboard job that came a moment too early (another program still holds a clipboard,
 // or has not written its formats yet) is tried again shortly (k_RetryDelayMs), a few times
-// (k_MaxRetries) for the same occasion; after that, as before, on the next trigger. The occasion
-// is a key (a focus loss, a local clipboard sequence number): a new key starts over, and a retry
-// scheduled for a key that moved on meanwhile is dropped (the new occasion has a job of its own).
-// Only the job is repeated, so what it decides (which change wins, once-per-content notices) stays
-// as it is. ClipboardPullRetries (the host side) and ClipboardPushRetries (the local side) name the
-// results that count as such a passing condition.
+// (k_MaxRetries) for the same occasion; after that, as before, at the usual cadence or on the next
+// trigger. The occasion is a key (a run of host polls, a local clipboard sequence number): a new
+// key starts over, and a retry scheduled for a key that moved on meanwhile is dropped (the new
+// occasion has a job of its own). Only the job is repeated, so what it decides (which change wins,
+// once-per-content notices) stays as it is. ClipboardHostPolling (the host side) and
+// ClipboardPushRetries (the local side) name the results that count as such a passing condition.
 class ClipboardShortRetries
 {
 public:
@@ -407,42 +408,95 @@ private:
     int m_Retries = 0;
 };
 
-// Hermit: a pull right after the user leaves the stream window may come a moment too early: the
-// host's clipboard is busy (503: another program holds it, such as a messenger or a clipboard
-// manager reading every change), or the program copying there has emptied the clipboard and not
-// written its formats yet (type=none under a new sequence number). Both pass within a moment,
-// but the next pull would only come on the next focus loss, so the pull is tried again shortly
-// (k_RetryDelayMs), a few times (k_MaxRetries) while the window stays unfocused; after that, as
-// before, on the next focus loss. Only the pull is repeated: a local copy made meanwhile still
-// wins (ClipboardChangeOrder), and a pull that delivered, found nothing new or failed in another
-// way is not repeated, so its once-per-content notices and its retry on the next focus loss stay
-// as they are. The clipboard worker keeps one of these (its jobs run one at a time).
-class ClipboardPullRetries
+// Hermit: the host's clipboard is polled while the stream runs, whether or not the stream window
+// has the focus, so what is copied on the host is on the local clipboard within about a second:
+// a Shell host answers a cheap info request (its clipboard sequence number and content type)
+// every k_ExtendedIntervalMs, and a change found is fetched at once; a text-only host has no such
+// request, so its text is fetched every k_LegacyIntervalMs (its hash tells whether it changed).
+// This decides when the next poll comes from what the last one found:
+// - a poll that found the host's clipboard busy (503: another program holds it, such as a
+//   messenger or a clipboard manager reading every change), or nothing under a new sequence number
+//   (the program copying there has emptied the clipboard and not written its formats yet), is
+//   followed by the next poll shortly (k_RetryDelayMs), a few times (k_MaxRetries) for the same
+//   occasion (ClipboardShortRetries); after that, at the usual cadence. Both usually pass within a
+//   moment. A poll that delivered, found nothing new or failed in another way starts a new
+//   occasion, so a later busy host gets its own quick polls;
+// - leaving the stream window runs a poll at once (pollNow) rather than at the cadence, as a pull
+//   on focus loss did before, and that poll is a new occasion as well;
+// - while sync is not set up yet (the host could not be reached, or saw no active stream), each
+//   poll tries the setup again, every k_SetupRetryMs;
+// - polling ends (k_Stop) once the host's clipboard can no longer be read: the stream ended, the
+//   host refused reading its clipboard (401) or has no clipboard endpoint (404).
+// Every poll is an ordinary pull: a local copy made meanwhile still wins (ClipboardChangeOrder: a
+// host change found by a poll is newer than the local changes observed when the poll started,
+// older than every one after), and nothing under a new number is looked at again by the quick
+// polls only, staying recorded as seen when it is still nothing after the last one. The clipboard
+// worker keeps one of these (its jobs run one at a time) and times the polls on its own thread.
+class ClipboardHostPolling
 {
 public:
     enum class Pull {
-        Done,     // delivered, nothing new, or failed in a way handled on the next focus loss
+        Done,     // delivered, nothing new, or failed in a way handled by a later poll (or not at all)
         Busy,     // 503 on a request of the pull (info, text, image, file list or archive)
         NoneNew,  // the host holds nothing, under a sequence number not seen before (or seen with nothing)
     };
 
-    static constexpr int k_RetryDelayMs = ClipboardShortRetries::k_RetryDelayMs;
-    static constexpr int k_MaxRetries = ClipboardShortRetries::k_MaxRetries;  // per focus loss
+    enum class Host {
+        Unknown,   // sync not set up yet: the poll tries the setup again
+        Extended,  // a Shell host: info requests
+        Legacy,    // a text-only host: its text
+    };
 
-    // The pull posted for focus loss focusLoss (the count of focus changes of the stream window
-    // when it was posted; a retry keeps its pull's) ended with result. True: pull again after
-    // k_RetryDelayMs, unless the window's focus changed by then (the count moved on: the user is
-    // back in the stream, or a later focus loss has a pull of its own).
-    bool again(Pull result, uint64_t focusLoss)
+    static constexpr int k_ExtendedIntervalMs = 1000;
+    static constexpr int k_LegacyIntervalMs = 2000;  // the whole text each time: less often
+    static constexpr int k_SetupRetryMs = 2000;
+    static constexpr int k_RetryDelayMs = ClipboardShortRetries::k_RetryDelayMs;
+    static constexpr int k_MaxRetries = ClipboardShortRetries::k_MaxRetries;  // per occasion
+    static constexpr int k_Stop = -1;
+
+    // The poll that just ended found result, the host being host. stop: the host's clipboard can
+    // no longer be read (see above). Returns the delay until the next poll in milliseconds, or
+    // k_Stop when polling ends.
+    int next(Pull result, Host host, bool stop)
     {
-        return m_Retries.again(result != Pull::Done, focusLoss);
+        if (stop) {
+            return k_Stop;
+        }
+        if (m_Retries.again(result != Pull::Done, m_Occasion)) {
+            return k_RetryDelayMs;
+        }
+        if (result == Pull::Done) {
+            m_Occasion++;
+        }
+        return interval(host);
     }
 
-    // Retries made for the focus loss seen last
+    // A poll runs now, outside the cadence (the user left the stream window): a new occasion, so
+    // a busy host is polled again shortly from here, as it was after a focus loss before.
+    void pollNow()
+    {
+        m_Occasion++;
+    }
+
+    // The usual cadence for host
+    static int interval(Host host)
+    {
+        switch (host) {
+        case Host::Extended:
+            return k_ExtendedIntervalMs;
+        case Host::Legacy:
+            return k_LegacyIntervalMs;
+        default:
+            return k_SetupRetryMs;
+        }
+    }
+
+    // Quick polls made for the occasion seen last
     int retries() const { return m_Retries.retries(); }
 
 private:
     ClipboardShortRetries m_Retries;
+    uint64_t m_Occasion = 0;
 };
 
 // Hermit: a push right after a local copy may come a moment too early as well: the program that

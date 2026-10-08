@@ -1,7 +1,8 @@
 // Tests for Hermit's own logic that does not need a stream: the layered translator, the session
 // summary (maths and history file), the performance overlay text, automatic bitrate, which
-// clipboard change wins, resolution presets for the display's aspect ratio and the connection
-// profile property list. Built and run by hermit/tests/run-tests.ps1.
+// clipboard change wins and when the host clipboard is polled, resolution presets for the
+// display's aspect ratio and the connection profile property list. Built and run by
+// hermit/tests/run-tests.ps1.
 
 // The headers pull in SDL, which would otherwise rename main().
 #define SDL_MAIN_HANDLED
@@ -812,62 +813,105 @@ static void testClipboardChangeInputs()
     }
 }
 
-// Pulls tried again shortly after a focus loss (round 12, 1): a busy host, or nothing on the host
+// The host clipboard is polled while the stream runs (round 13): a Shell host's info request
+// every second, a text-only host's text every two seconds, so what is copied on the host arrives
+// within about a second without leaving the stream window. A busy host, or nothing on the host
 // clipboard under a new sequence number (the program copying there has not written its formats
-// yet), is pulled again up to k_MaxRetries times within the same focus loss, about a second in
-// all, and then left to the next focus loss as before. A pull that delivered, found nothing new or
-// failed in a way with its own retry is not repeated, so its notices stay once per content.
-static void testClipboardPullRetries()
+// yet), is polled again shortly up to k_MaxRetries times for the same occasion (about a second in
+// all), then at the usual cadence; a poll that delivered, found nothing new or failed in a way
+// with its own retry starts a new occasion. Leaving the stream window polls at once and starts a
+// new occasion too. Polling ends once the host's clipboard can no longer be read.
+static void testClipboardHostPolling()
 {
-    using P = ClipboardPullRetries::Pull;
-    const int retries = ClipboardPullRetries::k_MaxRetries;
-    const int delay = ClipboardPullRetries::k_RetryDelayMs;
-    CHECK(retries * delay >= 1000 && retries * delay <= 2000);  // about a second after leaving the window
+    using P = ClipboardHostPolling::Pull;
+    using H = ClipboardHostPolling::Host;
+    const int retries = ClipboardHostPolling::k_MaxRetries;
+    const int delay = ClipboardHostPolling::k_RetryDelayMs;
+    const int extended = ClipboardHostPolling::k_ExtendedIntervalMs;
+    const int legacy = ClipboardHostPolling::k_LegacyIntervalMs;
+    const int setup = ClipboardHostPolling::k_SetupRetryMs;
+    const int stop = ClipboardHostPolling::k_Stop;
+    CHECK(extended == 1000);  // a host copy arrives within about a second (as in Hermit for Android)
+    CHECK(legacy == 2000);    // the whole text each time: less often
+    CHECK(setup == 2000);
+    CHECK(retries * delay >= 1000 && retries * delay <= 2000);  // the quick polls take about a second
     CHECK(delay >= 200);  // the program copying on the host gets a moment to write its formats
+    CHECK(delay < extended && delay == ClipboardShortRetries::k_RetryDelayMs);
+    CHECK(stop < 0);
+    CHECK(ClipboardHostPolling::interval(H::Extended) == extended);
+    CHECK(ClipboardHostPolling::interval(H::Legacy) == legacy);
+    CHECK(ClipboardHostPolling::interval(H::Unknown) == setup);
 
-    // A busy host: tried again k_MaxRetries times for this focus loss, then not until the next one,
-    // which starts over
+    // Nothing new, or delivered: the next poll comes at the cadence of the host
     {
-        ClipboardPullRetries r;
+        ClipboardHostPolling p;
+        CHECK(p.next(P::Done, H::Extended, false) == extended);
+        CHECK(p.next(P::Done, H::Extended, false) == extended);
+        CHECK(p.next(P::Done, H::Legacy, false) == legacy);
+        CHECK(p.retries() == 0);
+    }
+    // Sync not set up yet (the host could not be reached): the setup is tried again by the polls,
+    // every k_SetupRetryMs, and the cadence of the host applies once it is set up
+    {
+        ClipboardHostPolling p;
+        CHECK(p.next(P::Done, H::Unknown, false) == setup);
+        CHECK(p.next(P::Done, H::Unknown, false) == setup);
+        CHECK(p.next(P::Done, H::Extended, false) == extended);
+    }
+    // A busy host: polled again shortly k_MaxRetries times for this occasion, then at the cadence
+    // while it stays busy; a poll that finds something else (nothing new, or content) starts a new
+    // occasion, so the next busy answer gets its own quick polls
+    {
+        ClipboardHostPolling p;
         for (int i = 0; i < retries; i++) {
-            CHECK(r.again(P::Busy, 1));
+            CHECK(p.next(P::Busy, H::Extended, false) == delay);
+            CHECK(p.retries() == i + 1);
         }
-        CHECK(r.retries() == retries);
-        CHECK(!r.again(P::Busy, 1));
-        CHECK(!r.again(P::NoneNew, 1));
-        CHECK(r.again(P::Busy, 2));
-        CHECK(r.retries() == 1);
+        CHECK(p.next(P::Busy, H::Extended, false) == extended);
+        CHECK(p.next(P::NoneNew, H::Extended, false) == extended);
+        CHECK(p.retries() == retries);
+        CHECK(p.next(P::Done, H::Extended, false) == extended);
+        CHECK(p.next(P::Busy, H::Extended, false) == delay);
+        CHECK(p.retries() == 1);
     }
     // Nothing under a new number: looked at again the same number of times; busy and empty share
-    // the count of one focus loss
+    // the count of one occasion. A text-only host falls back to its own cadence.
     {
-        ClipboardPullRetries r;
-        CHECK(r.again(P::NoneNew, 1));
-        CHECK(r.again(P::Busy, 1));
-        CHECK(r.again(P::NoneNew, 1));
-        CHECK(r.again(P::NoneNew, 1));
-        CHECK(r.retries() == retries);
-        CHECK(!r.again(P::NoneNew, 1));
+        ClipboardHostPolling p;
+        CHECK(p.next(P::NoneNew, H::Legacy, false) == delay);
+        CHECK(p.next(P::Busy, H::Legacy, false) == delay);
+        CHECK(p.next(P::NoneNew, H::Legacy, false) == delay);
+        CHECK(p.next(P::NoneNew, H::Legacy, false) == delay);
+        CHECK(p.retries() == retries);
+        CHECK(p.next(P::NoneNew, H::Legacy, false) == legacy);
     }
-    // Delivered, nothing new, or failed in a way handled on the next focus loss: never repeated,
-    // whatever came before; the count of this focus loss is kept
+    // A poll on its own (the user left the stream window) is a new occasion: a host still busy
+    // after the quick polls ran out is polled again shortly from there, as after a focus loss
+    // before; the quick polls of an occasion in progress are not added to
     {
-        ClipboardPullRetries r;
-        CHECK(!r.again(P::Done, 1));
-        CHECK(r.retries() == 0);
-        CHECK(r.again(P::Busy, 1));
-        CHECK(!r.again(P::Done, 1));
-        CHECK(r.retries() == 1);
-        CHECK(r.again(P::Busy, 1));
-        CHECK(r.retries() == 2);
+        ClipboardHostPolling p;
+        for (int i = 0; i < retries; i++) {
+            CHECK(p.next(P::Busy, H::Extended, false) == delay);
+        }
+        CHECK(p.next(P::Busy, H::Extended, false) == extended);
+        p.pollNow();
+        CHECK(p.next(P::Busy, H::Extended, false) == delay);
+        CHECK(p.retries() == 1);
+        p.pollNow();
+        CHECK(p.next(P::Busy, H::Extended, false) == delay);
+        CHECK(p.retries() == 1);
+        CHECK(p.next(P::Busy, H::Extended, false) == delay);
+        CHECK(p.retries() == 2);
     }
-    // The first focus loss counted is a focus loss like any other, whatever its count
+    // Polling ends (the stream ended, reading the host clipboard refused, no clipboard endpoint)
+    // whatever the poll found, also in the middle of the quick polls
     {
-        ClipboardPullRetries r;
-        CHECK(r.again(P::Busy, 0));
-        CHECK(r.retries() == 1);
-        CHECK(r.again(P::Busy, 7));
-        CHECK(r.retries() == 1);
+        ClipboardHostPolling p;
+        CHECK(p.next(P::Done, H::Extended, true) == stop);
+        CHECK(p.next(P::Busy, H::Extended, false) == delay);
+        CHECK(p.next(P::Busy, H::Extended, true) == stop);
+        CHECK(p.next(P::NoneNew, H::Legacy, true) == stop);
+        CHECK(p.next(P::Done, H::Unknown, true) == stop);
     }
 }
 
@@ -881,7 +925,7 @@ static void testClipboardPushRetries()
     const int delay = ClipboardPushRetries::k_RetryDelayMs;
     CHECK(retries * delay >= 1000 && retries * delay <= 2000);  // about a second after the copy
     CHECK(delay >= 200);  // the program that copied gets a moment to let go of the clipboard
-    CHECK(delay == ClipboardPullRetries::k_RetryDelayMs && retries == ClipboardPullRetries::k_MaxRetries);
+    CHECK(delay == ClipboardHostPolling::k_RetryDelayMs && retries == ClipboardHostPolling::k_MaxRetries);
 
     // A busy clipboard: read again k_MaxRetries times for this content (its sequence number),
     // then not until the next trigger, which reads it once more and gives up again
@@ -932,12 +976,13 @@ static void testClipboardPushRetries()
     // The two sides count on their own: the host's busy clipboard does not use up the local
     // retries
     {
-        ClipboardPullRetries pull;
+        ClipboardHostPolling poll;
         ClipboardPushRetries push;
         for (int i = 0; i < retries; i++) {
-            CHECK(pull.again(ClipboardPullRetries::Pull::Busy, 1));
+            CHECK(poll.next(ClipboardHostPolling::Pull::Busy, ClipboardHostPolling::Host::Extended, false) == delay);
         }
-        CHECK(!pull.again(ClipboardPullRetries::Pull::Busy, 1));
+        CHECK(poll.next(ClipboardHostPolling::Pull::Busy, ClipboardHostPolling::Host::Extended, false) ==
+              ClipboardHostPolling::k_ExtendedIntervalMs);
         CHECK(push.again(R::Busy, 1));
         CHECK(push.retries() == 1);
     }
@@ -1041,7 +1086,7 @@ int main(int argc, char** argv)
     testAutoBitrate();
     testClipboardChangeOrder();
     testClipboardChangeInputs();
-    testClipboardPullRetries();
+    testClipboardHostPolling();
     testClipboardPushRetries();
     testResolutionPresets();
     testProfileProperties(repo);
