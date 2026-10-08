@@ -23,7 +23,9 @@
 // - nothing on the host's clipboard under a new sequence number (emptied, or the program copying
 //   there has not written its formats yet) is recorded as seen but is no change (hostNone): it
 //   delivers nothing, so local content waiting to be sent still goes, and what is written there
-//   next is the change;
+//   next is the change; content the host cannot send (formats it does not sync) is a host change
+//   like any other (hostPulled), only nothing is fetched for it: an older local copy is not sent
+//   over it;
 // - content this side put on the host takes the order of its local change; dropped files the count
 //   when they were dropped (newer on the host than every local change so far);
 // - host content found when sync is set up is not a change while no setup failed before (at stream
@@ -67,8 +69,7 @@ public:
     // known, but not a change, so it is not fetched.
     void hostRecorded(uint64_t key)
     {
-        m_HostKnown = true;
-        m_HostKey = key;
+        setHostKey(key);
         m_HostPending = false;
         m_Unconfirmed = false;
         m_Matching = false;
@@ -106,8 +107,7 @@ public:
             hostRecorded(key);
             return;
         }
-        m_HostKnown = true;
-        m_HostKey = key;
+        setHostKey(key);
         m_HostOrder = (std::max)(m_HostOrder, m_SetupFailedOrder);
         m_HostPending = true;
         m_Unconfirmed = false;
@@ -122,8 +122,7 @@ public:
     HostContent hostSeen(uint64_t key, uint64_t localChanges)
     {
         if (!m_HostKnown || key != m_HostKey) {
-            m_HostKnown = true;
-            m_HostKey = key;
+            setHostKey(key);
             m_HostOrder = (std::max)(m_HostOrder, localChanges);
             m_HostPending = false;
             m_Matching = false;
@@ -207,8 +206,7 @@ public:
         if (m_HostKnown && key == m_HostKey && !m_HostPending) {
             return false;
         }
-        m_HostKnown = true;
-        m_HostKey = key;
+        setHostKey(key);
         m_HostPending = false;
         m_Matching = false;
         return true;
@@ -231,8 +229,7 @@ public:
     void localSent(bool keyKnown, uint64_t key, uint64_t localOrder)
     {
         if (keyKnown) {
-            m_HostKnown = true;
-            m_HostKey = key;
+            setHostKey(key);
         }
         m_HostPending = false;
         m_HostOrder = (std::max)(m_HostOrder, localOrder);
@@ -274,6 +271,11 @@ public:
 
     bool hostKnown() const { return m_HostKnown; }
     uint64_t hostKey() const { return m_HostKey; }
+    // How often the host's content moved to another key so far (0 before any is known). Unlike the
+    // key, it never comes back: a text-only host's key is a hash of its text, so the same key
+    // returns when the user copies the same text again, and records kept per host content
+    // (ClipboardHostRetries) go by this count as well.
+    uint64_t hostChanges() const { return m_HostChanges; }
     // The order of the change the host's content came from (0 before any)
     uint64_t hostOrder() const { return m_HostOrder; }
     // Host content waiting to be fetched again
@@ -284,6 +286,16 @@ public:
     bool matchingUpload() const { return m_Matching; }
 
 private:
+    // The host's content is now under key: counted as a change of its content when the key is new.
+    void setHostKey(uint64_t key)
+    {
+        if (!m_HostKnown || key != m_HostKey) {
+            m_HostChanges++;
+        }
+        m_HostKnown = true;
+        m_HostKey = key;
+    }
+
     // The wait for files sent without a confirmation ends once the host can no longer place them.
     void expireUnconfirmed(uint64_t nowMs)
     {
@@ -297,8 +309,7 @@ private:
     // order of their upload unless content after it (orderBefore) reached the host first.
     void takeUpload(uint64_t key, uint64_t orderBefore)
     {
-        m_HostKnown = true;
-        m_HostKey = key;
+        setHostKey(key);
         m_HostOrder = (std::max)(orderBefore, m_UnconfirmedOrder);
         m_HostPending = false;
         m_Unconfirmed = false;
@@ -307,6 +318,7 @@ private:
 
     bool m_HostKnown = false;
     uint64_t m_HostKey = 0;
+    uint64_t m_HostChanges = 0;  // how often m_HostKey took a new value
     uint64_t m_HostOrder = 0;
     bool m_HostPending = false;
     uint64_t m_SetupOrder = 0;        // of the job whose setup started last
@@ -359,7 +371,10 @@ struct ClipboardFilesSummary
 // host's clipboard changes (a new key), so a failure that lasts does not fetch the same image (up
 // to 32 MB) or archive (up to 256 MB) on every poll, every second. Each kind keeps its own record,
 // so a failed file list does not use up the retries and notice of the archive of the same files
-// (and the other way round), nor does a failed fetch those of a failed local write.
+// (and the other way round), nor does a failed fetch those of a failed local write. Every record
+// is dropped once the host's content moved to another key (ClipboardChangeOrder::hostChanges):
+// a text-only host's key is a hash of its text and returns when the same text is copied there
+// again, which is new content with retries and a notice of its own.
 class ClipboardHostRetries
 {
 public:
@@ -368,7 +383,9 @@ public:
         FileList,    // small (names and sizes), but the host's walk may take a while: twice more
         Archive,     // large, like an image
         LocalWrite,  // any content not written locally: fetched once more at most
+        Text,        // small (up to 1 MB): twice more
     };
+    static constexpr int k_Kinds = 5;
 
     struct Outcome {
         bool notice = false;  // the first failure for this content and kind: say so
@@ -378,12 +395,21 @@ public:
     // How often content of kind is fetched again for the same key
     static int maxRetries(Kind kind)
     {
-        return kind == Kind::FileList ? 2 : 1;
+        return kind == Kind::FileList || kind == Kind::Text ? 2 : 1;
     }
 
-    // Host content key failed in the way kind stands for
-    Outcome failed(Kind kind, uint64_t key)
+    // Host content key failed in the way kind stands for, the host's content having moved to
+    // another key hostChange times so far (ClipboardChangeOrder::hostChanges). key may be older
+    // than the host's current content (a local write reported late): recorded on its own.
+    Outcome failed(Kind kind, uint64_t key, uint64_t hostChange)
     {
+        if (!m_HostChangeValid || m_HostChange != hostChange) {
+            m_HostChangeValid = true;
+            m_HostChange = hostChange;
+            for (Seen& seen : m_Seen) {
+                seen = Seen();
+            }
+        }
         Seen& seen = m_Seen[static_cast<int>(kind)];
         if (!seen.valid || seen.key != key) {
             seen.valid = true;
@@ -397,7 +423,7 @@ public:
         return outcome;
     }
 
-    // Failures of kind recorded for the key seen last
+    // Failures of kind recorded for the key seen last (0 once the host's content moved on)
     int failures(Kind kind) const { return m_Seen[static_cast<int>(kind)].failures; }
 
 private:
@@ -406,7 +432,9 @@ private:
         uint64_t key = 0;
         int failures = 0;
     };
-    Seen m_Seen[4];
+    Seen m_Seen[k_Kinds];
+    bool m_HostChangeValid = false;
+    uint64_t m_HostChange = 0;  // the hostChange the records are for
 };
 
 // Hermit: a clipboard job that came a moment too early (another program still holds a clipboard,

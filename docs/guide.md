@@ -255,7 +255,11 @@ to sync the clipboard in both directions.
     wins. Content that could not be written to the local clipboard (another program held it) is
     fetched once more; when that fails too, not again until the host clipboard changes.
   - An emptied host clipboard is not a change: nothing comes over, what you copied locally is
-    still sent, and what is written on the host next counts from the check that finds it.
+    still sent, and what is written on the host next counts from the check that finds it. Content
+    the host cannot send (formats Shell does not sync: a program's own formats, RTF or HTML only)
+    is a change: nothing comes over, but a copy made locally before it is not sent over it either.
+    Shell 1.1.0 cannot tell the two apart and answers for such content as for an empty clipboard,
+    so with it that content is not a change and the older local copy is still sent.
   - An empty local clipboard does not count as a copy, nor does a list of host files that Hermit is
     still putting on the clipboard. What another program copies meanwhile does (an e-mail
     attachment, for example).

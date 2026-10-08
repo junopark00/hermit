@@ -1015,7 +1015,7 @@ void ClipboardSyncWorker::hostContentNotWritten(quint64 key)
     // at most, then not until the host's clipboard changes. The main thread said that the write
     // failed; this says whether the content comes again.
     const ClipboardHostRetries::Kind kind = ClipboardHostRetries::Kind::LocalWrite;
-    const ClipboardHostRetries::Outcome outcome = m_HostRetries.failed(kind, key);
+    const ClipboardHostRetries::Outcome outcome = m_HostRetries.failed(kind, key, m_Order.hostChanges());
     if (outcome.retry) {
         if (m_Order.hostKnown() && m_Order.hostKey() == key) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1651,6 +1651,8 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
         // (ClipboardChangeOrder::hostNone). Under a new number, the program copying on the host
         // may have emptied its clipboard and not written its formats yet, so poll looks at it
         // again shortly, and it stays recorded once it is still nothing after the last quick poll.
+        // Only "none" is that: "other" (content in formats the host does not sync; Shell 1.1.0
+        // answered "none" for it too) is a host change like any other, below.
         if (!m_Order.hostNone(seq)) {
             return Pull::Done;
         }
@@ -1661,7 +1663,8 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
     // Unchanged since we last pushed or pulled, or waiting to be fetched again but older than a
     // local change; Hermit: or the files sent before without the host's confirmation, placed on
     // its clipboard after all (on a host that lists its files, pullFileList compares the list with
-    // them first)
+    // them first). Content nothing can be fetched for ("other", or a type this version does not
+    // know) is a host change as well: an older local copy is not sent over it.
 #ifdef Q_OS_WIN32
     const bool listed = m_HostStreamsFiles;
 #else
@@ -1690,12 +1693,25 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
             }
             else if (m_LastHttpStatus >= 500 && !hostClipboardBusy()) {
                 // The host could not read its text (500, for example): said once, and this
-                // content is not fetched again on every poll. Busy (503), no active stream (403)
-                // and network errors without a reply (a timeout) are retried (Hermit: on every
-                // poll, so said once while they last).
+                // content is not fetched again on every poll. Busy (503) and no active stream
+                // (403) are retried (Hermit: on every poll, so said once while they last).
                 handleFailure("fetch", error, Direction::Pull);
                 m_HostTextHashValid = false;
                 notify(HostTextFailed, true);
+            }
+            else if (m_LastHttpStatus == 0 && error > 0) {
+                // Hermit: a network error without a reply (a timeout, connection refused or
+                // reset) right after the info request got through may be passing: fetched again
+                // on a later pull, twice at most (unless a local change comes first), then not
+                // until the host's clipboard changes, so a text fetch that keeps timing out is not
+                // made on every poll. Said once while it lasts, like the poll's other failures.
+                handlePollFailure("fetch", error, Direction::Pull);
+                const ClipboardHostRetries::Kind kind = ClipboardHostRetries::Kind::Text;
+                retryAfterNetworkError(kind);
+                if (m_HostRetries.failures(kind) == ClipboardHostRetries::maxRetries(kind) + 1) {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                                "Host clipboard text failed again; not fetched again until the host clipboard changes");
+                }
             }
             else {
                 handlePollFailure("fetch", error, Direction::Pull);
@@ -1723,6 +1739,17 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
     // For images and files, the content stays taken even on failure so the same content is not
     // retried on every poll (Hermit: except after a busy host or a network error, a few times).
     m_HostTextHashValid = false;
+
+    if (type != "image" && type != "files") {
+        // Hermit: "other" (a program's own formats, RTF or HTML only: Shell cannot send them), or
+        // a type this version does not know: a host change nothing is fetched for. Nothing is
+        // delivered and nothing said; the local copy from before it is not sent over it (the
+        // host's order was raised above), and the next poll finds it unchanged.
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host clipboard holds content of type %s, which is not synced; nothing fetched",
+                    type.constData());
+        return Pull::Done;
+    }
 
 #ifdef Q_OS_WIN32
     if (type == "image") {
@@ -2036,7 +2063,7 @@ void ClipboardSyncWorker::failedHostFiles(int qtError, bool archive)
 bool ClipboardSyncWorker::retryAfterNetworkError(ClipboardHostRetries::Kind kind)
 {
     const quint64 key = m_Order.hostKey();
-    const ClipboardHostRetries::Outcome outcome = m_HostRetries.failed(kind, key);
+    const ClipboardHostRetries::Outcome outcome = m_HostRetries.failed(kind, key, m_Order.hostChanges());
     if (outcome.retry) {
         m_Order.hostRetry(key);
     }

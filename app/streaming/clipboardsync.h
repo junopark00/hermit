@@ -171,7 +171,8 @@ private:
     bool hostIsShell();
     // One pull: what it found, for ClipboardHostPolling. A busy host leaves the content to be
     // fetched again as before; nothing under a new sequence number is recorded as seen, and poll
-    // then has it looked at again by the quick polls that follow.
+    // then has it looked at again by the quick polls that follow. Content the host cannot send
+    // (type "other") is a host change nothing is fetched for.
     ClipboardHostPolling::Pull pullOnce(quint64 localChanges);
     // Hermit: one poll (a job): pullOnce for the local changes observed now, then the next poll
     // is timed from what it found (ClipboardHostPolling::next), or polling ends.
@@ -192,9 +193,9 @@ private:
     // list (small), fetched again twice at most, with one notice.
     void failedHostFiles(int qtError, bool archive);
     // Hermit: a network error without a reply (timeout, connection refused or reset, a transfer cut
-    // off) for host images or files, by kind. True the first time for this host content and kind:
-    // the caller shows its notice. The content is fetched again on a later pull, an image or
-    // archive once, a file list twice, then not until the host's clipboard changes
+    // off) for host text, images or files, by kind. True the first time for this host content and
+    // kind: the caller shows its notice. The content is fetched again on a later pull, an image or
+    // archive once, text or a file list twice, then not until the host's clipboard changes
     // (ClipboardHostRetries).
     bool retryAfterNetworkError(ClipboardHostRetries::Kind kind);
     // Logs a failed request; a missing endpoint turns sync off, a missing permission turns off

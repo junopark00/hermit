@@ -388,6 +388,25 @@ static void testClipboardChangeOrder()
         CHECK(q.hostSeen(102, 0) == HC::Unchanged);
     }
 
+    // Content the host cannot send (type "other": formats it does not sync) under the same new
+    // sequence number goes the ordinary way (hostPulled): a host change dated at the poll, so the
+    // older local copy is not sent over it, though nothing is fetched for it; the next poll finds
+    // it unchanged, and a later local copy wins as usual (review B5 fixes, 1).
+    {
+        ClipboardChangeOrder none, other;
+        none.hostRecorded(100);
+        other.hostRecorded(100);
+        const quint64 local = 1;  // a local copy observed before the poll
+        CHECK(none.hostNone(101));
+        CHECK(none.hostOrder() == 0 && none.localMayReplaceHost(local));
+        CHECK(other.hostPulled(101, false, true, local, 0) == HC::Fetch);
+        CHECK(other.hostOrder() == local && !other.localMayReplaceHost(local));
+        CHECK(other.localMayReplaceHost(local + 1));
+        CHECK(other.hostPulled(101, false, true, local + 1, 0) == HC::Unchanged);
+        CHECK(!other.hostPending());
+        CHECK(other.hostPulled(102, false, true, local + 1, 0) == HC::Fetch);  // what comes next
+    }
+
     // Forgetting content that is no longer the host's current content does nothing.
     {
         ClipboardChangeOrder o;
@@ -411,6 +430,41 @@ static void testClipboardChangeOrder()
         o.localSent(true, textC, 1);
         CHECK(o.hostSeen(textC, 1) == HC::Unchanged);
         CHECK(o.hostSeen(textA, 1) == HC::Fetch);  // the host's text changed back: a change
+    }
+
+    // The count of host changes moves with every new key and never comes back, also where the key
+    // does (a text-only host's text copied again): what records kept per host content go by
+    // (review B5 fixes, 2).
+    {
+        ClipboardChangeOrder o;
+        CHECK(o.hostChanges() == 0);
+        o.hostRecorded(100);
+        CHECK(o.hostChanges() == 1);
+        o.hostRecorded(100);  // the same content again: no change
+        CHECK(o.hostChanges() == 1);
+        CHECK(o.hostSeen(101, 0) == HC::Fetch);
+        CHECK(o.hostChanges() == 2);
+        o.hostRetry(101);
+        CHECK(o.hostSeen(101, 0) == HC::Fetch);  // fetched again: still the same content
+        CHECK(o.hostChanges() == 2);
+        CHECK(o.hostNone(102));
+        CHECK(o.hostChanges() == 3);
+        o.hostRetry(102);
+        CHECK(o.hostNone(102));  // looked at again
+        CHECK(o.hostChanges() == 3);
+        o.localSent(false, 0, 1);  // no key known: not counted
+        CHECK(o.hostChanges() == 3);
+        o.localSent(true, 103, 2);
+        CHECK(o.hostChanges() == 4);
+        o.localSent(true, 103, 3);  // the host's reply named the same number
+        CHECK(o.hostChanges() == 4);
+        CHECK(o.hostSeen(101, 3) == HC::Fetch);  // a text-only host: text 101 copied again
+        CHECK(o.hostChanges() == 5);
+        ClipboardChangeOrder p;
+        p.setupStarting(0);
+        p.setupFailed();
+        p.hostSetUp(100);
+        CHECK(p.hostChanges() == 1);
     }
 
     // Dropped files: newer on the host than every local change so far, without being a local
@@ -779,32 +833,32 @@ static void testClipboardChangeInputs()
         CHECK(ClipboardHostRetries::maxRetries(K::Archive) == 1);
         CHECK(ClipboardHostRetries::maxRetries(K::FileList) == 2);
         ClipboardHostRetries e;
-        auto r = e.failed(K::FileList, 7);
+        auto r = e.failed(K::FileList, 7, 1);
         CHECK(r.notice && r.retry);
-        r = e.failed(K::FileList, 7);
+        r = e.failed(K::FileList, 7, 1);
         CHECK(!r.notice && r.retry);
-        r = e.failed(K::Archive, 7);  // the same files, as an archive
+        r = e.failed(K::Archive, 7, 1);  // the same files, as an archive
         CHECK(r.notice && r.retry);
-        r = e.failed(K::Archive, 7);
+        r = e.failed(K::Archive, 7, 1);
         CHECK(!r.notice && !r.retry);
         CHECK(e.failures(K::Archive) == 2);
-        r = e.failed(K::FileList, 7);  // the third failure of the list: given up on
+        r = e.failed(K::FileList, 7, 1);  // the third failure of the list: given up on
         CHECK(!r.notice && !r.retry);
         CHECK(e.failures(K::FileList) == 3);
-        r = e.failed(K::FileList, 7);
+        r = e.failed(K::FileList, 7, 1);
         CHECK(!r.notice && !r.retry);
-        r = e.failed(K::Archive, 8);  // the host's clipboard changed
+        r = e.failed(K::Archive, 8, 2);  // the host's clipboard changed
         CHECK(r.notice && r.retry);
         CHECK(e.failures(K::Archive) == 1);
-        r = e.failed(K::FileList, 8);
+        r = e.failed(K::FileList, 8, 2);
         CHECK(r.notice && r.retry);
-        r = e.failed(K::Image, 9);
+        r = e.failed(K::Image, 9, 3);
         CHECK(r.notice && r.retry);
-        r = e.failed(K::Image, 9);
+        r = e.failed(K::Image, 9, 3);
         CHECK(!r.notice && !r.retry);
         ClipboardHostRetries f;  // the archive first, then its list
-        f.failed(K::Archive, 7);
-        r = f.failed(K::FileList, 7);
+        f.failed(K::Archive, 7, 1);
+        r = f.failed(K::FileList, 7, 1);
         CHECK(r.notice && r.retry);
     }
     // A local write of host content that keeps failing (another program holds the clipboard):
@@ -815,20 +869,73 @@ static void testClipboardChangeInputs()
         using K = ClipboardHostRetries::Kind;
         CHECK(ClipboardHostRetries::maxRetries(K::LocalWrite) == 1);
         ClipboardHostRetries e;
-        auto r = e.failed(K::Image, 7);  // a network error first
+        auto r = e.failed(K::Image, 7, 1);  // a network error first
         CHECK(r.notice && r.retry);
-        r = e.failed(K::LocalWrite, 7);  // then fetched, but not written
+        r = e.failed(K::LocalWrite, 7, 1);  // then fetched, but not written
         CHECK(r.notice && r.retry);
-        r = e.failed(K::LocalWrite, 7);
+        r = e.failed(K::LocalWrite, 7, 1);
         CHECK(!r.notice && !r.retry);
         CHECK(e.failures(K::LocalWrite) == 2);
-        r = e.failed(K::LocalWrite, 7);
+        r = e.failed(K::LocalWrite, 7, 1);
         CHECK(!r.notice && !r.retry);
         CHECK(e.failures(K::LocalWrite) == 3);
-        r = e.failed(K::LocalWrite, 8);
+        r = e.failed(K::LocalWrite, 8, 2);
         CHECK(r.notice && r.retry);
         CHECK(e.failures(K::LocalWrite) == 1);
-        CHECK(e.failures(K::Image) == 1);
+        CHECK(e.failures(K::Image) == 0);  // the host's content moved on: every record dropped
+    }
+    // A text-only host's key is a hash of its text and comes back when the same text is copied
+    // there again: new content, so its retries and notice start over although the key is the one
+    // the exhausted record is for. The records go by the count of host changes, which never comes
+    // back (review B5 fixes, 2). A write of older content reported late (the host moved on
+    // meanwhile) is recorded on its own, not against the current content.
+    {
+        using K = ClipboardHostRetries::Kind;
+        const quint64 textA = 0xA;
+        ClipboardHostRetries e;
+        auto r = e.failed(K::LocalWrite, textA, 1);  // text A: not written, twice
+        CHECK(r.notice && r.retry);
+        r = e.failed(K::LocalWrite, textA, 1);
+        CHECK(!r.notice && !r.retry);
+        r = e.failed(K::LocalWrite, textA, 1);
+        CHECK(!r.notice && !r.retry);
+        // Text B comes and is written fine (no failure recorded); then text A again (change 3)
+        r = e.failed(K::LocalWrite, textA, 3);
+        CHECK(r.notice && r.retry);
+        CHECK(e.failures(K::LocalWrite) == 1);
+        r = e.failed(K::LocalWrite, textA, 3);
+        CHECK(!r.notice && !r.retry);
+        // Host content 7 fails a fetch, the host moves on to 8 (change 5), and only then does the
+        // main thread report that 7 could not be written: 8's own failures start at one
+        ClipboardHostRetries f;
+        r = f.failed(K::Image, 7, 4);
+        CHECK(r.notice && r.retry);
+        r = f.failed(K::LocalWrite, 7, 5);
+        CHECK(r.notice && r.retry);
+        CHECK(f.failures(K::Image) == 0);
+        r = f.failed(K::LocalWrite, 8, 5);
+        CHECK(r.notice && r.retry);
+        r = f.failed(K::LocalWrite, 8, 5);
+        CHECK(!r.notice && !r.retry);
+    }
+    // Host text whose fetch hits a network error right after the info request got through:
+    // fetched again twice at most, then not until the host's clipboard changes, instead of on
+    // every poll for as long as the error lasts (review B5 fixes, 3).
+    {
+        using K = ClipboardHostRetries::Kind;
+        CHECK(ClipboardHostRetries::maxRetries(K::Text) == 2);
+        ClipboardHostRetries e;
+        auto r = e.failed(K::Text, 7, 1);
+        CHECK(r.notice && r.retry);
+        r = e.failed(K::Text, 7, 1);
+        CHECK(!r.notice && r.retry);
+        r = e.failed(K::Text, 7, 1);
+        CHECK(!r.notice && !r.retry);
+        CHECK(e.failures(K::Text) == ClipboardHostRetries::maxRetries(K::Text) + 1);  // the log line
+        r = e.failed(K::Text, 7, 1);
+        CHECK(!r.notice && !r.retry);
+        r = e.failed(K::Text, 8, 2);
+        CHECK(r.notice && r.retry);
     }
 
     // What the local clipboard holds: our marker, an empty clipboard, and our list while the
