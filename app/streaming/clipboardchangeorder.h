@@ -20,6 +20,10 @@
 // - a host change (a new host clipboard sequence number; for text-only hosts, new text) gets the
 //   count at the time the poll that found it started (ClipboardHostPolling): newer than every
 //   local change seen before that poll, older than every local change seen after it;
+// - nothing on the host's clipboard under a new sequence number (emptied, or the program copying
+//   there has not written its formats yet) is recorded as seen but is no change (hostNone): it
+//   delivers nothing, so local content waiting to be sent still goes, and what is written there
+//   next is the change;
 // - content this side put on the host takes the order of its local change; dropped files the count
 //   when they were dropped (newer on the host than every local change so far);
 // - host content found when sync is set up is not a change while no setup failed before (at stream
@@ -192,6 +196,24 @@ public:
         return true;
     }
 
+    // A pull found nothing on the host's clipboard under key. Recorded as seen, so it is not looked
+    // at on every poll (the quick polls that follow look again: hostRetry), but it is no change:
+    // nothing is delivered, so local content waiting to be sent still goes (localMayReplaceHost),
+    // and what the host holds next is the change, in the order of the pull that finds it. Host
+    // content waiting to be fetched again is gone from the host. True when the key is new, or
+    // waiting to be looked at again.
+    bool hostNone(uint64_t key)
+    {
+        if (m_HostKnown && key == m_HostKey && !m_HostPending) {
+            return false;
+        }
+        m_HostKnown = true;
+        m_HostKey = key;
+        m_HostPending = false;
+        m_Matching = false;
+        return true;
+    }
+
     // Host content key was not delivered (the fetch failed in a way that may pass, or it could not
     // be put on the local clipboard): fetched again on a later pull, unless newer host content was
     // seen (or sent) meanwhile or a local change comes first.
@@ -330,43 +352,61 @@ struct ClipboardFilesSummary
     }
 };
 
-// Hermit: host images and files whose fetch hit a network error without a reply (a timeout,
-// connection refused or reset, a transfer cut off), which may be passing: one notice per content,
-// and whether it is fetched again. Each kind of transfer keeps its own record, so a failed file
-// list does not use up the one retry and notice of the archive of the same files (and the other
-// way round).
-class ClipboardHostNetworkErrors
+// Hermit: host content that could not be delivered in a way that may be passing: its fetch hit a
+// network error without a reply (a timeout, connection refused or reset, a transfer cut off), or
+// it could not be written to the local clipboard (another program held it). One notice per content
+// and kind, and whether it is fetched again: a few times at most (maxRetries), then not until the
+// host's clipboard changes (a new key), so a failure that lasts does not fetch the same image (up
+// to 32 MB) or archive (up to 256 MB) on every poll, every second. Each kind keeps its own record,
+// so a failed file list does not use up the retries and notice of the archive of the same files
+// (and the other way round), nor does a failed fetch those of a failed local write.
+class ClipboardHostRetries
 {
 public:
-    enum class Transfer {
-        Image,     // large: fetched once more at most, then not until the host's clipboard changes
-        FileList,  // small (names and sizes): fetched again each time
-        Archive,   // large, like an image
+    enum class Kind {
+        Image,       // large: fetched once more at most
+        FileList,    // small (names and sizes), but the host's walk may take a while: twice more
+        Archive,     // large, like an image
+        LocalWrite,  // any content not written locally: fetched once more at most
     };
 
     struct Outcome {
-        bool notice = false;  // the first error for this content and transfer: say so
+        bool notice = false;  // the first failure for this content and kind: say so
         bool retry = false;   // fetch it again on a later pull (ClipboardChangeOrder::hostRetry)
     };
 
-    // A network error for transfer of host content key
-    Outcome failed(Transfer transfer, uint64_t key)
+    // How often content of kind is fetched again for the same key
+    static int maxRetries(Kind kind)
     {
-        Seen& seen = m_Seen[static_cast<int>(transfer)];
+        return kind == Kind::FileList ? 2 : 1;
+    }
+
+    // Host content key failed in the way kind stands for
+    Outcome failed(Kind kind, uint64_t key)
+    {
+        Seen& seen = m_Seen[static_cast<int>(kind)];
+        if (!seen.valid || seen.key != key) {
+            seen.valid = true;
+            seen.key = key;
+            seen.failures = 0;
+        }
+        seen.failures++;
         Outcome outcome;
-        outcome.notice = !seen.valid || seen.key != key;
-        outcome.retry = outcome.notice || transfer == Transfer::FileList;
-        seen.valid = true;
-        seen.key = key;
+        outcome.notice = seen.failures == 1;
+        outcome.retry = seen.failures <= maxRetries(kind);
         return outcome;
     }
+
+    // Failures of kind recorded for the key seen last
+    int failures(Kind kind) const { return m_Seen[static_cast<int>(kind)].failures; }
 
 private:
     struct Seen {
         bool valid = false;
         uint64_t key = 0;
+        int failures = 0;
     };
-    Seen m_Seen[3];
+    Seen m_Seen[4];
 };
 
 // Hermit: a clipboard job that came a moment too early (another program still holds a clipboard,

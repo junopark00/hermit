@@ -295,12 +295,17 @@ UINT dropEffectFormat()
     return format;
 }
 
-bool openClipboardWithRetry(HWND owner)
+// wait: another application may hold the clipboard for a moment, so this tries for up to 300 ms
+// (on the main thread, which streams meanwhile); Hermit: a read tried again shortly anyway
+// (ClipboardPushRetries) tries once, without waiting.
+bool openClipboard(HWND owner, bool wait)
 {
-    // Another application may hold the clipboard for a moment.
     for (int attempt = 0; attempt < 20; attempt++) {
         if (OpenClipboard(owner)) {
             return true;
+        }
+        if (!wait) {
+            break;
         }
         Sleep(15);
     }
@@ -329,12 +334,12 @@ QByteArray readGlobal(HANDLE handle)
 }
 
 // Reads the clipboard image as PNG if an app provided one, otherwise as a packed DIB.
-// Returns false only if the clipboard could not be opened.
-bool readLocalImage(HWND owner, QByteArray& data, bool& isDib)
+// Returns false only if the clipboard could not be opened (wait: as openClipboard).
+bool readLocalImage(HWND owner, bool wait, QByteArray& data, bool& isDib)
 {
     data.clear();
     isDib = false;
-    if (!openClipboardWithRetry(owner)) {
+    if (!openClipboard(owner, wait)) {
         return false;
     }
     if (IsClipboardFormatAvailable(pngFormat())) {
@@ -355,10 +360,10 @@ bool readLocalImage(HWND owner, QByteArray& data, bool& isDib)
     return true;
 }
 
-QStringList readLocalFiles(HWND owner)
+QStringList readLocalFiles(HWND owner, bool wait)
 {
     QStringList paths;
-    if (!openClipboardWithRetry(owner)) {
+    if (!openClipboard(owner, wait)) {
         return paths;
     }
     HDROP drop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
@@ -408,7 +413,7 @@ bool writeLocalClipboard(HWND owner, const QVector<QPair<UINT, QByteArray>>& for
         }
         handles.append(handle);
     }
-    if (!openClipboardWithRetry(owner)) {
+    if (!openClipboard(owner, true)) {
         for (HGLOBAL h : handles) {
             GlobalFree(h);
         }
@@ -559,6 +564,11 @@ ClipboardSyncWorker::ClipboardSyncWorker(NvAddress address, uint16_t httpsPort, 
       m_LocalNetworkNoticeSeq(0),
       m_UploadSentAll(false),
       m_PollTimer(nullptr),
+      m_PollFailing(false),
+      m_PollFailError(0),
+      m_PollFailStatus(0),
+      m_PollRequestFailed(false),
+      m_SetupRetryLogged(false),
       m_HostTextHashValid(false),
       m_WarnedTextOnly(false),
       m_PullDenied(false),
@@ -972,9 +982,51 @@ void ClipboardSyncWorker::handleFailure(const char* operation, int qtError, Dire
     }
 }
 
+void ClipboardSyncWorker::handlePollFailure(const char* operation, int qtError, Direction direction)
+{
+    m_PollRequestFailed = true;
+    if (m_PollFailing && m_PollFailError == qtError && m_PollFailStatus == m_LastHttpStatus) {
+        return;  // still failing the same way: said already
+    }
+    m_PollFailing = true;
+    m_PollFailError = qtError;
+    m_PollFailStatus = m_LastHttpStatus;
+    handleFailure(operation, qtError, direction);
+}
+
+void ClipboardSyncWorker::pollRecovered()
+{
+    if (!m_PollFailing || stopped()) {
+        return;
+    }
+    m_PollFailing = false;
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Clipboard check: the host answers again");
+}
+
 void ClipboardSyncWorker::forgetHostContent(quint64 key)
 {
     m_Order.hostRetry(key);
+}
+
+void ClipboardSyncWorker::hostContentNotWritten(quint64 key)
+{
+    // Counted for this content (unlike a fetch that failed, which keeps its own count): once more
+    // at most, then not until the host's clipboard changes. The main thread said that the write
+    // failed; this says whether the content comes again.
+    const ClipboardHostRetries::Kind kind = ClipboardHostRetries::Kind::LocalWrite;
+    const ClipboardHostRetries::Outcome outcome = m_HostRetries.failed(kind, key);
+    if (outcome.retry) {
+        if (m_Order.hostKnown() && m_Order.hostKey() == key) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Host clipboard content fetched again on a later check");
+        }
+        m_Order.hostRetry(key);
+    }
+    else if (m_HostRetries.failures(kind) == ClipboardHostRetries::maxRetries(kind) + 1) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Host clipboard content could not be written again; not fetched again until the host clipboard changes");
+    }
 }
 
 void ClipboardSyncWorker::recordLocalSent(const QByteArray& responseBody, quint64 localOrder)
@@ -1072,7 +1124,9 @@ void ClipboardSyncWorker::init(quint64 localChanges)
     // (ClipboardChangeOrder::hostSetUp). When the host did not change after all, its content wins
     // over that older local content (copy it again to send it), which is better than overwriting a
     // copy made on the host during the stream.
-    if (m_Order.setupStarting(localChanges)) {
+    if (m_Order.setupStarting(localChanges) && !m_SetupRetryLogged) {
+        // Said once: the polls try every 2 s until the host answers
+        m_SetupRetryLogged = true;
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Clipboard sync: setting up again after it failed");
     }
@@ -1116,7 +1170,10 @@ void ClipboardSyncWorker::init(quint64 localChanges)
         }
         return;
     }
-    handleFailure("setup", error, Direction::Pull);
+    if (stopped()) {
+        return;  // Hermit: the request was cut short because sync stopped, not by the host
+    }
+    handlePollFailure("setup", error, Direction::Pull);
     if (m_Mode == Mode::Unknown) {
         // Hermit: tried again by the next job, which then takes what it finds for a host change
         // (ClipboardChangeOrder::hostSetUp)
@@ -1528,6 +1585,7 @@ static bool shouldFetch(ClipboardChangeOrder::HostContent decision)
 ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
 {
     using Pull = ClipboardHostPolling::Pull;
+    m_PollRequestFailed = false;
     if (!ensureReady(0, localChanges)) {
         // Hermit: a setup that found the host's clipboard busy is polled again shortly too
         return m_Mode == Mode::Unknown && hostClipboardBusy() ? Pull::Busy : Pull::Done;
@@ -1541,7 +1599,10 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
 
     if (m_Mode == Mode::Legacy) {
         if (!request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
-            handleFailure("fetch", error, Direction::Pull);
+            if (stopped()) {
+                return Pull::Done;  // Hermit: cut short because sync stopped, not by the host
+            }
+            handlePollFailure("fetch", error, Direction::Pull);
             return hostClipboardBusy() ? Pull::Busy : Pull::Done;
         }
         // No sequence numbers: the host's text itself tells whether it changed.
@@ -1568,7 +1629,10 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
     }
 
     if (!request(QStringLiteral("info"), nullptr, k_InfoTimeoutMs, body, error)) {
-        handleFailure("check", error, Direction::Pull);
+        if (stopped()) {
+            return Pull::Done;  // Hermit: cut short because sync stopped, not by the host
+        }
+        handlePollFailure("check", error, Direction::Pull);
         return hostClipboardBusy() ? Pull::Busy : Pull::Done;
     }
     quint32 seq = 0;
@@ -1580,6 +1644,20 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
     }
     QByteArray files;
     m_HostStreamsFiles = parseField(body, "files", files) && files == "stream";
+
+    if (type == "none") {
+        // Hermit: nothing on the host's clipboard: no change (nothing to deliver, and local content
+        // waiting to be sent still goes), but recorded as seen under this sequence number
+        // (ClipboardChangeOrder::hostNone). Under a new number, the program copying on the host
+        // may have emptied its clipboard and not written its formats yet, so poll looks at it
+        // again shortly, and it stays recorded once it is still nothing after the last quick poll.
+        if (!m_Order.hostNone(seq)) {
+            return Pull::Done;
+        }
+        m_HostTextHashValid = false;
+        return Pull::NoneNew;
+    }
+
     // Unchanged since we last pushed or pulled, or waiting to be fetched again but older than a
     // local change; Hermit: or the files sent before without the host's confirmation, placed on
     // its clipboard after all (on a host that lists its files, pullFileList compares the list with
@@ -1600,21 +1678,27 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
 
     if (type == "text") {
         if (!request(QStringLiteral("text"), nullptr, k_TextTimeoutMs, body, error)) {
-            handleFailure("fetch", error, Direction::Pull);
+            if (stopped()) {
+                return Pull::Done;  // Hermit: cut short because sync stopped, not by the host
+            }
             if (m_LastHttpStatus == 413) {
                 // The host refused to send its text as too large: said once, and this content is
                 // not fetched again on every poll.
+                handleFailure("fetch", error, Direction::Pull);
                 m_HostTextHashValid = false;
                 notify(HostTextTooLarge, true);
             }
             else if (m_LastHttpStatus >= 500 && !hostClipboardBusy()) {
                 // The host could not read its text (500, for example): said once, and this
                 // content is not fetched again on every poll. Busy (503), no active stream (403)
-                // and network errors without a reply (a timeout) are retried.
+                // and network errors without a reply (a timeout) are retried (Hermit: on every
+                // poll, so said once while they last).
+                handleFailure("fetch", error, Direction::Pull);
                 m_HostTextHashValid = false;
                 notify(HostTextFailed, true);
             }
             else {
+                handlePollFailure("fetch", error, Direction::Pull);
                 m_Order.hostRetry(seq);
             }
             return hostClipboardBusy() ? Pull::Busy : Pull::Done;
@@ -1637,15 +1721,8 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
     }
 
     // For images and files, the content stays taken even on failure so the same content is not
-    // retried on every poll (Hermit: except after a busy host or a network error).
+    // retried on every poll (Hermit: except after a busy host or a network error, a few times).
     m_HostTextHashValid = false;
-
-    if (type == "none") {
-        // Hermit: nothing under a new sequence number (recorded as seen above): the program
-        // copying on the host may have emptied its clipboard and not written its formats yet, so
-        // poll looks at this number again shortly.
-        return Pull::NoneNew;
-    }
 
 #ifdef Q_OS_WIN32
     if (type == "image") {
@@ -1685,7 +1762,7 @@ ClipboardHostPolling::Pull ClipboardSyncWorker::pullOnce(quint64 localChanges)
                 // (unless a local change comes first), with one notice. After a second one, not
                 // fetched again until the host's clipboard changes.
                 handleFailure("image fetch", error, Direction::Pull);
-                if (retryAfterNetworkError(ClipboardHostNetworkErrors::Transfer::Image)) {
+                if (retryAfterNetworkError(ClipboardHostRetries::Kind::Image)) {
                     notify(HostImageFailed, true);
                 }
             }
@@ -1804,6 +1881,9 @@ void ClipboardSyncWorker::poll()
     // request, so a copy made while the host answers wins over what the host held when asked.
     const quint64 localChanges = m_Control->localChanges.load();
     const ClipboardHostPolling::Pull result = pullOnce(localChanges);
+    if (!m_PollRequestFailed) {
+        pollRecovered();  // Hermit: the host answered this poll's requests (said once after failures)
+    }
     const int delayMs = m_Polling.next(result, pollingHost(), pollingEnded());
     if (delayMs == ClipboardHostPolling::k_RetryDelayMs) {
         // Hermit: the host's clipboard was busy (another program held it), or empty under a new
@@ -1917,16 +1997,20 @@ void ClipboardSyncWorker::failedHostFiles(int qtError, bool archive)
         // A timeout: the host may still be preparing the files (cloud placeholders it has to fetch
         // first, for example), so they are offered again on a later poll. Hermit: so are they
         // after a network error without a reply (connection refused or reset, a transfer cut
-        // off), which may be passing too. One notice per content (and transfer), as such an
-        // error can come every time. The archive (up to 256 MB) is fetched once more at most,
-        // then not until the host's clipboard changes; the list (no file data) each time.
-        if (retryAfterNetworkError(archive ? ClipboardHostNetworkErrors::Transfer::Archive
-                                           : ClipboardHostNetworkErrors::Transfer::FileList)) {
+        // off), which may be passing too. One notice per content (and kind), as such an error
+        // can come every time. The archive (up to 256 MB) is fetched once more at most, the list
+        // (no file data, but the host's walk may take longer than its timeout) twice more, then
+        // not until the host's clipboard changes, so a walk that never ends is not started
+        // again on every poll.
+        const ClipboardHostRetries::Kind kind = archive ? ClipboardHostRetries::Kind::Archive
+                                                        : ClipboardHostRetries::Kind::FileList;
+        if (retryAfterNetworkError(kind)) {
             notify(HostFilesFailed, true);
         }
-        else if (archive) {
+        else if (m_HostRetries.failures(kind) == ClipboardHostRetries::maxRetries(kind) + 1) {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "Host files failed again; not fetched again until the host clipboard changes");
+                        "Host %s failed again; not fetched again until the host clipboard changes",
+                        archive ? "files" : "file list");
         }
         return;
     }
@@ -1949,10 +2033,10 @@ void ClipboardSyncWorker::failedHostFiles(int qtError, bool archive)
     notify(HostFilesFailed, true);
 }
 
-bool ClipboardSyncWorker::retryAfterNetworkError(ClipboardHostNetworkErrors::Transfer transfer)
+bool ClipboardSyncWorker::retryAfterNetworkError(ClipboardHostRetries::Kind kind)
 {
     const quint64 key = m_Order.hostKey();
-    const ClipboardHostNetworkErrors::Outcome outcome = m_HostNetworkErrors.failed(transfer, key);
+    const ClipboardHostRetries::Outcome outcome = m_HostRetries.failed(kind, key);
     if (outcome.retry) {
         m_Order.hostRetry(key);
     }
@@ -2258,18 +2342,16 @@ void ClipboardSync::pushLocalToHost(Trigger trigger)
     pushLocal(trigger);
 }
 
-void ClipboardSync::localClipboardBusy(Trigger trigger, quint32 localSeq, const char* what)
+bool ClipboardSync::localClipboardBusy(Trigger trigger, quint32 localSeq, const char* what)
 {
     // Hermit: the program that copied still holds the clipboard (the snipping tool does for a
     // while after Win+Shift+S). Read again shortly while the clipboard still holds this content,
-    // a few times; after the last retry, as before, on the next trigger. The content stays
-    // unhandled meanwhile, so a trigger that comes first reads it, and the retry then finds it
-    // handled. The worker times the retry (the main thread runs no Qt timers while it streams)
-    // and hands it back as a LocalRetry event (onHostContent).
+    // a few times; after the last retry, as before, on the next trigger (text: given up on). The
+    // content stays unhandled meanwhile, so a trigger that comes first reads it, and the retry
+    // then finds it handled. The worker times the retry (the main thread runs no Qt timers while
+    // it streams) and hands it back as a LocalRetry event (onHostContent).
     if (!m_PushRetries.again(ClipboardPushRetries::Read::Busy, localSeq)) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Local clipboard %s not read: the clipboard is busy; tried again on the next trigger", what);
-        return;
+        return false;
     }
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Local clipboard %s read again in %d ms (%d of %d): the clipboard is busy",
@@ -2278,9 +2360,10 @@ void ClipboardSync::localClipboardBusy(Trigger trigger, quint32 localSeq, const 
     const int kind = static_cast<int>(trigger);
     QMetaObject::invokeMethod(worker, [worker, kind, localSeq]() { worker->retryLocalPush(kind, localSeq); },
                               Qt::QueuedConnection);
+    return true;
 }
 
-void ClipboardSync::pushLocal(Trigger trigger)
+void ClipboardSync::pushLocal(Trigger trigger, bool retry)
 {
     if (m_Stopped->load()) {
         return;
@@ -2324,8 +2407,16 @@ void ClipboardSync::pushLocal(Trigger trigger)
         SDL_free(text);
         if (utf8.isEmpty()) {
             // Hermit: text is listed, but SDL opens the clipboard once without waiting and gives
-            // nothing while another program holds it: read again shortly (left unhandled)
-            localClipboardBusy(trigger, localSeq, "text");
+            // nothing while another program holds it (SDL does not tell this from text that is
+            // empty): read again shortly (left unhandled). Still nothing after the last retry is
+            // empty text, or given up on: handled, so a focus gain does not read it again and
+            // again.
+            if (localClipboardBusy(trigger, localSeq, "text")) {
+                return;
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Local clipboard text not read: the clipboard is busy or the text is empty; not sent");
+            markHandled();
             return;
         }
         markHandled();
@@ -2335,8 +2426,12 @@ void ClipboardSync::pushLocal(Trigger trigger)
     if (localHasImage()) {
         QByteArray data;
         bool isDib = false;
-        if (!readLocalImage(owner, data, isDib)) {
-            localClipboardBusy(trigger, localSeq, "image");  // Hermit: read again shortly (left unhandled)
+        if (!readLocalImage(owner, !retry, data, isDib)) {
+            // Hermit: read again shortly (left unhandled); after the last retry, on the next trigger
+            if (!localClipboardBusy(trigger, localSeq, "image")) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "Local clipboard image not read: the clipboard is busy; tried again on the next trigger");
+            }
             return;
         }
         markHandled();
@@ -2357,11 +2452,14 @@ void ClipboardSync::pushLocal(Trigger trigger)
         if (trigger == Trigger::ClipboardChanged) {
             return;
         }
-        const QStringList paths = readLocalFiles(owner);
+        const QStringList paths = readLocalFiles(owner, !retry);
         if (paths.isEmpty()) {
             // Clipboard busy or empty list: left unhandled so the next trigger retries; Hermit:
             // and read again shortly while files are listed
-            localClipboardBusy(trigger, localSeq, "files");
+            if (!localClipboardBusy(trigger, localSeq, "files")) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "Local clipboard files not read: the clipboard is busy; tried again on the next trigger");
+            }
             return;
         }
         markHandled();
@@ -2418,7 +2516,7 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
         // its own). A trigger that read it first has marked it handled, and the push then does
         // nothing (ClipboardPushRetries).
         if (ClipboardPushRetries::applies(owned->localSeq, GetClipboardSequenceNumber())) {
-            pushLocal(static_cast<Trigger>(owned->localTrigger));
+            pushLocal(static_cast<Trigger>(owned->localTrigger), true);
         }
 #endif
         return;
@@ -2488,12 +2586,12 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
     }
     if (owned->kind == ClipboardHostContent::RemoteFilesFailed) {
         // The clipboard stayed busy: the next pull fetches the list again (unless newer host
-        // content came meanwhile).
+        // content came meanwhile; Hermit: once more at most, hostContentNotWritten).
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "Clipboard files from host could not be offered; fetched again on the next pull");
+                    "Clipboard files from host could not be offered");
         ClipboardSyncWorker* worker = m_Worker;
         const quint64 key = owned->hostKey;
-        post([worker, key]() { worker->forgetHostContent(key); });
+        post([worker, key]() { worker->hostContentNotWritten(key); });
         return;
     }
     if (owned->kind == ClipboardHostContent::RemoteFilesSuperseded) {
@@ -2544,12 +2642,12 @@ void ClipboardSync::onHostContent(ClipboardHostContent* content)
     if (!ok) {
         // The clipboard was busy (another program, or our own host file list being set). The
         // worker already recorded this host content as seen; forgotten, so the next pull fetches
-        // it again instead of dropping it.
+        // it again instead of dropping it (Hermit: once more at most, hostContentNotWritten).
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "Failed to update the local clipboard with host %s; fetched again on the next pull", what);
+                    "Failed to update the local clipboard with host %s", what);
         ClipboardSyncWorker* worker = m_Worker;
         const quint64 key = owned->hostKey;
-        post([worker, key]() { worker->forgetHostContent(key); });
+        post([worker, key]() { worker->hostContentNotWritten(key); });
         return;
     }
     markLocalHandled();

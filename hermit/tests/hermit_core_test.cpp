@@ -349,6 +349,45 @@ static void testClipboardChangeOrder()
         CHECK(o.hostSeen(101, 2) == HC::Fetch);
     }
 
+    // An emptied host clipboard (nothing under a new sequence number) is recorded as seen but is
+    // no host change: a local copy waiting to be sent still goes, and nothing is delivered. What
+    // the host holds next is the change, in the order of the poll that finds it (a quick poll
+    // after the empty one as well), and wins over the older local copy as usual (review B5, 3).
+    {
+        ClipboardChangeOrder o;
+        o.hostRecorded(100);
+        const quint64 local = 1;  // a local copy observed, its push queued behind a poll
+        CHECK(o.hostNone(101));   // the poll finds nothing under a new number
+        CHECK(o.hostKey() == 101 && o.hostOrder() == 0 && !o.hostPending());
+        CHECK(o.localMayReplaceHost(local));  // still sent
+        CHECK(!o.hostNone(101));  // the next poll: nothing new
+        o.hostRetry(101);         // looked at again by a quick poll
+        CHECK(o.hostPending());
+        CHECK(o.hostNone(101));   // still nothing: looked at again
+        o.hostRetry(101);
+        CHECK(o.hostSeen(102, 2) == HC::Fetch);  // a quick poll finds content: a change as before
+        CHECK(o.hostOrder() == 2);
+        CHECK(!o.localMayReplaceHost(2));
+        CHECK(o.localMayReplaceHost(3));
+        // Still nothing after the last quick poll: stays recorded, not looked at every second
+        ClipboardChangeOrder p;
+        p.hostRecorded(100);
+        CHECK(p.hostNone(101));
+        p.hostRetry(101);
+        CHECK(p.hostNone(101));
+        CHECK(!p.hostNone(101));
+        CHECK(!p.hostPending());
+        CHECK(p.hostSeen(101, 5) == HC::Unchanged);
+        // Host content waiting to be fetched again is gone once the host's clipboard is emptied
+        ClipboardChangeOrder q;
+        q.hostRecorded(100);
+        CHECK(q.hostSeen(101, 0) == HC::Fetch);
+        q.hostRetry(101);
+        CHECK(q.hostNone(102));
+        CHECK(!q.hostPending());
+        CHECK(q.hostSeen(102, 0) == HC::Unchanged);
+    }
+
     // Forgetting content that is no longer the host's current content does nothing.
     {
         ClipboardChangeOrder o;
@@ -729,32 +768,67 @@ static void testClipboardChangeInputs()
     }
 
     // Network errors fetching host content: one notice per content; an image or archive is fetched
-    // once more at most, a file list each time. The list and the archive of the same files keep
-    // their own records, so a failed list (then an archive for paths over 259 characters) does
-    // not use up the archive's retry and notice (round 11, 2).
+    // once more at most, a file list twice more (the host's walk may outlast its timeout), then
+    // not until the host's clipboard changes, so a walk that never ends is not started on every
+    // poll. The list and the archive of the same files keep their own records, so a failed list
+    // (then an archive for paths over 259 characters) does not use up the archive's retry and
+    // notice (round 11, 2; review B5, 2).
     {
-        using T = ClipboardHostNetworkErrors::Transfer;
-        ClipboardHostNetworkErrors e;
-        auto r = e.failed(T::FileList, 7);
+        using K = ClipboardHostRetries::Kind;
+        CHECK(ClipboardHostRetries::maxRetries(K::Image) == 1);
+        CHECK(ClipboardHostRetries::maxRetries(K::Archive) == 1);
+        CHECK(ClipboardHostRetries::maxRetries(K::FileList) == 2);
+        ClipboardHostRetries e;
+        auto r = e.failed(K::FileList, 7);
         CHECK(r.notice && r.retry);
-        r = e.failed(T::FileList, 7);
+        r = e.failed(K::FileList, 7);
         CHECK(!r.notice && r.retry);
-        r = e.failed(T::Archive, 7);  // the same files, as an archive
+        r = e.failed(K::Archive, 7);  // the same files, as an archive
         CHECK(r.notice && r.retry);
-        r = e.failed(T::Archive, 7);
+        r = e.failed(K::Archive, 7);
         CHECK(!r.notice && !r.retry);
-        r = e.failed(T::FileList, 7);
-        CHECK(!r.notice && r.retry);
-        r = e.failed(T::Archive, 8);  // the host's clipboard changed
-        CHECK(r.notice && r.retry);
-        r = e.failed(T::Image, 9);
-        CHECK(r.notice && r.retry);
-        r = e.failed(T::Image, 9);
+        CHECK(e.failures(K::Archive) == 2);
+        r = e.failed(K::FileList, 7);  // the third failure of the list: given up on
         CHECK(!r.notice && !r.retry);
-        ClipboardHostNetworkErrors f;  // the archive first, then its list
-        f.failed(T::Archive, 7);
-        r = f.failed(T::FileList, 7);
+        CHECK(e.failures(K::FileList) == 3);
+        r = e.failed(K::FileList, 7);
+        CHECK(!r.notice && !r.retry);
+        r = e.failed(K::Archive, 8);  // the host's clipboard changed
         CHECK(r.notice && r.retry);
+        CHECK(e.failures(K::Archive) == 1);
+        r = e.failed(K::FileList, 8);
+        CHECK(r.notice && r.retry);
+        r = e.failed(K::Image, 9);
+        CHECK(r.notice && r.retry);
+        r = e.failed(K::Image, 9);
+        CHECK(!r.notice && !r.retry);
+        ClipboardHostRetries f;  // the archive first, then its list
+        f.failed(K::Archive, 7);
+        r = f.failed(K::FileList, 7);
+        CHECK(r.notice && r.retry);
+    }
+    // A local write of host content that keeps failing (another program holds the clipboard):
+    // fetched once more, then not until the host's clipboard changes, so a large image or
+    // archive is not downloaded on every poll. Counted apart from a failed fetch of the same
+    // content, and the count starts over with the host's next content (review B5, 1).
+    {
+        using K = ClipboardHostRetries::Kind;
+        CHECK(ClipboardHostRetries::maxRetries(K::LocalWrite) == 1);
+        ClipboardHostRetries e;
+        auto r = e.failed(K::Image, 7);  // a network error first
+        CHECK(r.notice && r.retry);
+        r = e.failed(K::LocalWrite, 7);  // then fetched, but not written
+        CHECK(r.notice && r.retry);
+        r = e.failed(K::LocalWrite, 7);
+        CHECK(!r.notice && !r.retry);
+        CHECK(e.failures(K::LocalWrite) == 2);
+        r = e.failed(K::LocalWrite, 7);
+        CHECK(!r.notice && !r.retry);
+        CHECK(e.failures(K::LocalWrite) == 3);
+        r = e.failed(K::LocalWrite, 8);
+        CHECK(r.notice && r.retry);
+        CHECK(e.failures(K::LocalWrite) == 1);
+        CHECK(e.failures(K::Image) == 1);
     }
 
     // What the local clipboard holds: our marker, an empty clipboard, and our list while the

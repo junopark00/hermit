@@ -222,7 +222,8 @@ to sync the clipboard in both directions.
     for up to 5 minutes; these answers do not count as attempts.
   - The list itself may take up to 2 minutes (folders in OneDrive, for example). If it does not
     arrive, or the network fails while it is fetched, it is fetched again on a later check (unless
-    you copied something locally since), with one notice for those files.
+    you copied something locally since), with one notice for those files; after two more such
+    failures it is not fetched again until the host clipboard changes.
     Files that come over as one archive (described below) are fetched once more after a network
     error or timeout, with a notice of their own also when their list failed before; when that
     fails too, they are not fetched again until the host clipboard changes. After an error on the host (HTTP 500, for example), host files are fetched once more;
@@ -251,7 +252,10 @@ to sync the clipboard in both directions.
     your copy wins and is sent to the host. The same applies to host content still on its way when
     you copy locally, also when Hermit has not handled that copy yet. A host change counts from the
     check that found it: what you copy locally before that check loses to it, what you copy after
-    wins.
+    wins. Content that could not be written to the local clipboard (another program held it) is
+    fetched once more; when that fails too, not again until the host clipboard changes.
+  - An emptied host clipboard is not a change: nothing comes over, what you copied locally is
+    still sent, and what is written on the host next counts from the check that finds it.
   - An empty local clipboard does not count as a copy, nor does a list of host files that Hermit is
     still putting on the clipboard. What another program copies meanwhile does (an e-mail
     attachment, for example).

@@ -128,10 +128,15 @@ public:
     // a new run of quick polls should the host's clipboard be busy or still empty.
     void pollNow();
 
-    // Host content key (ClipboardHostContent::hostKey) could not be put on the local clipboard:
-    // a later pull fetches it again, unless newer host content was seen or sent meanwhile, or a
-    // local change came after it.
+    // Host content key (ClipboardHostContent::hostKey) is no longer on the local clipboard (removed
+    // with a superseded host file list): a later pull fetches it again, unless newer host content
+    // was seen or sent meanwhile, or a local change came after it.
     void forgetHostContent(quint64 key);
+    // Hermit: host content key could not be put on the local clipboard (another program held it):
+    // fetched again like forgetHostContent, once more at most for this content; after that, not
+    // until the host's clipboard changes (ClipboardHostRetries), so a write that keeps failing
+    // does not fetch a large image or archive on every poll.
+    void hostContentNotWritten(quint64 key);
 
     // Hermit: the main thread could not read the local clipboard content at localSeq (another
     // program held it): hands it a LocalRetry event after ClipboardPushRetries::k_RetryDelayMs
@@ -184,17 +189,23 @@ private:
     // Host files not fetched for another reason than those with their own notice: says so, and
     // leaves the content to be fetched again on the next pull when that may help. Hermit: archive:
     // the files themselves (large), fetched again once at most after a network error; else their
-    // list (small), fetched again each time, with one notice.
+    // list (small), fetched again twice at most, with one notice.
     void failedHostFiles(int qtError, bool archive);
     // Hermit: a network error without a reply (timeout, connection refused or reset, a transfer cut
-    // off) for host images or files, by transfer. True the first time for this host content and
-    // transfer: the caller shows its notice. The content is fetched again on a later pull; an image
-    // or archive only once, then not until the host's clipboard changes, a file list each time
-    // (ClipboardHostNetworkErrors).
-    bool retryAfterNetworkError(ClipboardHostNetworkErrors::Transfer transfer);
+    // off) for host images or files, by kind. True the first time for this host content and kind:
+    // the caller shows its notice. The content is fetched again on a later pull, an image or
+    // archive once, a file list twice, then not until the host's clipboard changes
+    // (ClipboardHostRetries).
+    bool retryAfterNetworkError(ClipboardHostRetries::Kind kind);
     // Logs a failed request; a missing endpoint turns sync off, a missing permission turns off
     // that direction only, with a notice.
     void handleFailure(const char* operation, int qtError, Direction direction);
+    // Hermit: handleFailure for the requests a poll repeats every second or two (the setup, the
+    // info or text request, a text fetch tried again): logged when the poll fails in a new way
+    // (another error or status, or the first failure after the host answered), silent while it
+    // keeps failing the same way, and pollRecovered says once when the host answers again.
+    void handlePollFailure(const char* operation, int qtError, Direction direction);
+    void pollRecovered();
     void denyDirection(Direction direction);
     // Shows a ClipboardNotice now; repeat: also once more when the user returns to the stream window.
     void notify(int notice, bool repeat);
@@ -237,9 +248,16 @@ private:
     bool m_HostStreamsFiles;  // "files=stream" in the host's info reply
     bool m_HostFilesErrorKeyValid;  // Hermit: host files of m_HostFilesErrorKey failed once with a host error
     quint64 m_HostFilesErrorKey;
-    ClipboardHostNetworkErrors m_HostNetworkErrors;  // Hermit: host content that had a network error, by transfer
+    ClipboardHostRetries m_HostRetries;  // Hermit: host content that had a network error or failed to be written locally, by kind
     ClipboardHostPolling m_Polling;  // Hermit: when the host clipboard is polled next (cadence, quick polls after a busy host)
     QTimer* m_PollTimer;             // Hermit: single-shot, created on this thread for the first poll
+    // Hermit: the poll's request failed and was logged, and how (handlePollFailure); whether a
+    // request of the poll in progress failed (pollRecovered otherwise); the setup retry said once
+    bool m_PollFailing;
+    int m_PollFailError;
+    int m_PollFailStatus;
+    bool m_PollRequestFailed;
+    bool m_SetupRetryLogged;
     bool m_LocalNetworkNoticeSeqValid;  // Hermit: local content of m_LocalNetworkNoticeSeq had a network error
     quint32 m_LocalNetworkNoticeSeq;
     bool m_UploadSentAll;  // Hermit: the last upload sent every byte (transfer)
@@ -333,12 +351,14 @@ private:
     // sequence number, read before the content
     ClipboardLocalChanges::Content localClipboard(quint32& seq) const;
     // Hermit: pushLocalToHost without what a trigger does once (a focus gain's bookkeeping): also
-    // a retry's push (onHostContent, LocalRetry)
-    void pushLocal(Trigger trigger);
+    // a retry's push (onHostContent, LocalRetry; retry), which opens the clipboard once without
+    // waiting for it, as the retry after it is scheduled anyway and the main thread streams
+    void pushLocal(Trigger trigger, bool retry = false);
     // Hermit: the local clipboard content at localSeq (what: text, image or files, for the log)
     // could not be read because another program holds the clipboard: read again shortly while
-    // the clipboard still holds it (ClipboardPushRetries), through the worker's timer
-    void localClipboardBusy(Trigger trigger, quint32 localSeq, const char* what);
+    // the clipboard still holds it (ClipboardPushRetries), through the worker's timer. False
+    // once the retries for this content ran out: the caller says what happens then.
+    bool localClipboardBusy(Trigger trigger, quint32 localSeq, const char* what);
     void post(const std::function<void()>& job);
     void releaseHostFileList();
 
