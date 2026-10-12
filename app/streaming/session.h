@@ -342,7 +342,9 @@ private:
     void finishCursorShapeFetch(uint32_t id, bool failed);
     void applyCursorModeResult(bool requestedLocal, int result);
     void refreshCursorOverlayState();
+    void cancelCursorModeRetry();
     void cancelCursorTimers();
+    SDL_TimerID startCursorRetryTimer(int kind, uint32_t id);
 
     // Hermit: the 2-second retries of the local cursor (SDL timer thread): posts an event
     static

@@ -2002,12 +2002,23 @@ Uint32 Session::cursorRetryTimerCallback(Uint32 interval, void* param)
     return 0;  // one-shot
 }
 
-void Session::cancelCursorTimers()
+SDL_TimerID Session::startCursorRetryTimer(int kind, uint32_t id)
+{
+    return SDL_AddTimer(CURSOR_RETRY_DELAY_MS, cursorRetryTimerCallback,
+        reinterpret_cast<void*>(static_cast<intptr_t>(((uint64_t)m_CursorModeSerial << 34) | ((uint64_t)id << 2) | kind)));
+}
+
+void Session::cancelCursorModeRetry()
 {
     if (m_CursorModeRetryTimer != 0) {
         SDL_RemoveTimer(m_CursorModeRetryTimer);
         m_CursorModeRetryTimer = 0;
     }
+}
+
+void Session::cancelCursorTimers()
+{
+    cancelCursorModeRetry();
     if (m_CursorShapeRetryTimer != 0) {
         SDL_RemoveTimer(m_CursorShapeRetryTimer);
         m_CursorShapeRetryTimer = 0;
@@ -2022,10 +2033,7 @@ void Session::updateCursorMode(bool retry)
     if (!retry) {
         // A mode or setting change supersedes a pending retry and earns a new one
         m_CursorModeRetried = false;
-        if (m_CursorModeRetryTimer != 0) {
-            SDL_RemoveTimer(m_CursorModeRetryTimer);
-            m_CursorModeRetryTimer = 0;
-        }
+        cancelCursorModeRetry();
     }
     int hostVersion;
     {
@@ -2114,8 +2122,7 @@ void Session::applyCursorModeResult(bool requestedLocal, int result)
         m_CursorModeSent = -1;
         if (!m_CursorModeRetried && m_CursorModeRetryTimer == 0 && !m_CursorModeDirty) {
             m_CursorModeRetried = true;
-            m_CursorModeRetryTimer = SDL_AddTimer(CURSOR_RETRY_DELAY_MS, cursorRetryTimerCallback,
-                reinterpret_cast<void*>(static_cast<intptr_t>(((uint64_t)m_CursorModeSerial << 34) | CURSOR_RETRY_MODE)));
+            m_CursorModeRetryTimer = startCursorRetryTimer(CURSOR_RETRY_MODE, 0);
         }
     }
     else {
@@ -2167,6 +2174,7 @@ void Session::handleCursorUpdates()
     for (const CursorPacket::Update& update : std::as_const(updates)) {
         if ((update.kind == CursorPacket::Update::ShapeArrived || update.kind == CursorPacket::Update::StateArrived) &&
                 m_CursorModeSent == -1 && m_CursorOverlayState != StatsOverlay::CursorNone) {
+            // (CursorNone also covers an unsupported host.)
             // The host sends cursor messages, so it has this session in local mode (the answer
             // to the request was lost): take it as answered; a different wanted mode is sent
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: the host sends cursor messages; taking the mode as local");
@@ -2259,8 +2267,7 @@ void Session::finishCursorShapeFetch(uint32_t id, bool failed)
             m_InputHandler->localCursorShapeMissing() && m_CursorShapeRetryTimer == 0) {
         // Still the shape the host shows: ask once more after the cooldown (a state message
         // naming it after the cooldown also asks again)
-        m_CursorShapeRetryTimer = SDL_AddTimer(CURSOR_RETRY_DELAY_MS, cursorRetryTimerCallback,
-            reinterpret_cast<void*>(static_cast<intptr_t>(((uint64_t)m_CursorModeSerial << 34) | ((uint64_t)id << 2) | CURSOR_RETRY_SHAPE)));
+        m_CursorShapeRetryTimer = startCursorRetryTimer(CURSOR_RETRY_SHAPE, id);
     }
     if (m_CursorShapePendingId != 0) {
         const uint32_t pending = m_CursorShapePendingId;
