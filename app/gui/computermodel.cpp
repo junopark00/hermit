@@ -331,11 +331,9 @@ void ComputerModel::handlePowerQueryCompleted(QString uuid, bool allowed, QStrin
         const PowerModes before = m_PowerModes.value(uuid);
         if (before.sleep != modes.sleep || before.hibernate != modes.hibernate) {
             m_PowerModes[uuid] = modes;
-            for (int i = 0; i < m_Computers.count(); i++) {
-                if (computerUuid(i) == uuid) {
-                    emit dataChanged(createIndex(i, 0), createIndex(i, 0), {CanSleepRole, CanHibernateRole});
-                    break;
-                }
+            const int row = m_Computers.indexOf(findComputer(uuid));
+            if (row >= 0) {
+                emit dataChanged(createIndex(row, 0), createIndex(row, 0), {CanSleepRole, CanHibernateRole});
             }
         }
     }

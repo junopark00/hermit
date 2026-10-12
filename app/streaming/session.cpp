@@ -2063,12 +2063,13 @@ void Session::updateCursorMode(bool retry)
                                                        .arg(wantLocal ? QStringLiteral("local") : QStringLiteral("host"))
                                                        .arg(CursorPacket::kProtocolVersion), 5000);
             result = 0;
-            for (const QByteArray& line : body.split('\n')) {
-                if (line.trimmed() == "mode=local") {
+            for (const QByteArray& rawLine : body.split('\n')) {
+                const QByteArray line = rawLine.trimmed();
+                if (line == "mode=local") {
                     result = 1;
                 }
-                else if (line.trimmed().startsWith("reason=")) {
-                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Local cursor declined by the host: %s", line.trimmed().constData() + 7);
+                else if (line.startsWith("reason=")) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Local cursor declined by the host: %s", line.constData() + 7);
                 }
             }
         } catch (const QtNetworkReplyException& e) {
@@ -2165,7 +2166,7 @@ void Session::handleCursorUpdates()
     }
     for (const CursorPacket::Update& update : std::as_const(updates)) {
         if ((update.kind == CursorPacket::Update::ShapeArrived || update.kind == CursorPacket::Update::StateArrived) &&
-                m_CursorModeSent == -1 && !m_CursorUnsupported && m_CursorOverlayState != StatsOverlay::CursorNone) {
+                m_CursorModeSent == -1 && m_CursorOverlayState != StatsOverlay::CursorNone) {
             // The host sends cursor messages, so it has this session in local mode (the answer
             // to the request was lost): take it as answered; a different wanted mode is sent
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: the host sends cursor messages; taking the mode as local");
