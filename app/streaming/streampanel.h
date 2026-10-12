@@ -94,6 +94,12 @@ public:
     // True while a Qt window of the panel is shown (Qt events must be processed).
     bool needsQtEvents() const { return m_Open || m_HandleShown; }
 
+    // Re-places the handle and the panel over the stream window when it moved, resized or
+    // reached a monitor with another DPI. sync() calls it from the SDL loop; on Windows the
+    // stream window's own message handling calls it as well, since a title-bar drag runs
+    // Windows' modal loop and the SDL loop does not get a turn until the mouse is released.
+    void followStreamWindow();
+
     void open();
     void close();
 
@@ -221,8 +227,11 @@ private:
     void placeWindow(QQuickWindow* window, int x, int y, int width, int height);
     qreal streamDpr() const;
 
+    void watchStreamWindow(bool on);
+
     QQmlEngine* m_Engine;
     SDL_Window* m_StreamWindow;
+    bool m_WatchingStreamWindow = false;
     QString m_HostName;
     QString m_AppName;
     QQuickWindow* m_Panel = nullptr;

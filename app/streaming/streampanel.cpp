@@ -16,6 +16,7 @@
 
 #ifdef Q_OS_WIN32
 #include <windows.h>
+#include <commctrl.h>
 #endif
 
 namespace {
@@ -26,8 +27,27 @@ constexpr int kHandleWidth = 20;
 constexpr int kHandleHeight = 60;
 
 // Saved with the other Hermit settings (the same handle on the next stream)
+
 const char* const kHandleSideKey = "hermit/panelHandleSide";
 const char* const kHandleYKey = "hermit/panelHandleY";
+
+#ifdef Q_OS_WIN32
+const UINT_PTR kStreamWindowSubclassId = 1;
+
+// Runs inside the stream window's message handling, also during a title-bar drag, when SDL's
+// loop is not running; it only moves the panel windows with Win32 calls.
+LRESULT CALLBACK streamWindowSubclass(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                      UINT_PTR, DWORD_PTR panel)
+{
+    if (msg == WM_WINDOWPOSCHANGED) {
+        auto* pos = reinterpret_cast<WINDOWPOS*>(lParam);
+        if (!(pos->flags & SWP_NOMOVE) || !(pos->flags & SWP_NOSIZE)) {
+            reinterpret_cast<StreamPanel*>(panel)->followStreamWindow();
+        }
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+#endif
 
 }
 
@@ -113,9 +133,54 @@ void StreamPanel::endHandleDrag()
 
 StreamPanel::~StreamPanel()
 {
+    watchStreamWindow(false);
     // The windows were created with a context owned by this object; delete them first.
     delete m_Panel;
     delete m_Handle;
+}
+
+// Windows: hear the stream window's moves directly (see followStreamWindow). The session
+// deletes the panel before the stream window, so the subclass never outlives this object.
+void StreamPanel::watchStreamWindow(bool on)
+{
+    if (on == m_WatchingStreamWindow) {
+        return;
+    }
+#ifdef Q_OS_WIN32
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(m_StreamWindow, &info) || info.subsystem != SDL_SYSWM_WINDOWS) {
+        return;
+    }
+    HWND hwnd = info.info.win.window;
+    if (on) {
+        if (!SetWindowSubclass(hwnd, streamWindowSubclass, kStreamWindowSubclassId, reinterpret_cast<DWORD_PTR>(this))) {
+            return;
+        }
+    }
+    else {
+        RemoveWindowSubclass(hwnd, streamWindowSubclass, kStreamWindowSubclassId);
+    }
+    m_WatchingStreamWindow = on;
+#else
+    Q_UNUSED(on);
+#endif
+}
+
+void StreamPanel::followStreamWindow()
+{
+    if (!needsQtEvents()) {
+        return;
+    }
+    // Re-place on a move or resize, and when the stream window reaches a monitor with
+    // another DPI (Qt also rescales its windows then)
+    QRect rect = streamClientRect();
+    qreal dpr = streamDpr();
+    if (rect != m_LastStreamRect || dpr != m_LastDpr) {
+        m_LastStreamRect = rect;
+        m_LastDpr = dpr;
+        placeWindows();
+    }
 }
 
 QQuickWindow* StreamPanel::createWindow(const char* qmlFile)
@@ -391,17 +456,10 @@ void StreamPanel::sync(bool mouseCaptured, bool absoluteMouse, bool streamFocuse
         }
     }
 
-    if (needsQtEvents()) {
-        // Re-place on a move or resize, and when the stream window reaches a monitor with
-        // another DPI (Qt also rescales its windows then)
-        QRect rect = streamClientRect();
-        qreal dpr = streamDpr();
-        if (rect != m_LastStreamRect || dpr != m_LastDpr) {
-            m_LastStreamRect = rect;
-            m_LastDpr = dpr;
-            placeWindows();
-        }
-    }
+    // The stream window is watched while a panel window is up, so a drag of its title bar
+    // moves them along at once
+    watchStreamWindow(needsQtEvents());
+    followStreamWindow();
 }
 
 // The stream window's client area in screen coordinates (physical pixels on Windows).
