@@ -349,20 +349,10 @@ void SdlInputHandler::updatePointerRegionLock()
 
 LocalCursorCache::~LocalCursorCache()
 {
-    clear();
-}
-
-void LocalCursorCache::clear()
-{
     for (SDL_Cursor* cursor : std::as_const(m_Cursors)) {
         // SDL falls back to the default cursor if this one is being shown
         SDL_FreeCursor(cursor);
     }
-    m_Cursors.clear();
-    m_CursorOrder.clear();
-    m_Shapes.clear();
-    m_ShapeOrder.clear();
-    m_ShapeBytes = 0;
 }
 
 void LocalCursorCache::addShape(const CursorPacket::Shape& shape)

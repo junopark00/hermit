@@ -106,8 +106,6 @@ public:
     // use; nullptr when the shape is unknown or the cursor could not be created
     SDL_Cursor* cursor(uint32_t id, double scale);
 
-    void clear();
-
     static const int k_MaxShapes = 128;
     static const int k_MaxShapeBytes = 16 * 1024 * 1024;
     static const int k_MaxCursors = 32;
