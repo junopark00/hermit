@@ -294,7 +294,8 @@ CenteredGridView {
         text:qsTr("Please enter %1 on your host PC. This dialog will close when pairing is completed.").arg(pin)+"\n\n"+
              qsTr("Enter the PIN in the Shell web UI on the host PC (https://<host address>:47990).")+
              (SystemProperties.hasBrowser ? "\n\n"+
-             qsTr("Open Shell pairing page fills in the PIN and this PC's name for you. The browser warns about the host's self-signed certificate and asks for the web UI password.") : "")+
+             qsTr("Open Shell pairing page fills in the PIN and this PC's name for you. The browser warns about the host's self-signed certificate and asks for the web UI password.")+"\n"+
+             qsTr("If the page says access is refused, enter the PIN on the host PC or allow the local network in Shell's settings.") : "")+
              (notice !== "" ? "\n\n"+notice : "")
         standardButtons: Dialog.Cancel
         // Hermit: opens the host's pairing page in the browser; the dialog stays open until pairing completes

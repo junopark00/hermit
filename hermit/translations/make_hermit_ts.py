@@ -339,6 +339,8 @@ TRANSLATIONS = {
     ('PcView', "Open Shell pairing page fills in the PIN and this PC's name for you. The browser warns about the host's self-signed certificate and asks for the web UI password."):
         'Shell 페어링 페이지 열기를 누르면 PIN과 이 PC의 이름이 미리 채워집니다. 브라우저가 호스트의 자체 서명 인증서를 경고하고 웹 UI 비밀번호를 묻습니다.',
     ('PcView', 'Open Shell pairing page'): 'Shell 페어링 페이지 열기',
+    ('PcView', "If the page says access is refused, enter the PIN on the host PC or allow the local network in Shell's settings."):
+        '페이지에 접근이 거부되었다고 나오면 호스트 PC에서 PIN을 입력하거나 Shell 설정에서 로컬 네트워크를 허용하세요.',
     ('PcView', 'The pairing page could not be opened. Enter the PIN in the web UI yourself.'):
         '페어링 페이지를 열지 못했습니다. 웹 UI에서 직접 PIN을 입력하세요.',
     ('SettingsView', 'This unlocks extremely high video bitrates for use with Shell hosts. It should only be used when streaming over an Ethernet LAN connection.'):

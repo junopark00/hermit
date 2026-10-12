@@ -580,6 +580,8 @@ Hermit.exe quit <host>           Quit the running app on a host
   that, select the host again for a new PIN). **Open Shell pairing page** uses the address Hermit
   reached the host at and the host's web UI port (HTTP port + 1, normally 47990); if the host's web
   UI listens elsewhere, or the PIN dialog says the page could not be opened (no browser), open it
-  yourself and enter the PIN.
+  yourself and enter the PIN. If the page says **The web UI is not available from this device**, the
+  host (Shell 1.1.2 or later) accepts the web UI from the PC itself only: enter the PIN on the host PC,
+  or have **Settings > Network > Web UI Access** in Shell changed to the local network.
 - **Logs.** Each run writes `%TEMP%\Hermit-<number>.log`. Attach the log of the affected run when
   reporting a problem (it contains host names and addresses, but no clipboard contents).

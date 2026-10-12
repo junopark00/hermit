@@ -1249,6 +1249,10 @@ Start를 길게 눌러 끄기</translation>
       <translation>Shell 페어링 페이지 열기</translation>
     </message>
     <message>
+      <source>If the page says access is refused, enter the PIN on the host PC or allow the local network in Shell's settings.</source>
+      <translation>페이지에 접근이 거부되었다고 나오면 호스트 PC에서 PIN을 입력하거나 Shell 설정에서 로컬 네트워크를 허용하세요.</translation>
+    </message>
+    <message>
       <source>The pairing page could not be opened. Enter the PIN in the web UI yourself.</source>
       <translation>페어링 페이지를 열지 못했습니다. 웹 UI에서 직접 PIN을 입력하세요.</translation>
     </message>
