@@ -4,7 +4,8 @@
 Builds and runs Hermit's standalone tests (no app build, no stream, no host needed).
 .DESCRIPTION
   hermit_core_test       branding translator, session summary maths and history file,
-                         performance overlay text, automatic bitrate, which clipboard
+                         performance overlay text, local cursor messages (parsing,
+                         chunk assembly, shape ids), automatic bitrate, which clipboard
                          change wins (local or host, retries, a late setup, unconfirmed
                          uploads, what counts as a local copy), when the host clipboard
                          is polled, display aspect resolution presets, connection
@@ -57,7 +58,8 @@ $tests = @(
         "$PSScriptRoot\hermit_core_test.cpp",
         "$app\settings\brandingtranslator.cpp",
         "$app\streaming\sessionsummary.cpp",
-        "$app\streaming\video\statsoverlay.cpp"); Args = @($repo) },
+        "$app\streaming\video\statsoverlay.cpp",
+        "$app\streaming\cursorpacket.cpp"); Args = @($repo) },
     @{ Name = 'clipboard_archive_test'; Sources = @(
         "$PSScriptRoot\clipboard_archive_test.cpp",
         "$app\streaming\clipboardarchive.cpp"); Args = @(); Libs = @('ws2_32.lib') },

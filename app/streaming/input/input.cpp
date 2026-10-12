@@ -33,7 +33,13 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
       m_RightButtonReleaseTimer(0),
       m_DragTimer(0),
       m_DragButton(0),
-      m_NumFingersDown(0)
+      m_NumFingersDown(0),
+      m_LocalCursorActive(false),
+      m_LocalCursorKnown(false),
+      m_LocalCursorShapeId(0),
+      m_LocalCursorWantedId(0),
+      m_LocalCursorVisible(false),
+      m_LocalCursorHostComposing(false)
 {
     // System keys are always captured when running without a DE
     if (!WMUtils::isRunningDesktopEnvironment()) {
@@ -371,7 +377,8 @@ void SdlInputHandler::setCaptureActive(bool active)
         // If we're in relative mode, try to activate SDL's relative mouse mode
         if (m_AbsoluteMouseMode || SDL_SetRelativeMouseMode(SDL_TRUE) < 0) {
             // Relative mouse mode didn't work or was disabled, so we'll just hide the cursor
-            SDL_ShowCursor(m_MouseCursorCapturedVisibilityState);
+            // (Hermit: or show the host cursor's shape with the local cursor)
+            showCapturedCursor();
             m_FakeMouseCaptureActive = true;
         }
 
@@ -403,7 +410,8 @@ void SdlInputHandler::setCaptureActive(bool active)
     }
     else {
         if (m_FakeMouseCaptureActive) {
-            // Display the cursor again
+            // Display the cursor again (Hermit: the system arrow, not the host cursor's shape)
+            SDL_SetCursor(SDL_GetDefaultCursor());
             SDL_ShowCursor(SDL_ENABLE);
             m_FakeMouseCaptureActive = false;
         }

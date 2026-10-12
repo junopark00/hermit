@@ -15,6 +15,7 @@ else works with any GameStream host, such as Sunshine or Apollo.
 - [Live and automatic bitrate (Shell)](#live-and-automatic-bitrate-shell)
 - [Clipboard sync (Shell)](#clipboard-sync-shell)
 - [Dropping files onto the stream (Shell)](#dropping-files-onto-the-stream-shell)
+- [Local cursor (Shell)](#local-cursor-shell)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Performance overlay](#performance-overlay)
 - [Session summary and history](#session-summary-and-history)
@@ -360,6 +361,42 @@ to sync the clipboard in both directions.
   on the host held it; drop the files again).
 - This works best in windowed mode. In full screen, minimize with Ctrl+Alt+Shift+D or switch to a
   window with Ctrl+Alt+Shift+X to reach File Explorer.
+
+## Local cursor (Shell)
+
+Hermit has two mouse modes: the game mouse (relative: the pointer is captured and its movements are
+sent) and the remote desktop mouse (absolute: the pointer moves freely and its position is sent),
+chosen in Settings → Input ("Optimize mouse for remote desktop instead of games") and switched
+during a stream with Ctrl+Alt+Shift+M or the stream panel. Normally the host draws the mouse pointer
+into the video, so in remote desktop mode the pointer you see lags behind your hand by the stream's
+delay (capture interval, encoding, network, decoding and V-Sync: typically 25 to 40 ms).
+
+- **What the local cursor does.** With a Shell host that supports it, Hermit asks the host to stop
+  drawing the pointer into the video and to send the cursor's shape, hotspot and visibility instead.
+  Hermit then shows the pointer itself, as the Windows cursor in exactly the shape the host uses
+  (arrow, I-beam, hand, resize arrows, busy spinner and so on, scaled with the video). The pointer
+  follows the mouse without any stream delay; only the picture under it keeps the usual delay. When
+  the host hides its cursor (full-screen video, typing in a text field, a game that hides it), the
+  local pointer is hidden too, and comes back as soon as the host shows it.
+- **When it is used.** Only in remote desktop mouse mode, only with a host that advertises the
+  feature (older Shell hosts, hosts with the feature turned off, and other GameStream hosts behave
+  exactly as before), and only when the host can read cursor shapes (the Desktop Duplication
+  capture; with Windows Graphics Capture the host declines). Switching to the game mouse returns
+  the pointer to the host within a frame; switching back hands it to Hermit again. A reconnect keeps
+  the mode. Inverted (XOR) cursor pixels, which a static cursor cannot show, are drawn mid-grey by
+  the host's conversion; it is noticeable mostly on the text cursor over dark backgrounds.
+- **The setting.** "Local cursor in remote desktop mouse mode" in Settings → Input (on by default)
+  and "Local cursor (remote desktop mouse)" in the stream panel, which applies at once. Turn it off
+  to see the host's pointer exactly as the host draws it.
+- **The overlay line.** On hosts with the feature, the performance overlay's video metric gains a
+  "Cursor" line: "local" (Hermit draws the pointer), "host" (the host draws it: the game mouse, the
+  setting off, or the host declined) or "host (another client connected)".
+- **Mixed sessions.** The host captures one picture for every client, so it can only leave the
+  pointer out when every connected client uses a local cursor. While another client streams the
+  same desktop without one (for example a phone, or an older client), the host draws the pointer
+  again for everyone and Hermit hides its own; the overlay then says "host (another client
+  connected)". When that client leaves, Hermit's local cursor returns by itself.
+- Ctrl+Alt+Shift+C still shows the system arrow instead of the host's shape, and hides it again.
 
 ## Keyboard shortcuts
 

@@ -2,8 +2,12 @@
 
 #include "settings/streamingpreferences.h"
 #include "backend/computermanager.h"
+#include "streaming/cursorpacket.h"
 
 #include "SDL_compat.h"
+
+#include <QHash>
+#include <QList>
 
 struct GamepadState {
     SDL_GameController* controller;
@@ -80,6 +84,38 @@ struct DualSenseOutputReport{
 
 #define GAMEPAD_HAPTIC_SIMPLE_HIFREQ_MOTOR_WEIGHT 0.33
 #define GAMEPAD_HAPTIC_SIMPLE_LOWFREQ_MOTOR_WEIGHT 0.8
+
+// Hermit: host cursor shapes (cursorpacket.h) and the SDL cursors made from them, for the local
+// cursor. Shapes are kept by id (the newest 32, at most 256 KiB each) so a window resize can
+// make a cursor at the new scale; cursors are kept by shape and scale (the newest 32). Everything
+// is freed with the input handler, that is when the stream ends.
+class LocalCursorCache
+{
+public:
+    ~LocalCursorCache();
+
+    void addShape(const CursorPacket::Shape& shape);
+
+    bool hasShape(uint32_t id) const
+    {
+        return m_Shapes.contains(id);
+    }
+
+    // The SDL cursor of a shape at this scale (physical pixels per shape pixel), made on first
+    // use; nullptr when the shape is unknown or the cursor could not be created
+    SDL_Cursor* cursor(uint32_t id, double scale);
+
+    void clear();
+
+    static const int k_MaxShapes = 32;
+    static const int k_MaxCursors = 32;
+
+private:
+    QHash<uint32_t, CursorPacket::Shape> m_Shapes;
+    QList<uint32_t> m_ShapeOrder;    // oldest first
+    QHash<uint64_t, SDL_Cursor*> m_Cursors;
+    QList<uint64_t> m_CursorOrder;   // oldest first
+};
 
 class SdlInputHandler
 {
@@ -161,6 +197,39 @@ public:
 
     void updatePointerRegionLock();
 
+    // Hermit: local cursor. While active (remote desktop mouse mode, and the Shell host agreed to
+    // stop drawing the cursor into the video), the OS cursor inside the video area takes the host
+    // cursor's shape and is shown only while the host shows its cursor. Outside the video area
+    // and while inactive the cursor behaves as always (hidden inside the video area, the system
+    // arrow outside). Ctrl+Alt+Shift+C still forces the system arrow.
+    void setLocalCursorActive(bool active);
+
+    bool isLocalCursorActive() const
+    {
+        return m_LocalCursorActive;
+    }
+
+    // A complete shape from the control stream: cached and shown (it is the host's current one)
+    void handleCursorShape(const CursorPacket::Shape& shape);
+
+    // A visibility change or a switch to a shape sent earlier (id 0: the default arrow). Returns
+    // false when the shape is not in the cache, so the caller fetches it over HTTPS; the
+    // previous cursor stays meanwhile.
+    bool handleCursorState(const CursorPacket::State& state);
+
+    // A shape fetched over HTTPS: cached, and shown if it is still the one the host last named
+    void handleFetchedCursorShape(const CursorPacket::Shape& shape);
+
+    // Whether the host draws the cursor into the video as well (another client streams the
+    // desktop without a local cursor), as last reported
+    bool localCursorHostComposing() const
+    {
+        return m_LocalCursorKnown && m_LocalCursorHostComposing;
+    }
+
+    // After a window resize: the cursor is made again at the new scale
+    void refreshLocalCursor();
+
     static
     QString getUnmappedGamepads();
 
@@ -215,6 +284,12 @@ private:
     static
     Uint32 dragTimerCallback(Uint32 interval, void* param);
 
+    // Hermit: local cursor helpers (mouse.cpp). The cursor to show inside the video area while
+    // the mouse is captured, and whether it is shown at all.
+    void showCapturedCursor();
+    int capturedCursorVisibility() const;
+    double localCursorScale() const;
+
     SDL_Window* m_Window;
     bool m_MultiController;
     bool m_GamepadMouse;
@@ -261,6 +336,15 @@ private:
     SDL_TimerID m_DragTimer;
     char m_DragButton;
     int m_NumFingersDown;
+
+    // Hermit: local cursor state
+    LocalCursorCache m_LocalCursors;
+    bool m_LocalCursorActive;
+    bool m_LocalCursorKnown;      // a shape or state has arrived since the stream started
+    uint32_t m_LocalCursorShapeId;   // the shape shown (0: the default arrow)
+    uint32_t m_LocalCursorWantedId;  // the shape the host last named (not yet in the cache)
+    bool m_LocalCursorVisible;
+    bool m_LocalCursorHostComposing;
 
     static const int k_ButtonMap[];
 };

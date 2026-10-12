@@ -300,6 +300,14 @@
       <translation>렌더러</translation>
     </message>
     <message>
+      <source>Local cursor in remote desktop mouse mode</source>
+      <translation>원격 데스크톱 마우스 모드에서 로컬 커서 사용</translation>
+    </message>
+    <message>
+      <source>With a Shell host that supports it, the mouse pointer is drawn by this PC in the shape the host cursor has, instead of being encoded into the video, so it follows the mouse without the stream's delay. Used only with the remote desktop mouse. The host draws the pointer itself again while another client streams the same desktop without this option. The performance overlay shows which side draws it.</source>
+      <translation>지원하는 Shell 호스트에서는 마우스 포인터를 영상에 넣어 보내는 대신 이 PC가 호스트 커서의 모양으로 직접 그려, 스트림 지연 없이 마우스를 따라 움직입니다. 원격 데스크톱 마우스에서만 쓰입니다. 이 옵션 없이 같은 데스크톱을 스트리밍하는 다른 클라이언트가 있는 동안에는 호스트가 다시 포인터를 그립니다. 어느 쪽이 그리는지는 성능 오버레이에 표시됩니다.</translation>
+    </message>
+    <message>
       <source>Adjust the bitrate automatically to the network (Shell host)</source>
       <translation>비트레이트 자동 조절 (Shell 호스트)</translation>
     </message>
@@ -381,6 +389,10 @@
     <message>
       <source>A different app is now running on %1.</source>
       <translation>%1에서 다른 앱이 실행 중입니다.</translation>
+    </message>
+    <message>
+      <source>Local cursor not available on this host: the host draws the pointer</source>
+      <translation>이 호스트에서는 로컬 커서를 쓸 수 없어 호스트가 포인터를 그립니다</translation>
     </message>
     <message>
       <source>This host cannot change the bitrate during a stream; open the stream settings (Ctrl+Alt+Shift+P) to reconnect.</source>
@@ -636,6 +648,22 @@ Start를 길게 눌러 끄기</translation>
     <message>
       <source>Decoder</source>
       <translation>디코더</translation>
+    </message>
+    <message>
+      <source>Cursor</source>
+      <translation>커서</translation>
+    </message>
+    <message>
+      <source>local</source>
+      <translation>로컬</translation>
+    </message>
+    <message>
+      <source>host</source>
+      <translation>호스트</translation>
+    </message>
+    <message>
+      <source>host (another client connected)</source>
+      <translation>호스트 (다른 클라이언트 접속)</translation>
     </message>
   </context>
   <context>
@@ -1020,6 +1048,14 @@ Start를 길게 눌러 끄기</translation>
     <message>
       <source>Sync clipboard with the host</source>
       <translation>호스트와 클립보드 동기화</translation>
+    </message>
+    <message>
+      <source>Local cursor (remote desktop mouse)</source>
+      <translation>로컬 커서 (원격 데스크톱 마우스)</translation>
+    </message>
+    <message>
+      <source>On Shell hosts that support it, this PC draws the pointer in the host cursor's shape, without the stream's delay. Only with the remote desktop mouse; the performance overlay shows which side draws the pointer.</source>
+      <translation>지원하는 Shell 호스트에서는 이 PC가 호스트 커서 모양으로 포인터를 직접 그려 스트림 지연 없이 움직입니다. 원격 데스크톱 마우스에서만 쓰이며, 어느 쪽이 포인터를 그리는지는 성능 오버레이에 표시됩니다.</translation>
     </message>
     <message>
       <source>Toggle full screen</source>

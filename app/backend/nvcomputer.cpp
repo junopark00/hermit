@@ -57,6 +57,7 @@ NvComputer::NvComputer(QSettings& settings)
     this->appVersion = nullptr;
     this->maxLumaPixelsHEVC = 0;
     this->serverCodecModeSupport = 0;
+    this->localCursorVersion = 0;
     this->pendingQuit = false;
     this->gpuModel = nullptr;
     this->externalPort = this->remoteAddress.port();
@@ -160,6 +161,10 @@ NvComputer::NvComputer(NvHTTP& http, QString serverInfo)
     else {
         this->maxLumaPixelsHEVC = 0;
     }
+
+    // Hermit: Shell advertises the local cursor protocol version (over HTTPS only, so this stays
+    // 0 until the host is paired)
+    this->localCursorVersion = qMax(0, NvHTTP::getXmlString(serverInfo, "LocalCursor").toInt());
 
     this->displayModes = NvHTTP::getDisplayModeList(serverInfo);
     std::stable_sort(this->displayModes.begin(), this->displayModes.end(),
@@ -564,6 +569,7 @@ bool NvComputer::update(const NvComputer& that)
     ASSIGN_IF_CHANGED(appVersion);
     ASSIGN_IF_CHANGED(isNvidiaServerSoftware);
     ASSIGN_IF_CHANGED(maxLumaPixelsHEVC);
+    ASSIGN_IF_CHANGED(localCursorVersion);
     ASSIGN_IF_CHANGED(gpuModel);
     ASSIGN_IF_CHANGED_AND_NONNULL(serverCert);
     ASSIGN_IF_CHANGED_AND_NONEMPTY(displayModes);

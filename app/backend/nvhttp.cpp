@@ -507,6 +507,19 @@ NvHTTP::powerRequest(const QString& action, bool force, int timeoutMs)
     return body;
 }
 
+QByteArray
+NvHTTP::cursorRequest(const QString& arguments, int timeoutMs)
+{
+    QNetworkReply* reply = openConnection(m_BaseUrlHttps,
+                                          "actions/cursor",
+                                          arguments,
+                                          timeoutMs,
+                                          NvLogLevel::NVLL_ERROR);
+    QByteArray body = reply->readAll();
+    delete reply;
+    return body;
+}
+
 QNetworkReply*
 NvHTTP::startClipboardRequest(const QString& type, QIODevice* body, qint64 bodySize)
 {

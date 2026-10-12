@@ -99,6 +99,10 @@ public:
     int maxLumaPixelsHEVC;
     int serverCodecModeSupport;
     QString gpuModel;
+    // Hermit: serverinfo "LocalCursor", the newest version of the local cursor protocol a Shell
+    // host supports (cursor shapes sent over the control stream instead of being drawn into the
+    // video); 0 when the host has no such support or the feature is off on the host
+    int localCursorVersion;
 
     // Persisted traits
     NvAddress localAddress;

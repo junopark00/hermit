@@ -107,7 +107,9 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
 
         if (!SDL_GetRelativeMouseMode()) {
             m_MouseCursorCapturedVisibilityState = !m_MouseCursorCapturedVisibilityState;
-            SDL_ShowCursor(m_MouseCursorCapturedVisibilityState);
+            // Hermit: with the local cursor, this switches between the host cursor's shape and
+            // the system arrow
+            showCapturedCursor();
         }
         else {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,

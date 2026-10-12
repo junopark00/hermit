@@ -1,8 +1,11 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
 
+#include <QMutex>
 #include <QSemaphore>
+#include <QSet>
 #include <QQuickWindow>
 
 #include <Limelight.h>
@@ -13,6 +16,8 @@
 #include "audio/renderers/renderer.h"
 #include "video/overlaymanager.h"
 #include "sessionsummary.h"
+#include "cursorpacket.h"
+#include "video/statsoverlay.h"
 
 class SupportedVideoFormatList : public QList<int>
 {
@@ -138,6 +143,20 @@ public:
 
     // Hermit: a notice with the mouse mode now on, and the panel's button follows it
     void notifyMouseMode(bool absolute);
+
+    // Hermit: local cursor. Tells a Shell host that supports it whether this client wants the
+    // cursor sent as shapes (remote desktop mouse mode and the setting on) or drawn into the video
+    // as usual; called when the stream starts, when the mouse mode changes and when the setting
+    // changes. The host's answer arrives as an event and turns the input handler's local cursor
+    // on or off. Hosts without the capability are never asked.
+    void updateCursorMode();
+
+    // Who draws the cursor, for the performance overlay (StatsOverlay::CursorState); read by the
+    // decoder thread
+    int cursorOverlayState() const
+    {
+        return m_CursorOverlayState.load();
+    }
 
     // Hermit: performance overlay on or off (Ctrl+Alt+Shift+S, gamepad combo). The setting
     // follows, so the stream panel and Settings show the same state.
@@ -310,6 +329,20 @@ private:
     static
     void clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlags, uint8_t typeLeft, uint8_t typeRight, uint8_t *left, uint8_t *right);
 
+    // Hermit: a cursor message from the host (control stream, called on the library's callback
+    // thread): parsed and assembled there, handed to the main loop through the mailbox
+    static
+    void clCursorPacket(uint16_t packetType, const uint8_t* payload, uint32_t length);
+
+    // Hermit: local cursor (main thread)
+    void handleCursorUpdates();
+    void requestCursorShape(uint32_t id);
+    void finishCursorShapeFetch();
+    void applyCursorModeResult(bool requestedLocal, int result);
+    void refreshCursorOverlayState();
+    struct CursorMailbox;
+    static void postCursorUpdate(CursorMailbox& mailbox, CursorPacket::Update&& update);
+
     static
     int arInit(int audioConfiguration,
                const POPUS_MULTISTREAM_CONFIGURATION opusConfig,
@@ -364,6 +397,26 @@ private:
     int m_ResyncFailures;
     bool m_BitrateFailureNotified;  // one timeout notice per run of failures while the panel is closed
     bool m_BitrateRefusalNotified;  // and one refusal notice
+    // Hermit: local cursor. Messages from the host wait in the mailbox (filled by the library's
+    // callback thread and by shape fetches on pool threads, which hold a reference so a late
+    // result never touches a finished session) until the main loop takes them.
+    struct CursorMailbox {
+        QMutex lock;
+        QList<CursorPacket::Update> updates;
+        CursorPacket::ShapeAssembler assembler;  // used by the callback thread only
+        std::atomic<int> invalidMessages{0};     // dropped messages (one log line per session)
+    };
+    std::shared_ptr<CursorMailbox> m_CursorMailbox;
+    uint32_t m_CursorModeSerial;       // results of a previous session's requests are ignored
+    bool m_CursorModeInFlight;
+    bool m_CursorModeDirty;            // the wanted mode changed while a request was running
+    int m_CursorModeSent;              // the mode the host was last asked for: -1 none, 0 host, 1 local
+    bool m_CursorUnsupported;          // the host answered 404: not asked again this session
+    bool m_CursorDeclineNotified;      // one notice per session when the host declines
+    std::atomic<int> m_CursorOverlayState;
+    QSet<uint32_t> m_CursorShapesRequested;  // fetched over HTTPS at most once per shape
+    bool m_CursorShapeFetchInFlight;
+    uint32_t m_CursorShapePendingId;   // a second shape to fetch once the running fetch is done
     Uint32 m_FullScreenFlag;
     QQuickWindow* m_QtWindow;
     bool m_UnexpectedTermination;

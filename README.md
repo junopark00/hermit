@@ -25,6 +25,9 @@ Windows, and also works with other GameStream hosts such as Sunshine and Apollo.
   the picture.
 - **Automatic bitrate.** On Shell hosts, Hermit can lower the bitrate when the network struggles and
   raise it again when it recovers, up to the bitrate you chose.
+- **Local cursor.** In remote desktop mouse mode, a Shell host sends the cursor's shape instead of
+  drawing it into the video, and Hermit shows the pointer itself: it follows the mouse with no
+  stream delay, in the host's cursor shapes.
 - **Clipboard sync.** Copy and paste text between the two PCs; with Shell, images and files as well,
   with a speed limit so transfers do not hurt the stream. Files copied on the host paste at once in File
   Explorer and download while Explorer copies them (up to 4 GB; 256 MB to the host). You can also drop

@@ -1624,6 +1624,24 @@ Flickable {
                                   qsTr("You can toggle this while streaming using Ctrl+Alt+Shift+M.")
                 }
 
+                // Hermit: the host cursor drawn by this PC (Shell hosts)
+                CheckBox {
+                    id: localCursorCheck
+                    hoverEnabled: true
+                    width: parent.width
+                    text: qsTr("Local cursor in remote desktop mouse mode")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.localCursor
+                    onCheckedChanged: {
+                        StreamingPreferences.localCursor = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 15000
+                    ToolTip.visible: hovered || activeFocus
+                    ToolTip.text: qsTr("With a Shell host that supports it, the mouse pointer is drawn by this PC in the shape the host cursor has, instead of being encoded into the video, so it follows the mouse without the stream's delay. Used only with the remote desktop mouse. The host draws the pointer itself again while another client streams the same desktop without this option. The performance overlay shows which side draws it.")
+                }
+
                 Row {
                     spacing: 5
                     width: parent.width

@@ -189,6 +189,7 @@ SOURCES += \
     streaming/input/reltouch.cpp \
     streaming/clipboardarchive.cpp \
     streaming/clipboardsync.cpp \
+    streaming/cursorpacket.cpp \
     streaming/session.cpp \
     streaming/sessionsummary.cpp \
     streaming/streampanel.cpp \
@@ -233,6 +234,7 @@ HEADERS += \
     streaming/clipboardchangeorder.h \
     streaming/clipboardsync.h \
     streaming/clipboardvirtualfiles.h \
+    streaming/cursorpacket.h \
     streaming/session.h \
     streaming/sessionsummary.h \
     streaming/streampanel.h \

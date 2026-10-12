@@ -31,6 +31,14 @@ enum Metric : int {
 constexpr int kDefaultMetrics = MetricVideo | MetricBitrate | MetricNetworkLoss | MetricRtt |
                                 MetricHostLatency | MetricTotalLatency;
 
+// Who draws the mouse cursor (the local cursor feature of Shell hosts)
+enum CursorState : int {
+    CursorNone = 0,             // the host has no such support: no line
+    CursorLocal = 1,            // this PC draws the host cursor as the OS cursor
+    CursorHost = 2,             // the host draws it into the video
+    CursorHostOtherClient = 3,  // the host draws it because another client streams the desktop
+};
+
 struct Inputs {
     const VIDEO_STATS* stats = nullptr;  // statistics over the last ~2 seconds
     int width = 0;
@@ -39,6 +47,7 @@ struct Inputs {
     double avgMbps = 0.0;
     double peakMbps = 0.0;
     QString decoder;
+    int cursorState = CursorNone;  // local cursor (Shell), see CursorState
 };
 
 // Returns the overlay text for the selected metrics ("label\tvalue" per line).

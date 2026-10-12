@@ -234,6 +234,17 @@ public:
     QByteArray
     powerRequest(const QString& action, bool force, int timeoutMs);
 
+    // Shell host extension: GET /actions/cursor?<arguments> for the local cursor.
+    // "mode=local&v=1" asks the host to stop drawing the mouse cursor into this client's stream and
+    // send cursor shapes instead; "mode=host&v=1" returns to the normal picture. The reply says
+    // which mode is in effect ("mode=local" or "mode=host": the host refused, for example because
+    // the capture backend cannot report the cursor). "shape=<id>" returns the CURSOR_SHAPE
+    // payload (cursorpacket.h) of a shape the host sent to this session, for a cache miss or an
+    // oversize shape. Returns the reply body. Throws on HTTP or network errors (404: an older
+    // host without the extension, 403: this client is not streaming, 404 for an unknown shape).
+    QByteArray
+    cursorRequest(const QString& arguments, int timeoutMs);
+
     static
     QVector<NvDisplayMode>
     getDisplayModeList(QString serverInfo);

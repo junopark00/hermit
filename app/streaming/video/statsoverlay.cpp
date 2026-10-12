@@ -44,6 +44,13 @@ QString format(const Inputs& in, int metrics)
             QStringLiteral("%1×%2 · %3 FPS%4").arg(in.width).arg(in.height).arg(s.totalFps, 0, 'f', 1)
                 .arg(in.codec.isEmpty() ? QString() : QStringLiteral(" · ") + in.codec));
     }
+    if (in.cursorState != CursorNone) {
+        // Who draws the mouse cursor on a host with local cursor support (shown with the video line)
+        add(MetricVideo, QCoreApplication::translate("StatsOverlay", "Cursor"),
+            in.cursorState == CursorLocal ? QCoreApplication::translate("StatsOverlay", "local") :
+            in.cursorState == CursorHostOtherClient ? QCoreApplication::translate("StatsOverlay", "host (another client connected)") :
+                                                      QCoreApplication::translate("StatsOverlay", "host"));
+    }
     if (s.receivedFps > 0) {
         add(MetricFrameRates, QCoreApplication::translate("StatsOverlay", "Received / decoded / rendered"),
             QStringLiteral("%1 / %2 / %3").arg(s.receivedFps, 0, 'f', 1).arg(s.decodedFps, 0, 'f', 1).arg(s.renderedFps, 0, 'f', 1));

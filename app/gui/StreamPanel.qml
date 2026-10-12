@@ -652,6 +652,19 @@ Window {
                         panel.applyLive()
                     }
                 }
+                CheckBox {
+                    text: qsTr("Local cursor (remote desktop mouse)")
+                    font.pointSize: 10
+                    checked: StreamingPreferences.localCursor
+                    onToggled: {
+                        StreamingPreferences.localCursor = checked
+                        panel.applyLive()
+                    }
+                    ToolTip.visible: hovered || activeFocus
+                    ToolTip.delay: 600
+                    ToolTip.timeout: 15000
+                    ToolTip.text: qsTr("On Shell hosts that support it, this PC draws the pointer in the host cursor's shape, without the stream's delay. Only with the remote desktop mouse; the performance overlay shows which side draws the pointer.")
+                }
 
                 Button {
                     Layout.fillWidth: true

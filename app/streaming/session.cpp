@@ -35,6 +35,8 @@
 #define SDL_CODE_GAMECONTROLLER_SET_CONTROLLER_LED 104
 #define SDL_CODE_GAMECONTROLLER_SET_ADAPTIVE_TRIGGERS 105
 #define SDL_CODE_CLIPBOARD_FROM_HOST 106
+#define SDL_CODE_CURSOR_UPDATE 110       // Hermit: cursor messages wait in the mailbox (107-109: streampanel.h)
+#define SDL_CODE_CURSOR_MODE_RESULT 111  // Hermit: data1 = serial << 1 | requested local, data2 = result
 
 #include <openssl/rand.h>
 
@@ -65,8 +67,29 @@ CONNECTION_LISTENER_CALLBACKS Session::k_ConnCallbacks = {
     Session::clRumbleTriggers,
     Session::clSetMotionEventState,
     Session::clSetControllerLED,
-    Session::clSetAdaptiveTriggers
+    Session::clSetAdaptiveTriggers,
+    Session::clCursorPacket
 };
+
+// Hermit: one serial per session for the local cursor mode requests (see m_CursorModeSerial)
+static std::atomic<uint32_t> s_CursorModeSerial(0);
+
+// Hermit: a cursor message for the main loop; one wake-up event per batch
+void Session::postCursorUpdate(CursorMailbox& mailbox, CursorPacket::Update&& update)
+{
+    bool wake;
+    {
+        QMutexLocker locker(&mailbox.lock);
+        mailbox.updates.append(std::move(update));
+        wake = mailbox.updates.size() == 1;
+    }
+    if (wake) {
+        SDL_Event event = {};
+        event.type = SDL_USEREVENT;
+        event.user.code = SDL_CODE_CURSOR_UPDATE;
+        SDL_PushEvent(&event);
+    }
+}
 
 Session* Session::s_ActiveSession;
 
@@ -242,6 +265,54 @@ void Session::clConnectionStatusUpdate(int connectionStatus)
         s_ActiveSession->m_OverlayManager.setOverlayState(Overlay::OverlayStatusUpdate, false);
         break;
     }
+}
+
+void Session::clCursorPacket(uint16_t packetType, const uint8_t* payload, uint32_t length)
+{
+    Session* session = s_ActiveSession;
+    if (session == nullptr || !session->m_CursorMailbox) {
+        return;
+    }
+    std::shared_ptr<CursorMailbox> mailbox = session->m_CursorMailbox;
+
+    // Data from the host is not trusted: anything that is not exactly a version-1 message, or a
+    // shape chunk out of order, is dropped (the stream goes on) and said once per session
+    CursorPacket::Update update;
+    QString reason;
+    bool valid;
+    if (packetType == CursorPacket::kTypeShape) {
+        CursorPacket::ShapeChunk chunk;
+        valid = CursorPacket::parseShapeChunk(payload, length, chunk, &reason);
+        if (valid) {
+            switch (mailbox->assembler.add(chunk, update.shape, &reason)) {
+            case CursorPacket::ShapeAssembler::Partial:
+                return;
+            case CursorPacket::ShapeAssembler::Complete:
+                update.kind = CursorPacket::Update::ShapeArrived;
+                break;
+            case CursorPacket::ShapeAssembler::Rejected:
+                valid = false;
+                break;
+            }
+        }
+    }
+    else if (packetType == CursorPacket::kTypeState) {
+        update.kind = CursorPacket::Update::StateArrived;
+        valid = CursorPacket::parseState(payload, length, update.state, &reason);
+    }
+    else {
+        valid = false;
+        reason = QStringLiteral("unknown cursor packet type 0x%1").arg(packetType, 4, 16, QLatin1Char('0'));
+    }
+    if (!valid) {
+        if (mailbox->invalidMessages.fetch_add(1) == 0) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Dropping an invalid cursor message from the host: %s (further ones are not logged)",
+                        qPrintable(reason));
+        }
+        return;
+    }
+    postCursorUpdate(*mailbox, std::move(update));
 }
 
 void Session::clSetHdrMode(bool enabled)
@@ -651,6 +722,16 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_ResyncFailures(0),
       m_BitrateFailureNotified(false),
       m_BitrateRefusalNotified(false),
+      m_CursorMailbox(std::make_shared<CursorMailbox>()),
+      m_CursorModeSerial(0),
+      m_CursorModeInFlight(false),
+      m_CursorModeDirty(false),
+      m_CursorModeSent(-1),
+      m_CursorUnsupported(false),
+      m_CursorDeclineNotified(false),
+      m_CursorOverlayState(StatsOverlay::CursorNone),
+      m_CursorShapeFetchInFlight(false),
+      m_CursorShapePendingId(0),
       m_MouseEmulationRefCount(0),
       m_FlushingWindowEventsRef(0),
       m_ShouldExit(false),
@@ -1899,6 +1980,228 @@ void Session::notifyMouseMode(bool absolute)
     getOverlayManager().showToast(absolute ?
         QCoreApplication::translate("Session", "Mouse mode: remote desktop (absolute)") :
         QCoreApplication::translate("Session", "Mouse mode: game (relative)"), 2500);
+    // The local cursor goes with the remote desktop mouse
+    updateCursorMode();
+}
+
+void Session::updateCursorMode()
+{
+    if (m_InputHandler == nullptr || m_CursorUnsupported) {
+        return;
+    }
+    int hostVersion;
+    {
+        QReadLocker lock(&m_Computer->lock);
+        hostVersion = m_Computer->localCursorVersion;
+    }
+    if (hostVersion <= 0) {
+        // Not a Shell host with the extension (or it is off there): everything as before
+        return;
+    }
+    const bool wantLocal = m_Preferences->localCursor && m_InputHandler->isAbsoluteMouseMode();
+    if (m_CursorModeInFlight) {
+        m_CursorModeDirty = true;
+        return;
+    }
+    if (m_CursorModeSent == (wantLocal ? 1 : 0) || (!wantLocal && m_CursorModeSent < 0)) {
+        // Already so; a session that never asked for the local cursor is in host mode
+        return;
+    }
+    m_CursorModeInFlight = true;
+    m_CursorModeDirty = false;
+
+    // Like a live bitrate change: the request runs on a pool thread and its result comes back as
+    // an event. The serial keeps a late result from reaching the next session.
+    NvComputer* computer = m_Computer;
+    const uint32_t serial = m_CursorModeSerial;
+    QThreadPool::globalInstance()->start([computer, wantLocal, serial]() {
+        // 1 the host sends the cursor as shapes; 0 the host draws it (as asked, or it declined:
+        // the feature is off there, the version is unknown, or the capture backend cannot report
+        // the cursor); -1 no such request on this host (an older Shell); -2 the request failed
+        int result;
+        try {
+            NvHTTP http(computer);
+            const QByteArray body = http.cursorRequest(QStringLiteral("mode=%1&v=%2")
+                                                       .arg(wantLocal ? QStringLiteral("local") : QStringLiteral("host"))
+                                                       .arg(CursorPacket::kProtocolVersion), 5000);
+            result = 0;
+            for (const QByteArray& line : body.split('\n')) {
+                if (line.trimmed() == "mode=local") {
+                    result = 1;
+                }
+                else if (line.trimmed().startsWith("reason=")) {
+                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Local cursor declined by the host: %s", line.trimmed().constData() + 7);
+                }
+            }
+        } catch (const QtNetworkReplyException& e) {
+            if (e.getError() == QNetworkReply::ContentNotFoundError) {
+                result = -1;
+            }
+            else if (e.getError() == QNetworkReply::ContentConflictError || e.getHttpStatus() == 409) {
+                result = 0;
+            }
+            else {
+                result = -2;
+            }
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Local cursor mode request failed: %s", e.what());
+        } catch (const HostHttpResponseException& e) {
+            result = -1;
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Local cursor mode request failed: %s", e.what());
+        } catch (...) {
+            result = -2;
+        }
+        SDL_Event resultEvent = {};
+        resultEvent.type = SDL_USEREVENT;
+        resultEvent.user.code = SDL_CODE_CURSOR_MODE_RESULT;
+        resultEvent.user.data1 = reinterpret_cast<void*>(static_cast<intptr_t>(((uint64_t)serial << 1) | (wantLocal ? 1 : 0)));
+        resultEvent.user.data2 = reinterpret_cast<void*>(static_cast<intptr_t>(result));
+        SDL_PushEvent(&resultEvent);
+    });
+}
+
+void Session::applyCursorModeResult(bool requestedLocal, int result)
+{
+    m_CursorModeInFlight = false;
+    if (result == -1) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: this host has no such request; the host draws the cursor");
+        m_CursorUnsupported = true;
+        m_CursorOverlayState = StatsOverlay::CursorNone;
+        m_InputHandler->setLocalCursorActive(false);
+        return;
+    }
+    if (result == -2) {
+        // Unknown what the host did; the next mode change asks again
+        m_CursorModeSent = -1;
+    }
+    else {
+        m_CursorModeSent = requestedLocal ? 1 : 0;
+    }
+
+    const bool local = result == 1 && requestedLocal;
+    m_InputHandler->setLocalCursorActive(local);
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: asked for %s, host answered %s",
+                requestedLocal ? "local" : "host",
+                result == 1 ? "local" : (result == 0 ? "host" : "error"));
+    if (requestedLocal && result == 0 && !m_CursorDeclineNotified) {
+        // Said once: the setting is on but the host keeps drawing the pointer (the feature is off
+        // there, or its capture backend cannot report cursor shapes). Mode switches and the
+        // normal case are quiet; the performance overlay shows who draws the pointer.
+        m_CursorDeclineNotified = true;
+        getOverlayManager().showToast(QCoreApplication::translate("Session", "Local cursor not available on this host: the host draws the pointer"), 4000);
+    }
+    refreshCursorOverlayState();
+
+    if (m_CursorModeDirty) {
+        updateCursorMode();
+    }
+}
+
+void Session::refreshCursorOverlayState()
+{
+    if (m_CursorOverlayState == StatsOverlay::CursorNone || m_InputHandler == nullptr) {
+        return;
+    }
+    if (!m_InputHandler->isLocalCursorActive()) {
+        m_CursorOverlayState = StatsOverlay::CursorHost;
+    }
+    else if (m_InputHandler->localCursorHostComposing()) {
+        m_CursorOverlayState = StatsOverlay::CursorHostOtherClient;
+    }
+    else {
+        m_CursorOverlayState = StatsOverlay::CursorLocal;
+    }
+}
+
+void Session::handleCursorUpdates()
+{
+    QList<CursorPacket::Update> updates;
+    {
+        QMutexLocker locker(&m_CursorMailbox->lock);
+        updates.swap(m_CursorMailbox->updates);
+    }
+    for (const CursorPacket::Update& update : std::as_const(updates)) {
+        switch (update.kind) {
+        case CursorPacket::Update::ShapeArrived:
+            m_InputHandler->handleCursorShape(update.shape);
+            break;
+        case CursorPacket::Update::StateArrived:
+            if (!m_InputHandler->handleCursorState(update.state)) {
+                requestCursorShape(update.state.id);
+            }
+            break;
+        case CursorPacket::Update::ShapeFetched:
+            m_InputHandler->handleFetchedCursorShape(update.shape);
+            finishCursorShapeFetch();
+            break;
+        case CursorPacket::Update::FetchFailed:
+            finishCursorShapeFetch();
+            break;
+        }
+    }
+    if (!updates.isEmpty()) {
+        refreshCursorOverlayState();
+    }
+}
+
+void Session::requestCursorShape(uint32_t id)
+{
+    // A shape named by a state message but not in the cache (its message was lost before the
+    // stream started, or it fell out of the cache): fetched over HTTPS, once per shape and
+    // session, one at a time. The previous cursor stays meanwhile.
+    if (m_CursorShapesRequested.contains(id)) {
+        return;
+    }
+    if (m_CursorShapeFetchInFlight) {
+        m_CursorShapePendingId = id;
+        return;
+    }
+    m_CursorShapesRequested.insert(id);
+    m_CursorShapeFetchInFlight = true;
+    m_CursorShapePendingId = 0;
+
+    NvComputer* computer = m_Computer;
+    std::shared_ptr<CursorMailbox> mailbox = m_CursorMailbox;
+    QThreadPool::globalInstance()->start([computer, mailbox, id]() {
+        CursorPacket::Update update;
+        update.kind = CursorPacket::Update::FetchFailed;
+        update.fetchedId = id;
+        try {
+            NvHTTP http(computer);
+            // One complete CURSOR_SHAPE payload (offset 0) of the host's current shape
+            const QByteArray body = http.cursorRequest(QStringLiteral("shape=%1").arg(id), 5000);
+            QString reason;
+            CursorPacket::ShapeChunk chunk;
+            CursorPacket::ShapeAssembler assembler;
+            if (!CursorPacket::parseShapeChunk(reinterpret_cast<const uint8_t*>(body.constData()),
+                                               (uint32_t)body.size(), chunk, &reason) ||
+                    assembler.add(chunk, update.shape, &reason) != CursorPacket::ShapeAssembler::Complete) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: shape %u from the host is invalid: %s",
+                            id, qPrintable(reason.isEmpty() ? QStringLiteral("incomplete") : reason));
+            }
+            else if (update.shape.id != id) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: the host sent shape %u instead of %u", update.shape.id, id);
+            }
+            else {
+                update.kind = CursorPacket::Update::ShapeFetched;
+            }
+        } catch (const std::exception& e) {
+            // 404: the host's cursor has changed since (the next state message names the new shape)
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: fetching shape %u failed: %s", id, e.what());
+        } catch (...) {
+        }
+        // A failed fetch goes through the mailbox too, so the main loop knows it is over
+        postCursorUpdate(*mailbox, std::move(update));
+    });
+}
+
+void Session::finishCursorShapeFetch()
+{
+    m_CursorShapeFetchInFlight = false;
+    if (m_CursorShapePendingId != 0) {
+        const uint32_t id = m_CursorShapePendingId;
+        m_CursorShapePendingId = 0;
+        requestCursorShape(id);
+    }
 }
 
 void Session::toggleStatsOverlay()
@@ -2025,6 +2328,9 @@ void Session::applyLiveSettings()
         delete m_ClipboardSync;
         m_ClipboardSync = nullptr;
     }
+
+    // The local cursor setting takes effect at once
+    updateCursorMode();
 }
 
 void Session::handleStreamPanelAction(int action, intptr_t value)
@@ -2073,6 +2379,7 @@ void Session::handleStreamPanelAction(int action, intptr_t value)
     case StreamPanel::ActionToggleMouseMode:
         m_InputHandler->toggleAbsoluteMouseMode();
         m_Panel->setAbsoluteMouse(m_InputHandler->isAbsoluteMouseMode());
+        updateCursorMode();
         break;
     case StreamPanel::ActionSavePreferences:
         // The user picked a bitrate in the panel (also when the host already streams at it), or
@@ -2223,6 +2530,7 @@ void Session::start()
 
     // We're now active
     s_ActiveSession = this;
+    m_CursorModeSerial = ++s_CursorModeSerial;
 
     // Initialize the gamepad code with our preferences
     // NB: m_InputHandler must be initialize before starting the connection.
@@ -2448,6 +2756,14 @@ void Session::exec()
     m_Panel = new StreamPanel(m_QtWindow != nullptr ? qmlEngine(m_QtWindow) : nullptr,
                               m_Window, m_Computer->name, m_App.name);
     m_Panel->setStreamBitrate(m_StreamConfig.bitrate);
+
+    // Hermit: local cursor on a Shell host that supports it (the control stream is up, so the
+    // host can send shapes as soon as it agrees)
+    {
+        QReadLocker lock(&m_Computer->lock);
+        m_CursorOverlayState = m_Computer->localCursorVersion > 0 ? StatsOverlay::CursorHost : StatsOverlay::CursorNone;
+    }
+    updateCursorMode();
 
     // Hijack this thread to be the SDL main thread. We have to do this
     // because we want to suspend all Qt processing until the stream is over.
@@ -2683,6 +2999,16 @@ void Session::exec()
                     ClipboardSync::discardHostContent(event.user.data1);
                 }
                 break;
+            case SDL_CODE_CURSOR_UPDATE:
+                handleCursorUpdates();
+                break;
+            case SDL_CODE_CURSOR_MODE_RESULT: {
+                const uint64_t tag = static_cast<uint64_t>(reinterpret_cast<intptr_t>(event.user.data1));
+                if (static_cast<uint32_t>(tag >> 1) == m_CursorModeSerial) {
+                    applyCursorModeResult((tag & 1) != 0, static_cast<int>(reinterpret_cast<intptr_t>(event.user.data2)));
+                }
+                break;
+            }
             default:
                 SDL_assert(false);
             }
@@ -2898,6 +3224,8 @@ void Session::exec()
 
             // After a window resize, we need to reset the pointer lock region
             m_InputHandler->updatePointerRegionLock();
+            // Hermit: and the local cursor's scale follows the video area
+            m_InputHandler->refreshLocalCursor();
 
             SDL_UnlockMutex(m_DecoderLock);
             break;

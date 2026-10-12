@@ -4,6 +4,8 @@
 #include "SDL_compat.h"
 #include "streaming/streamutils.h"
 
+#include <QImage>
+
 void SdlInputHandler::notifyMouseLeave()
 {
     if (m_NeedsManualCaptureOnLeave) {
@@ -163,7 +165,15 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
 
         // Adjust the cursor visibility if applicable
         if (mouseInVideoRegion ^ m_MouseWasInVideoRegion) {
-            SDL_ShowCursor((mouseInVideoRegion && m_MouseCursorCapturedVisibilityState == SDL_DISABLE) ? SDL_DISABLE : SDL_ENABLE);
+            if (mouseInVideoRegion) {
+                // Hidden, or the host cursor's shape with the local cursor
+                showCapturedCursor();
+            }
+            else {
+                // The system arrow over the rest of the window (and the stream panel)
+                SDL_SetCursor(SDL_GetDefaultCursor());
+                SDL_ShowCursor(SDL_ENABLE);
+            }
             if (!mouseInVideoRegion && buttonState != 0) {
                 // If we still have a button pressed on leave, wait for that to come up
                 // before we stop sending mouse position events.
@@ -333,4 +343,194 @@ void SdlInputHandler::updatePointerRegionLock()
         SDL_SetWindowGrab(m_Window, SDL_FALSE);
 #endif
     }
+}
+
+// Hermit: local cursor ---------------------------------------------------------------------------
+
+LocalCursorCache::~LocalCursorCache()
+{
+    clear();
+}
+
+void LocalCursorCache::clear()
+{
+    for (SDL_Cursor* cursor : std::as_const(m_Cursors)) {
+        // SDL falls back to the default cursor if this one is being shown
+        SDL_FreeCursor(cursor);
+    }
+    m_Cursors.clear();
+    m_CursorOrder.clear();
+    m_Shapes.clear();
+    m_ShapeOrder.clear();
+}
+
+void LocalCursorCache::addShape(const CursorPacket::Shape& shape)
+{
+    if (m_Shapes.contains(shape.id)) {
+        // The same id names the same pixels (a hash of them); keep the cursors made from it
+        m_ShapeOrder.removeOne(shape.id);
+    }
+    else {
+        m_Shapes.insert(shape.id, shape);
+        while (m_Shapes.size() > k_MaxShapes && !m_ShapeOrder.isEmpty()) {
+            m_Shapes.remove(m_ShapeOrder.takeFirst());
+        }
+    }
+    m_ShapeOrder.append(shape.id);
+}
+
+SDL_Cursor* LocalCursorCache::cursor(uint32_t id, double scale)
+{
+    const uint64_t key = CursorPacket::cursorKey(id, scale);
+    auto it = m_Cursors.constFind(key);
+    if (it != m_Cursors.constEnd()) {
+        m_CursorOrder.removeOne(key);
+        m_CursorOrder.append(key);
+        return it.value();
+    }
+
+    auto shapeIt = m_Shapes.constFind(id);
+    if (shapeIt == m_Shapes.constEnd() || shapeIt->pixels.isEmpty()) {
+        return nullptr;
+    }
+    const CursorPacket::Shape& shape = shapeIt.value();
+
+    // BGRA32 straight alpha is QImage::Format_ARGB32 on little-endian machines
+    QImage image(reinterpret_cast<const uchar*>(shape.pixels.constData()),
+                 shape.width, shape.height, shape.width * 4, QImage::Format_ARGB32);
+    int hotspotX = shape.hotspotX;
+    int hotspotY = shape.hotspotY;
+    if (qAbs(scale - 1.0) > 0.001) {
+        const int width = qMax(1, qRound(shape.width * scale));
+        const int height = qMax(1, qRound(shape.height * scale));
+        image = image.scaled(width, height, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        hotspotX = qBound(0, qRound(shape.hotspotX * scale), width - 1);
+        hotspotY = qBound(0, qRound(shape.hotspotY * scale), height - 1);
+    }
+    else {
+        // Own the pixels while the surface exists (the shape may be dropped from the cache)
+        image = image.copy();
+    }
+
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormatFrom((void*)image.constBits(),
+                                                              image.width(), image.height(), 32,
+                                                              image.bytesPerLine(),
+                                                              SDL_PIXELFORMAT_ARGB8888);
+    if (surface == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: SDL_CreateRGBSurfaceWithFormatFrom() failed: %s", SDL_GetError());
+        return nullptr;
+    }
+    // The cursor copies the pixels, so the surface and image can go
+    SDL_Cursor* cursor = SDL_CreateColorCursor(surface, hotspotX, hotspotY);
+    SDL_FreeSurface(surface);
+    if (cursor == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: SDL_CreateColorCursor() failed: %s", SDL_GetError());
+        return nullptr;
+    }
+
+    m_Cursors.insert(key, cursor);
+    m_CursorOrder.append(key);
+    while (m_Cursors.size() > k_MaxCursors && !m_CursorOrder.isEmpty()) {
+        SDL_FreeCursor(m_Cursors.take(m_CursorOrder.takeFirst()));
+    }
+    return cursor;
+}
+
+void SdlInputHandler::setLocalCursorActive(bool active)
+{
+    if (m_LocalCursorActive == active) {
+        return;
+    }
+    m_LocalCursorActive = active;
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Local cursor %s", active ? "on" : "off");
+    refreshLocalCursor();
+}
+
+void SdlInputHandler::handleCursorShape(const CursorPacket::Shape& shape)
+{
+    m_LocalCursors.addShape(shape);
+    // The host follows a shape with its state; the shape itself does not change the visibility
+    m_LocalCursorKnown = true;
+    m_LocalCursorShapeId = shape.id;
+    m_LocalCursorWantedId = shape.id;
+    refreshLocalCursor();
+}
+
+bool SdlInputHandler::handleCursorState(const CursorPacket::State& state)
+{
+    m_LocalCursorKnown = true;
+    m_LocalCursorVisible = state.visible;
+    m_LocalCursorHostComposing = state.hostComposing;
+    m_LocalCursorWantedId = state.id;
+    const bool known = state.id == 0 || m_LocalCursors.hasShape(state.id);
+    if (known) {
+        m_LocalCursorShapeId = state.id;
+    }
+    refreshLocalCursor();
+    return known;
+}
+
+void SdlInputHandler::handleFetchedCursorShape(const CursorPacket::Shape& shape)
+{
+    m_LocalCursors.addShape(shape);
+    if (m_LocalCursorKnown && m_LocalCursorWantedId == shape.id && m_LocalCursorShapeId != shape.id) {
+        m_LocalCursorShapeId = shape.id;
+        refreshLocalCursor();
+    }
+}
+
+void SdlInputHandler::refreshLocalCursor()
+{
+    // Only while the cursor inside the video area is ours to set: captured, remote desktop mouse,
+    // and the mouse was last seen in the video area (otherwise the next move sets it)
+    if (m_Window != nullptr && isCaptureActive() && m_AbsoluteMouseMode && m_MouseWasInVideoRegion) {
+        showCapturedCursor();
+    }
+}
+
+double SdlInputHandler::localCursorScale() const
+{
+    int windowWidth, windowHeight;
+    SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
+
+    SDL_Rect src, dst;
+    src.x = src.y = 0;
+    src.w = m_StreamWidth;
+    src.h = m_StreamHeight;
+    dst.x = dst.y = 0;
+    dst.w = windowWidth;
+    dst.h = windowHeight;
+    StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+
+    // The window is created with SDL_WINDOW_ALLOW_HIGHDPI: the cursor image is in physical pixels
+    int drawableWidth, drawableHeight;
+    SDL_GL_GetDrawableSize(m_Window, &drawableWidth, &drawableHeight);
+    return CursorPacket::cursorScale(dst.w, m_StreamWidth, drawableWidth, windowWidth);
+}
+
+int SdlInputHandler::capturedCursorVisibility() const
+{
+    if (m_MouseCursorCapturedVisibilityState == SDL_ENABLE) {
+        // Ctrl+Alt+Shift+C: the system arrow, whatever the host shows
+        return SDL_ENABLE;
+    }
+    if (m_LocalCursorActive && m_LocalCursorKnown) {
+        // The host cursor's shape while the host shows a cursor and does not draw it into the
+        // video itself (another client without a local cursor)
+        return (m_LocalCursorVisible && !m_LocalCursorHostComposing) ? SDL_ENABLE : SDL_DISABLE;
+    }
+    // As always: hidden inside the video area
+    return SDL_DISABLE;
+}
+
+void SdlInputHandler::showCapturedCursor()
+{
+    SDL_Cursor* cursor = nullptr;
+    if (m_LocalCursorActive && m_LocalCursorKnown && m_MouseCursorCapturedVisibilityState != SDL_ENABLE &&
+            m_LocalCursorShapeId != 0) {
+        // nullptr (the cursor could not be made) shows the system arrow
+        cursor = m_LocalCursors.cursor(m_LocalCursorShapeId, localCursorScale());
+    }
+    SDL_SetCursor(cursor != nullptr ? cursor : SDL_GetDefaultCursor());
+    SDL_ShowCursor(capturedCursorVisibility());
 }

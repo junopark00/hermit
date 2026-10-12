@@ -142,6 +142,9 @@ public:
     Q_PROPERTY(bool quitAppAfter MEMBER quitAppAfter NOTIFY quitAppAfterChanged)
     Q_PROPERTY(bool absoluteMouseMode MEMBER absoluteMouseMode NOTIFY absoluteMouseModeChanged)
     Q_PROPERTY(bool absoluteTouchMode MEMBER absoluteTouchMode NOTIFY absoluteTouchModeChanged)
+    // Hermit: in remote desktop mouse mode, a Shell host that can sends the cursor's shape and this
+    // PC draws it as the OS cursor (no stream delay on the pointer)
+    Q_PROPERTY(bool localCursor MEMBER localCursor NOTIFY localCursorChanged)
     Q_PROPERTY(bool framePacing MEMBER framePacing NOTIFY framePacingChanged)
     Q_PROPERTY(bool connectionWarnings MEMBER connectionWarnings NOTIFY connectionWarningsChanged)
     Q_PROPERTY(bool configurationWarnings MEMBER configurationWarnings NOTIFY configurationWarningsChanged)
@@ -195,6 +198,7 @@ public:
     bool quitAppAfter;
     bool absoluteMouseMode;
     bool absoluteTouchMode;
+    bool localCursor;
     bool framePacing;
     bool connectionWarnings;
     bool configurationWarnings;
@@ -241,6 +245,7 @@ signals:
     void quitAppAfterChanged();
     void absoluteMouseModeChanged();
     void absoluteTouchModeChanged();
+    void localCursorChanged();
     void audioConfigChanged();
     void videoCodecConfigChanged();
     void enableHdrChanged();

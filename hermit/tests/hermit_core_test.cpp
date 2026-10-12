@@ -1,14 +1,15 @@
 // Tests for Hermit's own logic that does not need a stream: the layered translator, the session
-// summary (maths and history file), the performance overlay text, automatic bitrate, which
-// clipboard change wins and when the host clipboard is polled, resolution presets for the
-// display's aspect ratio and the connection profile property list. Built and run by
-// hermit/tests/run-tests.ps1.
+// summary (maths and history file), the performance overlay text, the local cursor messages
+// (parsing, chunk assembly, shape ids), automatic bitrate, which clipboard change wins and when
+// the host clipboard is polled, resolution presets for the display's aspect ratio and the
+// connection profile property list. Built and run by hermit/tests/run-tests.ps1.
 
 // The headers pull in SDL, which would otherwise rename main().
 #define SDL_MAIN_HANDLED
 #include "settings/brandingtranslator.h"
 #include "streaming/sessionsummary.h"
 #include "streaming/video/statsoverlay.h"
+#include "streaming/cursorpacket.h"
 #include "streaming/autobitrate.h"
 #include "streaming/clipboardchangeorder.h"
 #include "settings/resolutionpresets.h"
@@ -177,6 +178,234 @@ static void testStatsOverlay()
     for (const QString& line : StatsOverlay::format(in, all).split('\n')) {
         CHECK(line.count('\t') == 1);
     }
+
+    // The local cursor line comes with the video metric on hosts that have the feature
+    in.cursorState = StatsOverlay::CursorLocal;
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricVideo).split('\n').value(1), QString("Cursor\tlocal"));
+    in.cursorState = StatsOverlay::CursorHostOtherClient;
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricVideo).split('\n').value(1), QString("Cursor\thost (another client connected)"));
+    in.cursorState = StatsOverlay::CursorHost;
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricVideo).split('\n').value(1), QString("Cursor\thost"));
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricBitrate).split('\n').size(), 1);
+    in.cursorState = StatsOverlay::CursorNone;
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricVideo).split('\n').size(), 1);
+}
+
+// Local cursor messages (cursorpacket.h): the wire layout shared with Shell
+// (shell/src/platform/cursor_shape.h, namespace wire)
+static void put16(QByteArray& out, uint16_t v) { out.append((char)(v & 0xFF)); out.append((char)(v >> 8)); }
+static void put32(QByteArray& out, uint32_t v) { put16(out, (uint16_t)(v & 0xFFFF)); put16(out, (uint16_t)(v >> 16)); }
+
+static QByteArray shapeMessage(const CursorPacket::Shape& shape, uint32_t offset, int count, uint8_t version = 1)
+{
+    QByteArray out;
+    out.append((char)version);
+    put32(out, shape.id);
+    put16(out, shape.width);
+    put16(out, shape.height);
+    put16(out, shape.hotspotX);
+    put16(out, shape.hotspotY);
+    put32(out, offset);
+    out.append(shape.pixels.mid((int)offset, count));
+    return out;
+}
+
+static QByteArray stateMessage(uint32_t id, bool visible, bool composing, uint8_t version = 1)
+{
+    QByteArray out;
+    out.append((char)version);
+    put32(out, id);
+    out.append((char)(visible ? 1 : 0));
+    out.append((char)(composing ? 1 : 0));
+    return out;
+}
+
+static CursorPacket::Shape testShape(uint16_t width, uint16_t height, uint16_t hotspotX, uint16_t hotspotY)
+{
+    CursorPacket::Shape shape;
+    shape.width = width;
+    shape.height = height;
+    shape.hotspotX = hotspotX;
+    shape.hotspotY = hotspotY;
+    shape.pixels.resize(width * height * 4);
+    for (int i = 0; i < shape.pixels.size(); i++) {
+        shape.pixels[i] = (char)(i * 7 + 3);
+    }
+    shape.id = CursorPacket::shapeId(shape);
+    return shape;
+}
+
+static bool parseShapeBytes(const QByteArray& bytes, CursorPacket::ShapeChunk& chunk, QString* reason = nullptr)
+{
+    return CursorPacket::parseShapeChunk(reinterpret_cast<const uint8_t*>(bytes.constData()), (uint32_t)bytes.size(), chunk, reason);
+}
+
+static bool parseStateBytes(const QByteArray& bytes, CursorPacket::State& state, QString* reason = nullptr)
+{
+    return CursorPacket::parseState(reinterpret_cast<const uint8_t*>(bytes.constData()), (uint32_t)bytes.size(), state, reason);
+}
+
+// Reference FNV-1a (32-bit) for the shape id check
+static uint32_t fnv1a(const QByteArray& data, uint32_t hash = 2166136261u)
+{
+    for (char c : data) {
+        hash ^= (uint8_t)c;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static void testCursorPacket()
+{
+    using namespace CursorPacket;
+
+    // Shape id: FNV-1a over width, height, hotspot x, hotspot y (LE u16 each) then the pixels
+    CHECK_EQ(fnv1a(QByteArray("a")), 0xe40c292cu);  // the reference against a known vector
+    Shape one = testShape(1, 1, 0, 0);
+    QByteArray idBytes;
+    put16(idBytes, 1); put16(idBytes, 1); put16(idBytes, 0); put16(idBytes, 0);
+    idBytes.append(one.pixels);
+    CHECK_EQ(one.id, fnv1a(idBytes));
+    Shape moved = one;
+    moved.hotspotX = 0;  // same shape: same id
+    CHECK_EQ(shapeId(moved), one.id);
+    Shape other = testShape(1, 1, 0, 0);
+    other.pixels[0] = (char)0xFF;
+    CHECK(shapeId(other) != one.id);
+    CHECK(shapeId(one) != 0);
+
+    // A whole shape in one message
+    const Shape shape = testShape(4, 3, 2, 1);
+    ShapeChunk chunk;
+    QString reason;
+    CHECK(parseShapeBytes(shapeMessage(shape, 0, shape.pixels.size()), chunk, &reason));
+    CHECK_EQ(chunk.shape.id, shape.id);
+    CHECK_EQ((int)chunk.shape.width, 4);
+    CHECK_EQ((int)chunk.shape.height, 3);
+    CHECK_EQ((int)chunk.shape.hotspotX, 2);
+    CHECK_EQ((int)chunk.shape.hotspotY, 1);
+    CHECK_EQ(chunk.offset, 0u);
+    CHECK(chunk.shape.pixels == shape.pixels);
+    ShapeAssembler assembler;
+    Shape assembled;
+    CHECK_EQ((int)assembler.add(chunk, assembled), (int)ShapeAssembler::Complete);
+    CHECK(assembled.pixels == shape.pixels);
+    CHECK_EQ(assembled.id, shape.id);
+    CHECK(!assembler.pending());
+
+    // In order chunks: 48 pixel bytes as 20 + 20 + 8
+    const int chunkSizes[] = { 20, 20, 8 };
+    uint32_t offset = 0;
+    ShapeAssembler::Result result = ShapeAssembler::Rejected;
+    for (int size : chunkSizes) {
+        CHECK(parseShapeBytes(shapeMessage(shape, offset, size), chunk, &reason));
+        result = assembler.add(chunk, assembled, &reason);
+        offset += size;
+        if (offset < 48) {
+            CHECK_EQ((int)result, (int)ShapeAssembler::Partial);
+            CHECK(assembler.pending());
+        }
+    }
+    CHECK_EQ((int)result, (int)ShapeAssembler::Complete);
+    CHECK(assembled.pixels == shape.pixels);
+    CHECK(!assembler.pending());
+
+    // A gap (wrong offset) rejects the chunk and drops the partial shape; a new start is fine
+    CHECK(parseShapeBytes(shapeMessage(shape, 0, 20), chunk));
+    CHECK_EQ((int)assembler.add(chunk, assembled), (int)ShapeAssembler::Partial);
+    CHECK(parseShapeBytes(shapeMessage(shape, 28, 20), chunk));
+    CHECK_EQ((int)assembler.add(chunk, assembled, &reason), (int)ShapeAssembler::Rejected);
+    CHECK(!reason.isEmpty());
+    CHECK(!assembler.pending());
+    CHECK(parseShapeBytes(shapeMessage(shape, 20, 20), chunk));
+    CHECK_EQ((int)assembler.add(chunk, assembled), (int)ShapeAssembler::Rejected);  // no beginning
+    CHECK(parseShapeBytes(shapeMessage(shape, 0, 48), chunk));
+    CHECK_EQ((int)assembler.add(chunk, assembled), (int)ShapeAssembler::Complete);
+
+    // Another shape's first chunk replaces a partial one; the old shape's continuation is rejected
+    const Shape small = testShape(2, 2, 1, 1);
+    CHECK(parseShapeBytes(shapeMessage(shape, 0, 20), chunk));
+    CHECK_EQ((int)assembler.add(chunk, assembled), (int)ShapeAssembler::Partial);
+    CHECK(parseShapeBytes(shapeMessage(small, 0, 16), chunk));
+    CHECK_EQ((int)assembler.add(chunk, assembled), (int)ShapeAssembler::Complete);
+    CHECK_EQ(assembled.id, small.id);
+    CHECK(parseShapeBytes(shapeMessage(shape, 20, 20), chunk));
+    CHECK_EQ((int)assembler.add(chunk, assembled), (int)ShapeAssembler::Rejected);
+    // The same id with another size in a continuation is not the same shape
+    CHECK(parseShapeBytes(shapeMessage(shape, 0, 20), chunk));
+    CHECK_EQ((int)assembler.add(chunk, assembled), (int)ShapeAssembler::Partial);
+    Shape resized = shape;
+    resized.height = 4;
+    resized.pixels.resize(64);
+    CHECK(parseShapeBytes(shapeMessage(resized, 20, 20), chunk));
+    CHECK_EQ((int)assembler.add(chunk, assembled), (int)ShapeAssembler::Rejected);
+
+    // Size mismatches: bytes beyond the image, an offset at or past its end, no bytes at all
+    CHECK(!parseShapeBytes(shapeMessage(shape, 0, 48) + QByteArray(1, 'x'), chunk, &reason));
+    CHECK(!reason.isEmpty());
+    CHECK(!parseShapeBytes(shapeMessage(shape, 40, 8) + QByteArray(1, 'x'), chunk));
+    QByteArray atEnd = shapeMessage(shape, 0, 0);
+    atEnd[13] = 48;  // offset = 48 (the image size) with no data
+    CHECK(!parseShapeBytes(atEnd, chunk));
+    atEnd.append('x');
+    CHECK(!parseShapeBytes(atEnd, chunk));
+    CHECK(!parseShapeBytes(shapeMessage(shape, 0, 0), chunk));                         // header only
+    CHECK(!parseShapeBytes(shapeMessage(shape, 0, 48).left(16), chunk));               // too short
+    CHECK(parseShapeBytes(shapeMessage(shape, 47, 1), chunk));                          // the last byte
+
+    // Oversize and zero dimensions, hotspot outside the image
+    Shape wide = shape;
+    wide.width = 257;
+    wide.pixels.resize(257 * 3 * 4);
+    CHECK(!parseShapeBytes(shapeMessage(wide, 0, 100), chunk, &reason));
+    Shape tall = shape;
+    tall.height = 0;
+    CHECK(!parseShapeBytes(shapeMessage(tall, 0, 0) + QByteArray(4, 'x'), chunk));
+    Shape largest = testShape(256, 256, 255, 255);
+    CHECK(parseShapeBytes(shapeMessage(largest, 0, 61440), chunk));
+    ShapeAssembler big;
+    CHECK_EQ((int)big.add(chunk, assembled), (int)ShapeAssembler::Partial);
+    Shape badHotspot = shape;
+    badHotspot.hotspotX = 4;
+    CHECK(!parseShapeBytes(shapeMessage(badHotspot, 0, 48), chunk));
+    badHotspot = shape;
+    badHotspot.hotspotY = 3;
+    CHECK(!parseShapeBytes(shapeMessage(badHotspot, 0, 48), chunk));
+
+    // Version and id
+    CHECK(!parseShapeBytes(shapeMessage(shape, 0, 48, 2), chunk, &reason));
+    CHECK(reason.contains("version"));
+    CHECK(!parseShapeBytes(shapeMessage(shape, 0, 48, 0), chunk));
+    Shape zeroId = shape;
+    zeroId.id = 0;
+    CHECK(!parseShapeBytes(shapeMessage(zeroId, 0, 48), chunk, &reason));
+    CHECK(reason.contains("id 0"));
+
+    // States
+    State state;
+    CHECK(parseStateBytes(stateMessage(shape.id, true, false), state));
+    CHECK_EQ(state.id, shape.id);
+    CHECK(state.visible);
+    CHECK(!state.hostComposing);
+    CHECK(parseStateBytes(stateMessage(0, false, true), state));  // id 0: the default arrow
+    CHECK_EQ(state.id, 0u);
+    CHECK(!state.visible);
+    CHECK(state.hostComposing);
+    CHECK(!parseStateBytes(stateMessage(shape.id, true, false, 2), state, &reason));
+    CHECK(reason.contains("version"));
+    CHECK(!parseStateBytes(stateMessage(shape.id, true, false).left(6), state));
+    CHECK(!parseStateBytes(stateMessage(shape.id, true, false) + QByteArray(1, '\0'), state));
+    CHECK(!CursorPacket::parseState(nullptr, 7, state));
+
+    // Cursor scale and cache key
+    CHECK(near(cursorScale(1920, 1920, 1920, 1920), 1.0));
+    CHECK(near(cursorScale(960, 1920, 1920, 960), 1.0));   // half-size window on a 200% display
+    CHECK(near(cursorScale(1280, 2560, 1280, 1280), 0.5));
+    CHECK(near(cursorScale(0, 2560, 0, 0), 1.0));
+    CHECK(cursorKey(7, 1.0) != cursorKey(7, 1.5));
+    CHECK(cursorKey(7, 1.0) != cursorKey(8, 1.0));
+    CHECK_EQ(cursorKey(7, 1.0004), cursorKey(7, 1.0));
+    CHECK_EQ((uint32_t)(cursorKey(7, 1.0) >> 32), 7u);
 }
 
 // Automatic bitrate rules (autobitrate.h)
@@ -1264,6 +1493,7 @@ int main(int argc, char** argv)
     testBranding();
     testSessionSummary();
     testStatsOverlay();
+    testCursorPacket();
     testAutoBitrate();
     testClipboardChangeOrder();
     testClipboardChangeInputs();

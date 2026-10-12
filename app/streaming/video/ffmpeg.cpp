@@ -2159,6 +2159,7 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
             if (m_BackendRenderer != nullptr) {
                 inputs.decoder = QString::fromUtf8(m_BackendRenderer->getRendererName());
             }
+            inputs.cursorState = Session::get()->cursorOverlayState();
             const QByteArray overlayText = StatsOverlay::format(inputs, overlay.statsMetrics()).toUtf8();
             SDL_utf8strlcpy(overlay.getOverlayText(Overlay::OverlayDebug), overlayText.constData(),
                             overlay.getOverlayMaxTextLength());
