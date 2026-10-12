@@ -6,6 +6,7 @@
 #include <Limelight.h>
 #include <QtEndian>
 
+#include <QHostInfo>
 #include <QThread>
 #include <QThreadPool>
 #include <QCoreApplication>
@@ -583,20 +584,52 @@ class PendingPairingTask : public QObject, public QRunnable
     Q_OBJECT
 
 public:
-    PendingPairingTask(ComputerManager* computerManager, NvComputer* computer, QString pin, int attempt)
+    // Hermit: with qr (a QR link's id, fingerprint and this device's name; pin is the token) the
+    // result goes to ComputerManager::handleQrPairingCompleted instead of pairingCompleted
+    PendingPairingTask(ComputerManager* computerManager, NvComputer* computer, QString pin, int attempt,
+                       const NvPairingManager::QrPairing* qr = nullptr)
         : m_ComputerManager(computerManager),
           m_Computer(computer),
           m_Pin(pin),
-          m_Attempt(attempt)
+          m_Attempt(attempt),
+          m_IsQr(qr != nullptr)
     {
-        connect(this, &PendingPairingTask::pairingCompleted,
-                computerManager, &ComputerManager::pairingCompleted);
+        if (qr != nullptr) {
+            m_Qr = *qr;
+            connect(this, &PendingPairingTask::pairingCompleted,
+                    computerManager, &ComputerManager::handleQrPairingCompleted);
+        }
+        else {
+            connect(this, &PendingPairingTask::pairingCompleted,
+                    computerManager, &ComputerManager::pairingCompleted);
+        }
     }
 
 signals:
     void pairingCompleted(NvComputer* computer, QString error, int attempt);
 
 private:
+    // Hermit: the host refuses a QR request with "QR_<reason>: <text>" in status_message
+    // (notes/DESIGN-I-qr-pairing.md, 4.2 and 4.4). Known reasons get our own text; anything else
+    // is shown as the host sent it.
+    static QString qrRefusalMessage(const HostHttpResponseException& e)
+    {
+        const QString message = QString::fromUtf8(e.getStatusMessage());
+        if (message.startsWith("QR_used:")) {
+            return tr("This QR code has already been used. Create a new one on the host.");
+        }
+        if (message.startsWith("QR_expired:")) {
+            return tr("The QR code has expired. Create a new one on the host.");
+        }
+        if (message.startsWith("QR_network:")) {
+            return tr("QR pairing works from the local network only (Tailscale included).");
+        }
+        if (message.startsWith("QR_none:")) {
+            return tr("No QR pairing is waiting on the host. Create the QR code again in the web UI.");
+        }
+        return tr("The host returned an error: %1").arg(e.toQString());
+    }
+
     void run()
     {
         NvPairingManager pairingManager(m_Computer);
@@ -618,11 +651,24 @@ private:
         }
 
         try {
-           NvPairingManager::PairState result = pairingManager.pair(m_Computer->appVersion, m_Pin, m_Computer->serverCert);
+           NvPairingManager::PairState result = pairingManager.pair(m_Computer->appVersion, m_Pin, m_Computer->serverCert,
+                                                                    m_IsQr ? &m_Qr : nullptr);
            switch (result)
            {
            case NvPairingManager::PairState::PIN_WRONG:
-               emit pairingCompleted(m_Computer, tr("The PIN from the PC didn't match. Please try again."), m_Attempt);
+               if (m_IsQr) {
+                   // Hermit: the token did not derive the host's key: the link was altered on its way
+                   emit pairingCompleted(m_Computer, tr("The QR code is damaged. Copy the link again."), m_Attempt);
+               }
+               else {
+                   emit pairingCompleted(m_Computer, tr("The PIN from the PC didn't match. Please try again."), m_Attempt);
+               }
+               break;
+           case NvPairingManager::PairState::CERT_MISMATCH:
+               emit pairingCompleted(m_Computer, tr("The host's certificate does not match the QR code. Another device on the same network may be impersonating the host. Pairing was stopped."), m_Attempt);
+               break;
+           case NvPairingManager::PairState::QR_NO_ANSWER:
+               emit pairingCompleted(m_Computer, tr("The host did not answer the QR pairing. Create a new QR code and try again."), m_Attempt);
                break;
            case NvPairingManager::PairState::FAILED:
                if (m_Computer->currentGameId != 0) {
@@ -649,7 +695,12 @@ private:
                break;
            }
         } catch (const HostHttpResponseException& e) {
-            emit pairingCompleted(m_Computer, tr("The host returned an error: %1").arg(e.toQString()), m_Attempt);
+            if (m_IsQr) {
+                emit pairingCompleted(m_Computer, qrRefusalMessage(e), m_Attempt);
+            }
+            else {
+                emit pairingCompleted(m_Computer, tr("The host returned an error: %1").arg(e.toQString()), m_Attempt);
+            }
         } catch (const QtNetworkReplyException& e) {
             // Hermit: a cancelled attempt asks the host to drop its session, so a PIN entered on
             // the host later is not handed to it
@@ -682,21 +733,140 @@ private:
     NvComputer* m_Computer;
     QString m_Pin;
     int m_Attempt;
+    bool m_IsQr;
+    NvPairingManager::QrPairing m_Qr;
 };
 
-int ComputerManager::pairHost(NvComputer* computer, QString pin)
+int ComputerManager::newPairingAttempt()
 {
     if (++m_LastPairingAttempt <= 0) {
         m_LastPairingAttempt = 1;
     }
     int attempt = m_LastPairingAttempt;
     m_PairingAttempt.storeRelease(attempt);
+    return attempt;
+}
+
+int ComputerManager::pairHost(NvComputer* computer, QString pin)
+{
+    int attempt = newPairingAttempt();
 
     // Punt to a worker thread to avoid stalling the
     // UI while waiting for pairing to complete
     PendingPairingTask* pairing = new PendingPairingTask(this, computer, pin, attempt);
     QThreadPool::globalInstance()->start(pairing);
     return attempt;
+}
+
+QString ComputerManager::localDeviceName()
+{
+    QString deviceName = QHostInfo::localHostName();
+    if (deviceName.isEmpty()) {
+        deviceName = "Hermit";
+    }
+    return deviceName;
+}
+
+void ComputerManager::pairHostByLink(const QString& text)
+{
+    QrPairingLink::Error error;
+    QrPairingLink link = QrPairingLink::parse(text, &error);
+    switch (error) {
+    case QrPairingLink::NotPairingLink:
+    case QrPairingLink::Invalid:
+        // No request leaves for a link that does not parse
+        qWarning() << "QR pairing: the pasted text is not a valid Hermit pairing link";
+        emit qrPairingCompleted(tr("This is not a Hermit pairing link."));
+        return;
+    case QrPairingLink::UnsupportedVersion:
+        qWarning() << "QR pairing: unsupported link version";
+        emit qrPairingCompleted(tr("The link version is not supported."));
+        return;
+    case QrPairingLink::NoError:
+        break;
+    }
+
+    // One attempt at a time, shared with PIN pairing: a new one supersedes the last
+    int attempt = newPairingAttempt();
+    m_QrAttempt = attempt;
+    m_QrLink = link;
+    qInfo() << "QR pairing attempt" << attempt << "for" << NvAddress(link.host, link.port).toString()
+            << "(" << link.name << ", record" << link.id << ")";
+    emit qrPairingStarted();
+
+    // Adds the host (or finds the known one at this address) exactly as Add PC does, then
+    // handleQrHostAdded() continues
+    addNewHost(NvAddress(link.host, link.port), false, link.name, NvAddress(), attempt);
+}
+
+void ComputerManager::handleQrHostAdded(NvComputer* computer, bool qrPairing, int attempt)
+{
+    if (attempt != m_QrAttempt || !isCurrentPairingAttempt(attempt)) {
+        qInfo() << "QR pairing attempt" << attempt << "was cancelled while the host was being added";
+        return;
+    }
+    if (computer == nullptr) {
+        finishQrPairing(attempt, tr("Unable to connect to the specified PC."));
+        return;
+    }
+
+    bool paired;
+    QString name;
+    {
+        QReadLocker lock(&computer->lock);
+        paired = computer->pairState == NvComputer::PS_PAIRED;
+        name = computer->name;
+    }
+    if (paired) {
+        finishQrPairing(attempt, tr("This PC is already paired."));
+        return;
+    }
+    if (!qrPairing) {
+        // An older host would wait for a PIN that never comes; the host stays in the list for PIN pairing
+        qWarning() << "QR pairing: host" << name << "does not offer QR pairing (serverinfo has no qrPairing)";
+        finishQrPairing(attempt, tr("The host's Shell must be updated (1.3.0 or later). Pair with a PIN for now."));
+        return;
+    }
+
+    NvPairingManager::QrPairing qr;
+    qr.id = m_QrLink.id;
+    qr.fingerprint = m_QrLink.fingerprint;
+    qr.deviceName = localDeviceName();
+    PendingPairingTask* pairing = new PendingPairingTask(this, computer, m_QrLink.token, attempt, &qr);
+    QThreadPool::globalInstance()->start(pairing);
+}
+
+void ComputerManager::handleQrPairingCompleted(NvComputer*, QString error, int attempt)
+{
+    if (attempt != m_QrAttempt) {
+        // A cancelled attempt: its aborted request's error, or the host's "Superseded"
+        qInfo() << "Ignoring the result of cancelled QR pairing attempt" << attempt << ":" << error;
+        return;
+    }
+    finishQrPairing(attempt, error);
+}
+
+void ComputerManager::finishQrPairing(int attempt, const QString& error)
+{
+    m_PairingAttempt.testAndSetOrdered(attempt, 0);
+    m_QrAttempt = 0;
+    m_QrLink = QrPairingLink();
+    if (error.isEmpty()) {
+        qInfo() << "QR pairing attempt" << attempt << "completed";
+    }
+    else {
+        qWarning() << "QR pairing attempt" << attempt << "failed:" << error;
+    }
+    emit qrPairingCompleted(error);
+}
+
+void ComputerManager::cancelQrPairing()
+{
+    if (m_QrAttempt != 0) {
+        cancelPairing(m_QrAttempt);
+        m_QrAttempt = 0;
+        m_QrLink = QrPairingLink();
+    }
 }
 
 void ComputerManager::cancelPairing(int attempt)
@@ -803,6 +973,12 @@ void ComputerManager::stopPollingAsync()
 
 void ComputerManager::addNewHostManually(QString address)
 {
+    // Hermit: a pasted QR pairing link, before the address parsing below prefixes "hermit://"
+    if (QrPairingLink::looksLikeLink(address)) {
+        pairHostByLink(address);
+        return;
+    }
+
     QUrl url = QUrl::fromUserInput("hermit://" + address);
     if (url.isValid() && !url.host().isEmpty() && url.scheme() == "hermit") {
         // If there wasn't a port specified, use the default
@@ -822,16 +998,23 @@ class PendingAddTask : public QObject, public QRunnable
     Q_OBJECT
 
 public:
-    PendingAddTask(ComputerManager* computerManager, QString name, NvAddress address, NvAddress mdnsIpv6Address, bool mdns)
+    // Hermit: qrAttempt != 0: the add belongs to that QR pairing attempt; qrHostAdded() reports
+    // the result (with the host's qrPairing flag) instead of computerAddCompleted
+    PendingAddTask(ComputerManager* computerManager, QString name, NvAddress address, NvAddress mdnsIpv6Address, bool mdns,
+                   int qrAttempt = 0)
         : m_ComputerManager(computerManager),
           m_Name(name),
           m_Address(address),
           m_MdnsIpv6Address(mdnsIpv6Address),
           m_Mdns(mdns),
+          m_QrAttempt(qrAttempt),
+          m_QrPairing(false),
           m_AboutToQuit(false)
     {
         connect(this, &PendingAddTask::computerAddCompleted,
                 computerManager, &ComputerManager::computerAddCompleted);
+        connect(this, &PendingAddTask::qrHostAdded,
+                computerManager, &ComputerManager::handleQrHostAdded);
         connect(this, &PendingAddTask::computerStateChanged,
                 computerManager, &ComputerManager::handleComputerStateChanged);
         connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
@@ -841,12 +1024,29 @@ public:
 signals:
     void computerAddCompleted(QVariant success);
 
+    void qrHostAdded(NvComputer* computer, bool qrPairing, int attempt);
+
     void computerStateChanged(NvComputer* computer);
 
 private:
     void handleAboutToQuit()
     {
         m_AboutToQuit = true;
+    }
+
+    // Hermit: tells the user (Add PC) or the QR pairing attempt how the add ended; mDNS adds
+    // report nothing
+    void addCompleted(bool success, NvComputer* computer)
+    {
+        if (m_Mdns) {
+            return;
+        }
+        if (m_QrAttempt != 0) {
+            emit qrHostAdded(success ? computer : nullptr, m_QrPairing, m_QrAttempt);
+        }
+        else {
+            emit computerAddCompleted(success);
+        }
     }
 
     QString fetchServerInfo(NvHTTP& http)
@@ -879,9 +1079,7 @@ private:
             }
             return serverInfo;
         } catch (...) {
-            if (!m_Mdns) {
-                emit computerAddCompleted(false);
-            }
+            addCompleted(false, nullptr);
             return QString();
         }
     }
@@ -918,6 +1116,15 @@ private:
         // Create initial newComputer using HTTP serverinfo with no pinned cert
         NvComputer* newComputer = new NvComputer(http, serverInfo);
         http.setTrueUid(!newComputer->isNvidiaServerSoftware);
+
+        // Hermit: QR pairing: whether the host accepts qr= on getservercert (Shell 1.3.0 or
+        // later), and the host name from the link when the host does not tell its own
+        if (m_QrAttempt != 0) {
+            m_QrPairing = NvHTTP::getXmlString(serverInfo, "qrPairing") == "1";
+            if (!m_Name.isEmpty() && NvHTTP::getXmlString(serverInfo, "hostname").isEmpty()) {
+                newComputer->name = m_Name;
+            }
+        }
 
         // Check if we have a record of this host UUID to pull the pinned cert
         NvComputer* existingComputer;
@@ -1006,9 +1213,7 @@ private:
                 m_ComputerManager->m_Lock.unlock();
 
                 // For non-mDNS clients, let them know it succeeded
-                if (!m_Mdns) {
-                    emit computerAddCompleted(true);
-                }
+                addCompleted(true, existingComputer);
 
                 // Tell our client if something changed
                 if (changed) {
@@ -1040,9 +1245,7 @@ private:
                 }
 
                 // For non-mDNS clients, let them know it succeeded
-                if (!m_Mdns) {
-                    emit computerAddCompleted(true);
-                }
+                addCompleted(true, newComputer);
 
                 // Tell our client about this new PC
                 emit computerStateChanged(newComputer);
@@ -1055,14 +1258,16 @@ private:
     NvAddress m_Address;
     NvAddress m_MdnsIpv6Address;
     bool m_Mdns;
+    int m_QrAttempt;
+    bool m_QrPairing;
     bool m_AboutToQuit;
 };
 
-void ComputerManager::addNewHost(NvAddress address, bool mdns, QString name, NvAddress mdnsIpv6Address)
+void ComputerManager::addNewHost(NvAddress address, bool mdns, QString name, NvAddress mdnsIpv6Address, int qrAttempt)
 {
     // Punt to a worker thread to avoid stalling the
     // UI while waiting for serverinfo query to complete
-    PendingAddTask* addTask = new PendingAddTask(this, name, address, mdnsIpv6Address, mdns);
+    PendingAddTask* addTask = new PendingAddTask(this, name, address, mdnsIpv6Address, mdns, qrAttempt);
     QThreadPool::globalInstance()->start(addTask);
 }
 

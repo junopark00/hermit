@@ -459,6 +459,32 @@ TRANSLATIONS = {
     ('PendingPairingTask', 'No PIN was entered on the host within 5 minutes. Start pairing again.'):
         '5분 안에 호스트에서 PIN을 입력하지 않았습니다. 페어링을 다시 시작하세요.',
     ('QPlatformTheme', 'Save'): '저장',
+
+    # QR pairing from a pasted link (notes/DESIGN-I-qr-pairing.md, 4.4)
+    ('main', "Enter the IP address of your host PC, or paste a QR pairing link from Shell's web UI:"):
+        '호스트 PC의 IP 주소를 입력하거나, Shell 웹 UI의 QR 페어링 링크를 붙여넣으세요:',
+    ('PcView', 'Pairing with the QR code…'): 'QR 코드로 페어링하는 중…',
+    ('PcView', 'This dialog will close when pairing is completed.'): '페어링이 끝나면 이 대화 상자가 닫힙니다.',
+    ('ComputerManager', 'This is not a Hermit pairing link.'): 'Hermit 페어링 링크가 아닙니다.',
+    ('ComputerManager', 'The link version is not supported.'): '링크 버전을 지원하지 않습니다.',
+    ('ComputerManager', 'Unable to connect to the specified PC.'): '지정한 PC에 연결할 수 없습니다.',
+    ('ComputerManager', 'This PC is already paired.'): '이미 페어링된 PC입니다.',
+    ('ComputerManager', "The host's Shell must be updated (1.3.0 or later). Pair with a PIN for now."):
+        '호스트 Shell을 업데이트해야 합니다(1.3.0 이상). 지금은 PIN으로 페어링하세요.',
+    ('PendingPairingTask', 'This QR code has already been used. Create a new one on the host.'):
+        '이 QR 코드는 이미 사용되었습니다. 호스트에서 새 QR을 만드세요.',
+    ('PendingPairingTask', 'The QR code has expired. Create a new one on the host.'):
+        'QR 코드가 만료되었습니다. 호스트에서 새 QR을 만드세요.',
+    ('PendingPairingTask', 'QR pairing works from the local network only (Tailscale included).'):
+        'QR 페어링은 로컬 네트워크(Tailscale 포함)에서만 됩니다.',
+    ('PendingPairingTask', 'No QR pairing is waiting on the host. Create the QR code again in the web UI.'):
+        '호스트에 대기 중인 QR 페어링이 없습니다. 웹 UI에서 QR을 다시 만드세요.',
+    ('PendingPairingTask', 'The QR code is damaged. Copy the link again.'):
+        'QR 코드가 손상되었습니다. 링크를 다시 복사하세요.',
+    ('PendingPairingTask', "The host's certificate does not match the QR code. Another device on the same network may be impersonating the host. Pairing was stopped."):
+        '호스트 인증서가 QR과 다릅니다. 같은 네트워크의 다른 장치가 호스트를 사칭하고 있을 수 있습니다. 페어링을 중단했습니다.',
+    ('PendingPairingTask', 'The host did not answer the QR pairing. Create a new QR code and try again.'):
+        '호스트가 QR 페어링에 답하지 않습니다. 새 QR을 만들어 다시 시도하세요.',
 }
 
 

@@ -18,6 +18,11 @@
 // the host closes the connection without a reply, which would open a new 5-minute PIN window.
 #define PIN_WAIT_TIMEOUT_MS 295000
 #define ABANDON_TIMEOUT_MS 3000
+// Hermit: QR pairing: the host answers getservercert at once (no PIN to wait for). An older host
+// that ignores qr= would wait for a PIN instead; that is caught before any request (serverinfo
+// qrPairing), so a late answer here is a slow LAN or an odd host.
+#define QR_WAIT_TIMEOUT_MS 10000
+#define QR_WINDOW_ENDED_MS 9500
 
 NvPairingManager::NvPairingManager(NvComputer* computer) :
     m_Http(computer)
@@ -246,10 +251,10 @@ NvPairingManager::saltPin(const QByteArray& salt, QString pin)
 }
 
 NvPairingManager::PairState
-NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverCert)
+NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverCert, const QrPairing* qr)
 {
     int serverMajorVersion = NvHTTP::parseQuad(appVersion).at(0);
-    qInfo() << "Pairing with server generation:" << serverMajorVersion;
+    qInfo() << "Pairing with server generation:" << serverMajorVersion << (qr != nullptr ? "(QR link)" : "");
 
     QCryptographicHash::Algorithm hashAlgo;
     int hashLength;
@@ -272,22 +277,41 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
     QByteArray aesKey = QCryptographicHash::hash(saltedPin, hashAlgo).constData();
     aesKey.truncate(16);
 
-    // Hermit: this request waits for the PIN to be entered on the host, up to PIN_WAIT_TIMEOUT_MS
+    // Hermit: this request waits for the PIN to be entered on the host, up to PIN_WAIT_TIMEOUT_MS.
+    // With a QR link the host has the secret already (qr=<id> names its record) and answers at
+    // once; the request then carries this PC's name and waits QR_WAIT_TIMEOUT_MS.
+    QString getCertArguments;
+    if (qr != nullptr) {
+        getCertArguments = "devicename=" + QString::fromLatin1(QUrl::toPercentEncoding(qr->deviceName)) +
+                           "&updateState=1&phrase=getservercert&salt=" + salt.toHex() +
+                           "&clientcert=" + IdentityManager::get()->getCertificate().toHex() +
+                           "&qr=" + qr->id;
+    }
+    else {
+        getCertArguments = "devicename=roth&updateState=1&phrase=getservercert&salt=" +
+                           salt.toHex() + "&clientcert=" + IdentityManager::get()->getCertificate().toHex();
+    }
     QElapsedTimer pinWait;
     pinWait.start();
     QString getCert;
     try {
         getCert = m_Http.openConnectionToString(m_Http.m_BaseUrlHttp,
                                                 "pair",
-                                                "devicename=roth&updateState=1&phrase=getservercert&salt=" +
-                                                salt.toHex() + "&clientcert=" + IdentityManager::get()->getCertificate().toHex(),
-                                                PIN_WAIT_TIMEOUT_MS);
+                                                getCertArguments,
+                                                qr != nullptr ? QR_WAIT_TIMEOUT_MS : PIN_WAIT_TIMEOUT_MS);
     } catch (const QtNetworkReplyException& e) {
-        // Hermit: our timeout, or Shell dropped the connection: no PIN was entered within 5 minutes
-        if (e.getError() != QNetworkReply::OperationCanceledError && e.getHttpStatus() == 0 &&
-                pinWait.elapsed() >= PIN_WINDOW_ENDED_MS) {
-            qWarning() << "No PIN entered on the host after" << pinWait.elapsed() / 1000 << "s:" << e.toQString();
-            return PairState::PIN_NOT_ENTERED;
+        if (e.getError() != QNetworkReply::OperationCanceledError && e.getHttpStatus() == 0) {
+            if (qr != nullptr && pinWait.elapsed() >= QR_WINDOW_ENDED_MS) {
+                // Hermit: the host did not answer the QR request; drop the session it may hold
+                qWarning() << "No answer to QR pairing after" << pinWait.elapsed() / 1000 << "s:" << e.toQString();
+                cleanupPairing();
+                return PairState::QR_NO_ANSWER;
+            }
+            // Hermit: our timeout, or Shell dropped the connection: no PIN was entered within 5 minutes
+            if (qr == nullptr && pinWait.elapsed() >= PIN_WINDOW_ENDED_MS) {
+                qWarning() << "No PIN entered on the host after" << pinWait.elapsed() / 1000 << "s:" << e.toQString();
+                return PairState::PIN_NOT_ENTERED;
+            }
         }
         throw;
     }
@@ -312,6 +336,17 @@ NvPairingManager::pair(QString appVersion, QString pin, QSslCertificate& serverC
         qCritical() << "Failed to parse plaincert";
         cleanupPairing();
         return PairState::FAILED;
+    }
+
+    // Hermit: a QR link names the host certificate (fp). Anything else answering at that address
+    // is not the host the QR came from: stop before the challenge, pin nothing.
+    if (qr != nullptr) {
+        QString fingerprint = QCryptographicHash::hash(unverifiedServerCert.toDer(), QCryptographicHash::Sha256).toHex();
+        if (fingerprint != qr->fingerprint) {
+            qCritical() << "The host certificate does not match the QR link's fingerprint";
+            cleanupPairing();
+            return PairState::CERT_MISMATCH;
+        }
     }
 
     // Pin this cert for TLS until pairing is complete. If successful, we will propagate

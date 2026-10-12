@@ -464,7 +464,9 @@ ApplicationWindow {
 
     NavigableDialog {
         id: addPcDialog
-        property string label: qsTr("Enter the IP address of your host PC:")
+        // Hermit: the same field takes a QR pairing link (hermit://pair?...) copied from a Shell
+        // host's web UI; ComputerManager tells the two apart. The clipboard is never read by itself.
+        property string label: qsTr("Enter the IP address of your host PC, or paste a QR pairing link from Shell's web UI:")
 
         standardButtons: Dialog.Ok | Dialog.Cancel
 

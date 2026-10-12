@@ -219,6 +219,7 @@ HEADERS += \
     backend/nvcomputer.h \
     backend/nvhttp.h \
     backend/nvpairingmanager.h \
+    backend/qrpairinglink.h \
     backend/computermanager.h \
     backend/boxartmanager.h \
     cli/commandlineparser.h \

@@ -9,7 +9,7 @@ Builds and runs Hermit's standalone tests (no app build, no stream, no host need
                          change wins (local or host, retries, a late setup, unconfirmed
                          uploads, what counts as a local copy), when the host clipboard
                          is polled, display aspect resolution presets, connection
-                         profile property names
+                         profile property names, QR pairing link parsing and record id
   clipboard_archive_test clipboard file archive: streamed upload, throttling, validation,
                          extraction, cancel (uses a loopback HTTP server); host file lists,
                          name length and case folding as on the host; links, Unix sockets

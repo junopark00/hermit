@@ -1380,6 +1380,14 @@ Start를 길게 눌러 끄기</translation>
       <source>The pairing page could not be opened. Enter the PIN in the web UI yourself.</source>
       <translation>페어링 페이지를 열지 못했습니다. 웹 UI에서 직접 PIN을 입력하세요.</translation>
     </message>
+    <message>
+      <source>Pairing with the QR code…</source>
+      <translation>QR 코드로 페어링하는 중…</translation>
+    </message>
+    <message>
+      <source>This dialog will close when pairing is completed.</source>
+      <translation>페어링이 끝나면 이 대화 상자가 닫힙니다.</translation>
+    </message>
   </context>
   <context>
     <name>StreamSegue</name>
@@ -1409,6 +1417,10 @@ Start를 길게 눌러 끄기</translation>
       <source>Click the Help button for possible solutions.</source>
       <translation>도움말 버튼을 눌러 해결 방법을 확인하세요.</translation>
     </message>
+    <message>
+      <source>Enter the IP address of your host PC, or paste a QR pairing link from Shell's web UI:</source>
+      <translation>호스트 PC의 IP 주소를 입력하거나, Shell 웹 UI의 QR 페어링 링크를 붙여넣으세요:</translation>
+    </message>
   </context>
   <context>
     <name>PendingPairingTask</name>
@@ -1420,12 +1432,63 @@ Start를 길게 눌러 끄기</translation>
       <source>No PIN was entered on the host within 5 minutes. Start pairing again.</source>
       <translation>5분 안에 호스트에서 PIN을 입력하지 않았습니다. 페어링을 다시 시작하세요.</translation>
     </message>
+    <message>
+      <source>This QR code has already been used. Create a new one on the host.</source>
+      <translation>이 QR 코드는 이미 사용되었습니다. 호스트에서 새 QR을 만드세요.</translation>
+    </message>
+    <message>
+      <source>The QR code has expired. Create a new one on the host.</source>
+      <translation>QR 코드가 만료되었습니다. 호스트에서 새 QR을 만드세요.</translation>
+    </message>
+    <message>
+      <source>QR pairing works from the local network only (Tailscale included).</source>
+      <translation>QR 페어링은 로컬 네트워크(Tailscale 포함)에서만 됩니다.</translation>
+    </message>
+    <message>
+      <source>No QR pairing is waiting on the host. Create the QR code again in the web UI.</source>
+      <translation>호스트에 대기 중인 QR 페어링이 없습니다. 웹 UI에서 QR을 다시 만드세요.</translation>
+    </message>
+    <message>
+      <source>The QR code is damaged. Copy the link again.</source>
+      <translation>QR 코드가 손상되었습니다. 링크를 다시 복사하세요.</translation>
+    </message>
+    <message>
+      <source>The host's certificate does not match the QR code. Another device on the same network may be impersonating the host. Pairing was stopped.</source>
+      <translation>호스트 인증서가 QR과 다릅니다. 같은 네트워크의 다른 장치가 호스트를 사칭하고 있을 수 있습니다. 페어링을 중단했습니다.</translation>
+    </message>
+    <message>
+      <source>The host did not answer the QR pairing. Create a new QR code and try again.</source>
+      <translation>호스트가 QR 페어링에 답하지 않습니다. 새 QR을 만들어 다시 시도하세요.</translation>
+    </message>
   </context>
   <context>
     <name>QPlatformTheme</name>
     <message>
       <source>Save</source>
       <translation>저장</translation>
+    </message>
+  </context>
+  <context>
+    <name>ComputerManager</name>
+    <message>
+      <source>This is not a Hermit pairing link.</source>
+      <translation>Hermit 페어링 링크가 아닙니다.</translation>
+    </message>
+    <message>
+      <source>The link version is not supported.</source>
+      <translation>링크 버전을 지원하지 않습니다.</translation>
+    </message>
+    <message>
+      <source>Unable to connect to the specified PC.</source>
+      <translation>지정한 PC에 연결할 수 없습니다.</translation>
+    </message>
+    <message>
+      <source>This PC is already paired.</source>
+      <translation>이미 페어링된 PC입니다.</translation>
+    </message>
+    <message>
+      <source>The host's Shell must be updated (1.3.0 or later). Pair with a PIN for now.</source>
+      <translation>호스트 Shell을 업데이트해야 합니다(1.3.0 이상). 지금은 PIN으로 페어링하세요.</translation>
     </message>
   </context>
 </TS>

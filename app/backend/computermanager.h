@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nvcomputer.h"
+#include "qrpairinglink.h"
 #include "settings/streamingpreferences.h"
 
 #include <qmdnsengine/server.h>
@@ -224,9 +225,24 @@ public:
 
     Q_INVOKABLE void stopPollingAsync();
 
+    // Hermit: an address or host name as before, or a QR pairing link (hermit://pair?...) pasted
+    // from a Shell host's web UI, which adds the host and pairs with it in one go (qrPairingStarted
+    // / qrPairingCompleted, see QrPairingLink)
     Q_INVOKABLE void addNewHostManually(QString address);
 
-    void addNewHost(NvAddress address, bool mdns, QString name = QString(), NvAddress mdnsIpv6Address = NvAddress());
+    // Hermit: qrAttempt != 0 is the QR pairing attempt this add belongs to: the result goes to
+    // handleQrHostAdded() instead of computerAddCompleted, and name is the host name from the
+    // link, used when the host does not tell its own
+    void addNewHost(NvAddress address, bool mdns, QString name = QString(), NvAddress mdnsIpv6Address = NvAddress(),
+                    int qrAttempt = 0);
+
+    // Hermit: abandons the QR pairing attempt addNewHostManually() started with a link; its
+    // request is aborted, the host is asked to drop the session and qrPairingCompleted is not
+    // emitted for it
+    Q_INVOKABLE void cancelQrPairing();
+
+    // Hermit: the name the host shows for this device (this PC's host name, "Hermit" if it has none)
+    static QString localDeviceName();
 
     QString generatePinString();
 
@@ -262,6 +278,13 @@ signals:
 
     void quitAppCompleted(QVariant error);
 
+    // Hermit: QR pairing from a pasted link began (the host is being added, then paired) and ended
+    // (error is empty on success; a cancelled attempt ends silently). A link that does not parse
+    // ends without having started.
+    void qrPairingStarted();
+
+    void qrPairingCompleted(QString error);
+
 private slots:
     void handleAboutToQuit();
 
@@ -269,7 +292,19 @@ private slots:
 
     void handleMdnsServiceResolved(MdnsPendingComputer* computer, QVector<QHostAddress>& addresses);
 
+    // Hermit: QR pairing, after the host was added (computer is null if it could not be reached;
+    // qrPairing is the host's serverinfo qrPairing flag) and after the pairing task ended
+    void handleQrHostAdded(NvComputer* computer, bool qrPairing, int attempt);
+
+    void handleQrPairingCompleted(NvComputer* computer, QString error, int attempt);
+
 private:
+    void pairHostByLink(const QString& link);
+
+    void finishQrPairing(int attempt, const QString& error);
+
+    int newPairingAttempt();
+
     void saveHosts();
 
     void saveHost(NvComputer* computer);
@@ -294,4 +329,8 @@ private:
     QAtomicInt m_PairingAttempt; // Hermit: the current pairing attempt, 0 if none
     int m_LastPairingAttempt = 0; // Hermit: main thread only
     QMutex m_PairingAbandonMutex; // Hermit: held while a dropped attempt's /unpair is sent
+    // Hermit: the QR pairing attempt in progress (0 if none) and its link; main thread only. The
+    // token leaves this object only as the pairing task's pin.
+    int m_QrAttempt = 0;
+    QrPairingLink m_QrLink;
 };

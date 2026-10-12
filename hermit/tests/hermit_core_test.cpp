@@ -2,7 +2,8 @@
 // summary (maths and history file), the performance overlay text, the local cursor messages
 // (parsing, chunk assembly, shape ids), automatic bitrate, which clipboard change wins and when
 // the host clipboard is polled, resolution presets for the display's aspect ratio and the
-// connection profile property list. Built and run by hermit/tests/run-tests.ps1.
+// connection profile property list and the QR pairing link parser. Built and run by
+// hermit/tests/run-tests.ps1.
 
 // The headers pull in SDL, which would otherwise rename main().
 #define SDL_MAIN_HANDLED
@@ -13,6 +14,7 @@
 #include "streaming/autobitrate.h"
 #include "streaming/clipboardchangeorder.h"
 #include "settings/resolutionpresets.h"
+#include "backend/qrpairinglink.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -1462,6 +1464,84 @@ static void testResolutionPresets()
     CHECK(!matchDisplay({}, QSize(0, 0)).isValid());
 }
 
+// The QR pairing link (notes/DESIGN-I-qr-pairing.md, 3 and 6.1): what parses, what is refused
+// before any request leaves, and the record id both sides derive from the token.
+static void testQrPairingLink()
+{
+    const QString fp = QString("0123456789abcdef").repeated(4);
+    const QString token = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const QString base = "hermit://pair?v=1&host=192.168.0.10&port=47989&fp=" + fp + "&token=" + token;
+
+    // id = SHA-256("hermit-qr-id" || token)[:16 hex]; expected values from Python hashlib
+    CHECK_EQ(QrPairingLink::tokenId("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), QString("abc59c26b176315e"));
+    CHECK_EQ(QrPairingLink::tokenId("AAAAAAAAAAAAAAAAAAAAAAAAAA"), QString("c2a447c6cb5416f5"));
+    CHECK_EQ(QrPairingLink::tokenId("MFRGGZDFMZTWQ2LKNNWG23TPOA"), QString("a71e78df4ae68ca5"));
+
+    QrPairingLink::Error error;
+    QrPairingLink link = QrPairingLink::parse(base + "&name=Work%20PC%20%ED%99%88", &error);
+    CHECK_EQ(int(error), int(QrPairingLink::NoError));
+    CHECK_EQ(link.host, QString("192.168.0.10"));
+    CHECK_EQ(int(link.port), 47989);
+    CHECK_EQ(link.fingerprint, fp);
+    CHECK_EQ(link.token, token);
+    CHECK_EQ(link.id, QString("abc59c26b176315e"));
+    CHECK_EQ(link.name, QString::fromUtf8("Work PC 홈"));   // percent-decoded UTF-8
+
+    // name is optional; surrounding whitespace, an uppercase scheme, lowercase hex and lowercase
+    // base32 are accepted and normalised; unknown keys are ignored
+    link = QrPairingLink::parse("  HERMIT://pair?v=1&host=host.example&port=1&fp=" + fp.toUpper() +
+                                "&token=" + token.toLower() + "&future=x \n", &error);
+    CHECK_EQ(int(error), int(QrPairingLink::NoError));
+    CHECK_EQ(link.host, QString("host.example"));
+    CHECK_EQ(int(link.port), 1);
+    CHECK_EQ(link.fingerprint, fp);
+    CHECK_EQ(link.token, token);
+    CHECK(link.name.isEmpty());
+
+    // A bracketed IPv6 literal loses its brackets (NvAddress keeps the bare address)
+    link = QrPairingLink::parse("hermit://pair?v=1&host=%5Bfd00::10%5D&port=65535&fp=" + fp + "&token=" + token, &error);
+    CHECK_EQ(int(error), int(QrPairingLink::NoError));
+    CHECK_EQ(link.host, QString("fd00::10"));
+    CHECK_EQ(int(link.port), 65535);
+    CHECK(QrPairingLink::looksLikeLink(" hermit://pair?v=1"));
+    CHECK(QrPairingLink::looksLikeLink("Hermit://PAIR?v=1") == false);   // the path is case-sensitive
+    CHECK(!QrPairingLink::looksLikeLink("hermit://192.168.0.10"));
+    CHECK(!QrPairingLink::looksLikeLink("192.168.0.10"));
+
+    // Refused without a request: not a link, wrong version, bad fingerprint, bad token, missing
+    // or out-of-range fields, a zone id in the host
+    auto errorOf = [](const QString& text) {
+        QrPairingLink::Error e;
+        QrPairingLink l = QrPairingLink::parse(text, &e);
+        if (e != QrPairingLink::NoError) {
+            CHECK(l.token.isEmpty() && l.id.isEmpty() && l.port == 0);
+        }
+        return int(e);
+    };
+    CHECK_EQ(errorOf("192.168.0.10"), int(QrPairingLink::NotPairingLink));
+    CHECK_EQ(errorOf("hermit://192.168.0.10?v=1"), int(QrPairingLink::NotPairingLink));
+    CHECK_EQ(errorOf("https://pair?v=1&host=a&port=1&fp=" + fp + "&token=" + token), int(QrPairingLink::NotPairingLink));
+    CHECK_EQ(errorOf("hermit://pair?v=2&host=a&port=1&fp=" + fp + "&token=" + token), int(QrPairingLink::UnsupportedVersion));
+    CHECK_EQ(errorOf("hermit://pair?v=&host=a&port=1&fp=" + fp + "&token=" + token), int(QrPairingLink::UnsupportedVersion));
+    CHECK_EQ(errorOf("hermit://pair?host=a&port=1&fp=" + fp + "&token=" + token), int(QrPairingLink::Invalid));   // no v
+    CHECK_EQ(errorOf("hermit://pair?v=1&port=1&fp=" + fp + "&token=" + token), int(QrPairingLink::Invalid));     // no host
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=&port=1&fp=" + fp + "&token=" + token), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=fe80::1%25eth0&port=1&fp=" + fp + "&token=" + token), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&fp=" + fp + "&token=" + token), int(QrPairingLink::Invalid));             // no port
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=0&fp=" + fp + "&token=" + token), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=65536&fp=" + fp + "&token=" + token), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=x&fp=" + fp + "&token=" + token), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=1&token=" + token), int(QrPairingLink::Invalid));                   // no fp
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=1&fp=" + fp.left(63) + "&token=" + token), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=1&fp=" + fp + "0&token=" + token), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=1&fp=" + fp.left(63) + "g&token=" + token), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=1&fp=" + fp), int(QrPairingLink::Invalid));                         // no token
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=1&fp=" + fp + "&token=" + token.left(25)), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=1&fp=" + fp + "&token=" + token + "A"), int(QrPairingLink::Invalid));
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=1&fp=" + fp + "&token=" + token.left(25) + "1"), int(QrPairingLink::Invalid));   // 1 is not base32
+    CHECK_EQ(errorOf("hermit://pair?v=1&host=a&port=1&fp=" + fp + "&token=" + token.left(25) + "="), int(QrPairingLink::Invalid));   // no padding
+}
+
 // Every StreamingPreferences property a connection profile stores must exist, or the value is
 // silently skipped (this is how YUV 4:4:4 once went unsaved).
 static void testProfileProperties(const QString& repo)
@@ -1508,6 +1588,7 @@ int main(int argc, char** argv)
     testClipboardHostPolling();
     testClipboardPushRetries();
     testResolutionPresets();
+    testQrPairingLink();
     testProfileProperties(repo);
 
     std::printf("%d checks, %d failed\n", g_Checks, g_Failures);

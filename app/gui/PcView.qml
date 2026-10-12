@@ -33,6 +33,8 @@ CenteredGridView {
     StackView.onActivated: {
         // Setup signals on CM
         ComputerManager.computerAddCompleted.connect(addComplete)
+        ComputerManager.qrPairingStarted.connect(qrPairingStarted)
+        ComputerManager.qrPairingCompleted.connect(qrPairingComplete)
 
         // Highlight the first item if a gamepad is connected
         if (currentIndex === -1 && SdlGamepadKeyNavigation.getConnectedGamepads() > 0) {
@@ -42,6 +44,26 @@ CenteredGridView {
 
     StackView.onDeactivating: {
         ComputerManager.computerAddCompleted.disconnect(addComplete)
+        ComputerManager.qrPairingStarted.disconnect(qrPairingStarted)
+        ComputerManager.qrPairingCompleted.disconnect(qrPairingComplete)
+    }
+
+    // Hermit: a QR pairing link pasted into Add PC: a waiting dialog with Cancel only (no PIN to
+    // show), then the host's error if it failed; nothing on success
+    function qrPairingStarted()
+    {
+        qrPairDialog.open()
+    }
+
+    function qrPairingComplete(error)
+    {
+        qrPairDialog.close()
+
+        if (error !== "") {
+            errorDialog.text = error
+            errorDialog.helpText = ""
+            errorDialog.open()
+        }
     }
 
     function pairingComplete(error)
@@ -330,6 +352,21 @@ CenteredGridView {
             // Hermit: Cancel or Escape abandons the attempt: its request is aborted and its
             // result ignored, so it can't close the dialog of a newer attempt
             computerModel.cancelPairing()
+        }
+    }
+
+    // Hermit: shown while a pasted QR pairing link is being used (the host is added, then paired
+    // with the link's token; no PIN is involved)
+    NavigableMessageDialog {
+        id: qrPairDialog
+        closePolicy: Popup.CloseOnEscape
+        text: qsTr("Pairing with the QR code…") + "\n\n" +
+              qsTr("This dialog will close when pairing is completed.")
+        standardButtons: Dialog.Cancel
+        onRejected: {
+            // Cancel or Escape abandons the attempt: its request is aborted and the host is asked
+            // to drop the session; its result is ignored
+            ComputerManager.cancelQrPairing()
         }
     }
 

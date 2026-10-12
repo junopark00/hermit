@@ -2,7 +2,6 @@
 
 #include <QDesktopServices>
 #include <QHostAddress>
-#include <QHostInfo>
 #include <QThreadPool>
 #include <QUrl>
 
@@ -408,10 +407,7 @@ bool ComputerModel::openPairingPage(QString uuid, QString pin)
 
     // The name Shell shows for this device. The pairing request itself carries the upstream
     // "roth" placeholder, so the host takes the name from the web UI form.
-    QString deviceName = QHostInfo::localHostName();
-    if (deviceName.isEmpty()) {
-        deviceName = "Hermit";
-    }
+    QString deviceName = ComputerManager::localDeviceName();
 
     // The PIN and name stay in the fragment: browsers never send it to the server
     QUrl url(QString("https://%1:%2/pin").arg(host).arg(webUiPort));
