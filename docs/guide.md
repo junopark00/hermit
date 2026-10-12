@@ -576,6 +576,11 @@ Hermit.exe quit <host>           Quit the running app on a host
 - **The stream stutters.** Open the performance overlay (Ctrl+Alt+Shift+S): network loss and jitter
   drops point to the network; lower the bitrate or turn on automatic bitrate on Shell hosts. Long queue
   delays point to frame pacing; try turning it off.
+- **The mouse feels slow in remote-desktop mode.** Most of the delay is waiting, not processing:
+  the host captures the desktop at the virtual display's refresh rate and the client shows the frame at
+  the next V-Sync, up to one frame interval each. For desktop work, 120 FPS with V-Sync off (both in
+  the stream panel) is noticeably quicker than 60 FPS with V-Sync on; the overlay's host and round-trip
+  times stay the same, so judge it by feel. Game mouse mode is not affected in the same way.
 - **Pairing fails.** Make sure the PIN was entered on the right host within about 5 minutes (after
   that, select the host again for a new PIN). **Open Shell pairing page** uses the address Hermit
   reached the host at and the host's web UI port (HTTP port + 1, normally 47990); if the host's web
