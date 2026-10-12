@@ -47,6 +47,22 @@ else works with any GameStream host, such as Sunshine or Apollo.
    the client ID that Moonlight clients share, so that request could unpair all of them.
 3. Once paired, pick an app or the desktop to start streaming.
 
+**Pair with a QR link (Shell 1.3.0 or later).** On the host's pairing page (`https://<host
+address>:47990`, **Pair with QR**), an administrator creates a QR code with the device permissions
+already chosen; next to it is the same link as text (`hermit://pair?...`). Copy that link, click
+**Add PC manually** on this PC and paste it into the address field: Hermit adds the host and pairs
+with it in one go, without a PIN or a second visit to the web UI. The link carries a one-time secret
+and the host's certificate fingerprint, so Hermit also checks that the host it reached is the one the
+QR came from. A link is valid for **120 seconds** and for one pairing; the host accepts it from the
+local network or Tailscale only. The errors: *already been used* and *expired* mean create a new QR on
+the host; *local network only* means this PC reached the host over the Internet; *no QR pairing is
+waiting* means the host has no open QR (create it again); *does not match the QR code* means the
+address answered with a different certificate than the QR named (another device may be impersonating
+the host, nothing was paired); *Shell must be updated* means the host is older than 1.3.0 (pair with a
+PIN instead, the host stays in the list). Copy the link only to paste it on this PC: Windows clipboard
+history and cloud clipboard sync can carry it elsewhere, and Hermit never reads the clipboard by
+itself.
+
 **Settings from Moonlight.** On its first run, if Hermit has no settings yet and Moonlight is
 installed for the same Windows user, Hermit copies Moonlight's settings once: paired hosts, the
 client identity (the certificate and key a host uses to recognize a paired client) and preferences.
