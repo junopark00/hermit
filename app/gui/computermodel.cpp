@@ -147,6 +147,8 @@ void ComputerModel::deleteComputer(int computerIndex)
 
     beginRemoveRows(QModelIndex(), computerIndex, computerIndex);
 
+    m_PowerModes.remove(computerUuid(computerIndex));
+
     // m_Computer[computerIndex] will be deleted by this call
     m_ComputerManager->deleteHost(m_Computers[computerIndex]);
 
