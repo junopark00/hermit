@@ -203,8 +203,7 @@ public:
     {
         bool allowed = false;
         QStringList clients;
-        // Sleep and hibernation availability, and whether Wake-on-LAN wakes the host ("yes", "no"
-        // or "unknown"; a host that does not say is "unknown")
+        // What the host can do, and whether Wake-on-LAN wakes it ("yes", "no" or "unknown")
         bool sleep = false;
         bool hibernate = false;
         QString wol = "unknown";

@@ -94,5 +94,5 @@ private:
     QVector<NvComputer*> m_Computers;
     ComputerManager* m_ComputerManager;
     int m_PairingAttempt = 0; // Hermit: the attempt pairComputer() started, 0 if none
-    QHash<QString, PowerModes> m_PowerModes; // Hermit: by uuid, from the hosts' power queries
+    QHash<QString, PowerModes> m_PowerModes; // Hermit: by uuid
 };

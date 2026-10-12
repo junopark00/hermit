@@ -241,7 +241,7 @@ public:
     // the capture backend cannot report the cursor). "shape=<id>" returns the CURSOR_SHAPE
     // payload (cursorpacket.h) of a shape the host sent to this session, for a cache miss or an
     // oversize shape. Returns the reply body. Throws on HTTP or network errors (404: an older
-    // host without the extension, 403: this client is not streaming, 404 for an unknown shape).
+    // host without the extension, or an unknown shape; 403: this client is not streaming).
     QByteArray
     cursorRequest(const QString& arguments, int timeoutMs);
 

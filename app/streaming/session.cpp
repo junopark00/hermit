@@ -2393,7 +2393,6 @@ void Session::applyLiveSettings()
         m_ClipboardSync = nullptr;
     }
 
-    // The local cursor setting takes effect at once
     updateCursorMode();
 }
 
@@ -3388,7 +3387,6 @@ DispatchDeferredCleanup:
     delete m_Panel;
     m_Panel = nullptr;
 
-    // Hermit: no local cursor retries after the stream
     cancelCursorTimers();
 
     // Uncapture the mouse and hide the window immediately,
