@@ -20,7 +20,7 @@ else works with any GameStream host, such as Sunshine or Apollo.
 - [Session summary and history](#session-summary-and-history)
 - [Connection profiles](#connection-profiles)
 - [Automatic reconnect](#automatic-reconnect)
-- [Shutting down or restarting a host (Shell)](#shutting-down-or-restarting-a-host-shell)
+- [Shutting down, restarting or sleeping a host (Shell)](#shutting-down-restarting-or-sleeping-a-host-shell)
 - [Bitrate entry and recommended values](#bitrate-entry-and-recommended-values)
 - [Resolutions for your display's shape](#resolutions-for-your-displays-shape)
 - [Other streaming options](#other-streaming-options)
@@ -464,10 +464,19 @@ the same host. **Connect now** connects at once; **Cancel** (Esc, gamepad B) sto
 - Turn it off with Settings → Streaming conveniences → "Reconnect automatically when the connection
   drops" (on by default).
 
-## Shutting down or restarting a host (Shell)
+## Shutting down, restarting or sleeping a host (Shell)
 
 - In the PC view, right-click a host (or press the menu key) and choose **Shut down PC…** or **Restart
   PC…**. Apps running on the host are asked to close first.
+- **Put PC to sleep…** and **Hibernate PC…** are in the same menu when the host reports that it can
+  do them (Shell; hibernation needs the hibernation file, `powercfg /hibernate on`). Hermit asks the
+  host when the menu opens and hides the items otherwise. Nothing on the host is closed: its apps
+  continue when it wakes.
+- Before sleep or hibernation, Hermit warns when the host says Wake-on-LAN is off on its wired network
+  adapter, or could not check it: the PC may then not be reachable until someone turns it on. When
+  Wake-on-LAN works, **Wake PC** in the PC's menu wakes it (from sleep this needs the adapter's
+  "Wake on Magic Packet" setting and the "Allow this device to wake the computer" permission; from
+  hibernation also the firmware's wake-on-LAN setting).
 - The device needs the **Launch apps** permission in Shell's pairing page; Hermit says so if it is
   missing, and asks you to update Shell if the host does not support remote shutdown.
 - Before shutting down or restarting, Hermit checks for other devices streaming from the host and, if

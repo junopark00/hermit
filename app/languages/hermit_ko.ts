@@ -1229,6 +1229,86 @@ Start를 길게 눌러 끄기</translation>
       <translation>끄기</translation>
     </message>
     <message>
+      <source>Put PC to sleep…</source>
+      <translation>PC 절전…</translation>
+    </message>
+    <message>
+      <source>Hibernate PC…</source>
+      <translation>PC 최대 절전…</translation>
+    </message>
+    <message>
+      <source>Put %1 to sleep</source>
+      <translation>%1 절전</translation>
+    </message>
+    <message>
+      <source>Hibernate %1</source>
+      <translation>%1 최대 절전</translation>
+    </message>
+    <message>
+      <source>%1 can't hibernate right now: hibernation is turned off on it.</source>
+      <translation>지금은 %1을(를) 최대 절전 모드로 전환할 수 없습니다. 이 PC에서 최대 절전 모드가 꺼져 있습니다.</translation>
+    </message>
+    <message>
+      <source>%1 can't go to sleep right now.</source>
+      <translation>지금은 %1을(를) 절전 모드로 전환할 수 없습니다.</translation>
+    </message>
+    <message>
+      <source>%1 goes to sleep in a few seconds.</source>
+      <translation>%1이(가) 몇 초 뒤 절전 모드로 들어갑니다.</translation>
+    </message>
+    <message>
+      <source>%1 hibernates in a few seconds.</source>
+      <translation>%1이(가) 몇 초 뒤 최대 절전 모드로 들어갑니다.</translation>
+    </message>
+    <message>
+      <source>Putting the PC to sleep…</source>
+      <translation>PC를 절전 모드로 전환하는 중…</translation>
+    </message>
+    <message>
+      <source>Hibernating the PC…</source>
+      <translation>PC를 최대 절전 모드로 전환하는 중…</translation>
+    </message>
+    <message>
+      <source>Their streams end when the PC goes to sleep.</source>
+      <translation>PC가 절전 모드로 들어가면 이 기기들의 스트림이 끊깁니다.</translation>
+    </message>
+    <message>
+      <source>Their streams end when the PC hibernates.</source>
+      <translation>PC가 최대 절전 모드로 들어가면 이 기기들의 스트림이 끊깁니다.</translation>
+    </message>
+    <message>
+      <source>Put %1 to sleep? Apps on it keep running and continue when it wakes.</source>
+      <translation>%1을(를) 절전 모드로 전환할까요? 실행 중인 앱은 그대로 두며, PC가 깨어나면 이어서 실행됩니다.</translation>
+    </message>
+    <message>
+      <source>Hibernate %1? Apps on it are kept and continue when it is turned on again.</source>
+      <translation>%1을(를) 최대 절전 모드로 전환할까요? 실행 중인 앱은 저장되며, PC를 다시 켜면 이어서 실행됩니다.</translation>
+    </message>
+    <message>
+      <source>This PC may not be reachable until someone turns it on: Wake-on-LAN is off on its network adapter.</source>
+      <translation>누군가 직접 켜기 전까지 이 PC에 연결하지 못할 수 있습니다. 네트워크 어댑터의 Wake-on-LAN이 꺼져 있습니다.</translation>
+    </message>
+    <message>
+      <source>This PC may not be reachable until someone turns it on: whether Wake-on-LAN is on could not be checked.</source>
+      <translation>누군가 직접 켜기 전까지 이 PC에 연결하지 못할 수 있습니다. Wake-on-LAN이 켜져 있는지 확인하지 못했습니다.</translation>
+    </message>
+    <message>
+      <source>Sleep anyway</source>
+      <translation>그래도 절전</translation>
+    </message>
+    <message>
+      <source>Sleep</source>
+      <translation>절전</translation>
+    </message>
+    <message>
+      <source>Hibernate anyway</source>
+      <translation>그래도 최대 절전</translation>
+    </message>
+    <message>
+      <source>Hibernate</source>
+      <translation>최대 절전</translation>
+    </message>
+    <message>
       <source>Cancel</source>
       <translation>취소</translation>
     </message>

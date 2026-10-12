@@ -3,7 +3,7 @@
 Hermit is a game-streaming client for Windows. It streams games, apps or the whole desktop from
 another PC over the GameStream protocol, and adds the tools you want for everyday remote use: a
 settings panel over the stream, live and automatic bitrate, clipboard sync with images and files,
-remote shutdown of the host, and a performance overlay and session summary that tell you how well
+remote shutdown, sleep and hibernation of the host, and a performance overlay and session summary that tell you how well
 the stream is doing.
 
 Hermit pairs best with [Shell](https://github.com/junopark00/hermit-shell), its companion host for
@@ -35,8 +35,8 @@ Windows, and also works with other GameStream hosts such as Sunshine and Apollo.
 - **Virtual display that follows the stream.** Shell creates its virtual display at the resolution
   you stream at, resizes it when you reconnect at a new resolution, and hands the desktop back to the
   monitors when one is turned on.
-- **Remote shutdown and restart.** Turn a Shell host off or restart it from the PC list, with a warning
-  when other devices are still streaming from it.
+- **Remote shutdown, restart, sleep and hibernation.** Turn a Shell host off, restart it or put it to sleep
+  from the PC list, with a warning when other devices are still streaming from it or Wake-on-LAN is off.
 - **Performance overlay.** Choose the metrics you care about: bitrate, network loss, round-trip time,
   host latency, decode and render times, and an estimated total latency.
 - **Session summary.** After each session, see how it went compared with your last ten, with every
@@ -69,7 +69,7 @@ the host.
 | Live bitrate change, automatic bitrate | Yes (NVIDIA encoder) | No |
 | Clipboard text | Yes | Hosts with the text clipboard extension |
 | Clipboard images and files, file drop | Yes | No |
-| Remote shutdown and restart | Yes | No |
+| Remote shutdown, restart, sleep and hibernation | Yes | No |
 | Virtual display resized on reconnect | Yes | Depends on the host |
 
 ## Requirements

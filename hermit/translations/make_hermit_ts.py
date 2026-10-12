@@ -297,6 +297,32 @@ TRANSLATIONS = {
     ('PcView', 'Also close apps with unsaved work (it is lost)'): '저장하지 않은 작업이 있는 앱도 닫기 (작업은 사라집니다)',
     ('PcView', 'Shut down anyway'): '그래도 끄기',
     ('PcView', 'Shut down'): '끄기',
+    # Sleep and hibernation (PC menu, when the host reports them)
+    ('PcView', 'Put PC to sleep…'): 'PC 절전…',
+    ('PcView', 'Hibernate PC…'): 'PC 최대 절전…',
+    ('PcView', 'Put %1 to sleep'): '%1 절전',
+    ('PcView', 'Hibernate %1'): '%1 최대 절전',
+    ('PcView', "%1 can't hibernate right now: hibernation is turned off on it."):
+        '지금은 %1을(를) 최대 절전 모드로 전환할 수 없습니다. 이 PC에서 최대 절전 모드가 꺼져 있습니다.',
+    ('PcView', "%1 can't go to sleep right now."): '지금은 %1을(를) 절전 모드로 전환할 수 없습니다.',
+    ('PcView', '%1 goes to sleep in a few seconds.'): '%1이(가) 몇 초 뒤 절전 모드로 들어갑니다.',
+    ('PcView', '%1 hibernates in a few seconds.'): '%1이(가) 몇 초 뒤 최대 절전 모드로 들어갑니다.',
+    ('PcView', 'Putting the PC to sleep…'): 'PC를 절전 모드로 전환하는 중…',
+    ('PcView', 'Hibernating the PC…'): 'PC를 최대 절전 모드로 전환하는 중…',
+    ('PcView', 'Their streams end when the PC goes to sleep.'): 'PC가 절전 모드로 들어가면 이 기기들의 스트림이 끊깁니다.',
+    ('PcView', 'Their streams end when the PC hibernates.'): 'PC가 최대 절전 모드로 들어가면 이 기기들의 스트림이 끊깁니다.',
+    ('PcView', 'Put %1 to sleep? Apps on it keep running and continue when it wakes.'):
+        '%1을(를) 절전 모드로 전환할까요? 실행 중인 앱은 그대로 두며, PC가 깨어나면 이어서 실행됩니다.',
+    ('PcView', 'Hibernate %1? Apps on it are kept and continue when it is turned on again.'):
+        '%1을(를) 최대 절전 모드로 전환할까요? 실행 중인 앱은 저장되며, PC를 다시 켜면 이어서 실행됩니다.',
+    ('PcView', 'This PC may not be reachable until someone turns it on: Wake-on-LAN is off on its network adapter.'):
+        '누군가 직접 켜기 전까지 이 PC에 연결하지 못할 수 있습니다. 네트워크 어댑터의 Wake-on-LAN이 꺼져 있습니다.',
+    ('PcView', 'This PC may not be reachable until someone turns it on: whether Wake-on-LAN is on could not be checked.'):
+        '누군가 직접 켜기 전까지 이 PC에 연결하지 못할 수 있습니다. Wake-on-LAN이 켜져 있는지 확인하지 못했습니다.',
+    ('PcView', 'Sleep anyway'): '그래도 절전',
+    ('PcView', 'Sleep'): '절전',
+    ('PcView', 'Hibernate anyway'): '그래도 최대 절전',
+    ('PcView', 'Hibernate'): '최대 절전',
     ('PcView', 'Cancel'): '취소',
     ('PcView', 'Close'): '닫기',
     ('StreamPanel', 'Right edge'): '오른쪽',

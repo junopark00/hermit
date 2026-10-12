@@ -224,11 +224,13 @@ public:
     int
     setLiveBitrate(int kbps, int timeoutMs);
 
-    // Shell host extension: GET /actions/power. action "query" answers "allowed=0|1" and the
-    // other clients streaming right now ("streaming=<n>", "client=<name>" lines); "shutdown"
-    // turns the host PC off and "restart" restarts it (force: also close apps that hold it back).
-    // Returns the reply body.
-    // Throws on HTTP or network errors (404: not supported, 401: no permission).
+    // Shell host extension: GET /actions/power. action "query" answers "allowed=0|1", what the
+    // host can do ("sleep=0|1", "hibernate=0|1", "wol=yes|no|unknown": whether Wake-on-LAN wakes
+    // it) and the other clients streaming right now ("streaming=<n>", "client=<name>" lines);
+    // "shutdown" turns the host PC off, "restart" restarts it (force: also close apps that hold it
+    // back), "sleep" puts it to sleep and "hibernate" hibernates it. Returns the reply body.
+    // Throws on HTTP or network errors (404: not supported, 401: no permission, 409: the host
+    // cannot sleep or hibernate right now).
     QByteArray
     powerRequest(const QString& action, bool force, int timeoutMs);
 

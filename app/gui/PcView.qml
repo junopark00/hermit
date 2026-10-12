@@ -160,6 +160,13 @@ CenteredGridView {
             sourceComponent: NavigableMenu {
                 id: pcContextMenu
                 initiator: pcContextMenuLoader.parent
+                // Hermit: asks the host which of sleep and hibernation it supports, so the menu
+                // offers only those (canSleep / canHibernate; nothing is sent to the PC)
+                onAboutToShow: {
+                    if (model.online && model.paired) {
+                        computerModel.queryPower(computerModel.computerUuid(index))
+                    }
+                }
                 MenuItem {
                     text: qsTr("PC Status: %1").arg(model.online ? qsTr("Online") : qsTr("Offline"))
                     font.bold: true
@@ -209,13 +216,24 @@ CenteredGridView {
                 }
                 NavigableMenuItem {
                     text: qsTr("Restart PC…")
-                    onTriggered: shutdownPcDialog.start(index, model.name, true)
+                    onTriggered: shutdownPcDialog.start(index, model.name, "restart")
                     visible: model.online && model.paired
                 }
                 NavigableMenuItem {
                     text: qsTr("Shut down PC…")
-                    onTriggered: shutdownPcDialog.start(index, model.name, false)
+                    onTriggered: shutdownPcDialog.start(index, model.name, "shutdown")
                     visible: model.online && model.paired
+                }
+                // Hermit: only when the host reported it can (Shell); hidden otherwise
+                NavigableMenuItem {
+                    text: qsTr("Put PC to sleep…")
+                    onTriggered: shutdownPcDialog.start(index, model.name, "sleep")
+                    visible: model.online && model.paired && model.canSleep
+                }
+                NavigableMenuItem {
+                    text: qsTr("Hibernate PC…")
+                    onTriggered: shutdownPcDialog.start(index, model.name, "hibernate")
+                    visible: model.online && model.paired && model.canHibernate
                 }
             }
         }
@@ -374,28 +392,38 @@ CenteredGridView {
         }
     }
 
-    // Hermit: turning the host PC off or restarting it. Asks the host first who else is streaming,
-    // so nobody is cut off by accident, then asks for confirmation.
+    // Hermit: turning the host PC off, restarting it, or putting it to sleep. Asks the host first
+    // who else is streaming, so nobody is cut off by accident, then asks for confirmation. Before
+    // sleep or hibernation it also says when the PC may not be reachable again (Wake-on-LAN off or
+    // not checkable on the host).
     NavigableDialog {
         id: shutdownPcDialog
         // The PC by uuid: the list can be re-sorted while the dialog is open
         property string pcUuid: ""
         property string pcName: ""
-        property bool restart: false
+        // "shutdown", "restart", "sleep" or "hibernate"
+        property string action: "shutdown"
+        readonly property bool suspend: action === "sleep" || action === "hibernate"
         // "checking", "confirm", "sending", "done" or "error"
         property string phase: "checking"
         property var clients: []
+        // Whether Wake-on-LAN wakes the PC, from the host: "yes", "no" or "unknown"
+        property string wol: "unknown"
         property string message: ""
 
-        title: restart ? qsTr("Restart %1").arg(pcName) : qsTr("Shut down %1").arg(pcName)
+        title: action === "restart" ? qsTr("Restart %1").arg(pcName)
+             : action === "sleep" ? qsTr("Put %1 to sleep").arg(pcName)
+             : action === "hibernate" ? qsTr("Hibernate %1").arg(pcName)
+             : qsTr("Shut down %1").arg(pcName)
         closePolicy: Popup.CloseOnEscape
 
-        function start(index, name, restartPc) {
+        function start(index, name, powerAction) {
             pcUuid = computerModel.computerUuid(index)
             pcName = name
-            restart = restartPc
+            action = powerAction
             phase = "checking"
             clients = []
+            wol = "unknown"
             message = ""
             forceBox.checked = false
             open()
@@ -416,10 +444,14 @@ CenteredGridView {
             if (error === "unsupported") {
                 return qsTr("This host can't be turned off or restarted remotely. Update Shell on the host PC.")
             }
+            if (error === "unavailable") {
+                return action === "hibernate" ? qsTr("%1 can't hibernate right now: hibernation is turned off on it.").arg(pcName)
+                                              : qsTr("%1 can't go to sleep right now.").arg(pcName)
+            }
             return qsTr("Couldn't reach the host: %1").arg(error.replace(/^network:/, ""))
         }
 
-        function queryComplete(uuid, allowed, otherClients, error) {
+        function queryComplete(uuid, allowed, otherClients, hostWol, error) {
             if (uuid !== pcUuid || phase !== "checking" || !visible) {
                 return
             }
@@ -435,6 +467,7 @@ CenteredGridView {
             }
             else {
                 clients = otherClients
+                wol = hostWol
                 phase = "confirm"
                 confirmButton.forceActiveFocus(Qt.TabFocus)
             }
@@ -449,8 +482,10 @@ CenteredGridView {
                 phase = "error"
             }
             else {
-                message = restart ? qsTr("%1 restarts in a few seconds. It shows as online again once it has started.").arg(pcName)
-                                  : qsTr("%1 turns off in a few seconds.").arg(pcName)
+                message = action === "restart" ? qsTr("%1 restarts in a few seconds. It shows as online again once it has started.").arg(pcName)
+                        : action === "sleep" ? qsTr("%1 goes to sleep in a few seconds.").arg(pcName)
+                        : action === "hibernate" ? qsTr("%1 hibernates in a few seconds.").arg(pcName)
+                        : qsTr("%1 turns off in a few seconds.").arg(pcName)
                 phase = "done"
             }
             showResult()
@@ -467,7 +502,10 @@ CenteredGridView {
                 }
                 Label {
                     text: shutdownPcDialog.phase !== "sending" ? qsTr("Checking who is connected…")
-                          : shutdownPcDialog.restart ? qsTr("Restarting the PC…") : qsTr("Turning the PC off…")
+                          : shutdownPcDialog.action === "restart" ? qsTr("Restarting the PC…")
+                          : shutdownPcDialog.action === "sleep" ? qsTr("Putting the PC to sleep…")
+                          : shutdownPcDialog.action === "hibernate" ? qsTr("Hibernating the PC…")
+                          : qsTr("Turning the PC off…")
                 }
             }
 
@@ -510,7 +548,10 @@ CenteredGridView {
                     }
                     Label {
                         Layout.fillWidth: true
-                        text: shutdownPcDialog.restart ? qsTr("Their streams end when the PC restarts.") : qsTr("Their streams end when the PC turns off.")
+                        text: shutdownPcDialog.action === "restart" ? qsTr("Their streams end when the PC restarts.")
+                            : shutdownPcDialog.action === "sleep" ? qsTr("Their streams end when the PC goes to sleep.")
+                            : shutdownPcDialog.action === "hibernate" ? qsTr("Their streams end when the PC hibernates.")
+                            : qsTr("Their streams end when the PC turns off.")
                         wrapMode: Text.Wrap
                     }
                 }
@@ -519,14 +560,28 @@ CenteredGridView {
             Label {
                 visible: shutdownPcDialog.phase === "confirm"
                 Layout.maximumWidth: 420
-                text: shutdownPcDialog.restart ? qsTr("Restart %1? Apps on it are asked to close first.").arg(shutdownPcDialog.pcName)
-                                               : qsTr("Turn %1 off? Apps on it are asked to close first.").arg(shutdownPcDialog.pcName)
+                text: shutdownPcDialog.action === "restart" ? qsTr("Restart %1? Apps on it are asked to close first.").arg(shutdownPcDialog.pcName)
+                    : shutdownPcDialog.action === "sleep" ? qsTr("Put %1 to sleep? Apps on it keep running and continue when it wakes.").arg(shutdownPcDialog.pcName)
+                    : shutdownPcDialog.action === "hibernate" ? qsTr("Hibernate %1? Apps on it are kept and continue when it is turned on again.").arg(shutdownPcDialog.pcName)
+                    : qsTr("Turn %1 off? Apps on it are asked to close first.").arg(shutdownPcDialog.pcName)
+                wrapMode: Text.Wrap
+            }
+
+            // Whether the PC can be woken again: shown before sleep and hibernation unless the
+            // host confirmed Wake-on-LAN
+            Label {
+                visible: shutdownPcDialog.phase === "confirm" && shutdownPcDialog.suspend && shutdownPcDialog.wol !== "yes"
+                Layout.maximumWidth: 420
+                color: "#f1c21b"
+                text: shutdownPcDialog.wol === "no" ? qsTr("This PC may not be reachable until someone turns it on: Wake-on-LAN is off on its network adapter.")
+                                                    : qsTr("This PC may not be reachable until someone turns it on: whether Wake-on-LAN is on could not be checked.")
                 wrapMode: Text.Wrap
             }
 
             CheckBox {
                 id: forceBox
-                visible: shutdownPcDialog.phase === "confirm"
+                // Sleep and hibernation close nothing
+                visible: shutdownPcDialog.phase === "confirm" && !shutdownPcDialog.suspend
                 text: qsTr("Also close apps with unsaved work (it is lost)")
             }
 
@@ -543,8 +598,15 @@ CenteredGridView {
                 id: confirmButton
                 visible: shutdownPcDialog.phase === "confirm"
                 flat: true
-                text: shutdownPcDialog.restart ? (shutdownPcDialog.clients.length > 0 ? qsTr("Restart anyway") : qsTr("Restart"))
-                                               : (shutdownPcDialog.clients.length > 0 ? qsTr("Shut down anyway") : qsTr("Shut down"))
+                text: {
+                    var others = shutdownPcDialog.clients.length > 0
+                    switch (shutdownPcDialog.action) {
+                    case "restart": return others ? qsTr("Restart anyway") : qsTr("Restart")
+                    case "sleep": return others ? qsTr("Sleep anyway") : qsTr("Sleep")
+                    case "hibernate": return others ? qsTr("Hibernate anyway") : qsTr("Hibernate")
+                    default: return others ? qsTr("Shut down anyway") : qsTr("Shut down")
+                    }
+                }
                 // No accept role: accepting would close the dialog before the result is shown
                 DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
                 Keys.onReturnPressed: clicked()
@@ -552,7 +614,7 @@ CenteredGridView {
                 onClicked: {
                     shutdownPcDialog.phase = "sending"
                     closeButton.forceActiveFocus(Qt.TabFocus)
-                    computerModel.powerComputer(shutdownPcDialog.pcUuid, shutdownPcDialog.restart, forceBox.checked)
+                    computerModel.powerComputer(shutdownPcDialog.pcUuid, shutdownPcDialog.action, forceBox.checked)
                 }
             }
             Button {

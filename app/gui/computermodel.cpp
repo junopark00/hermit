@@ -44,6 +44,10 @@ QVariant ComputerModel::data(const QModelIndex& index, int role) const
         return !computer->macAddress.isEmpty();
     case StatusUnknownRole:
         return computer->state == NvComputer::CS_UNKNOWN;
+    case CanSleepRole:
+        return m_PowerModes.value(computer->uuid).sleep;
+    case CanHibernateRole:
+        return m_PowerModes.value(computer->uuid).hibernate;
     case DetailsRole: {
         QString state, pairState;
 
@@ -111,6 +115,8 @@ QHash<int, QByteArray> ComputerModel::roleNames() const
     names[WakeableRole] = "wakeable";
     names[StatusUnknownRole] = "statusUnknown";
     names[DetailsRole] = "details";
+    names[CanSleepRole] = "canSleep";
+    names[CanHibernateRole] = "canHibernate";
 
     return names;
 }
@@ -189,7 +195,7 @@ class DeferredPowerTask : public QObject, public QRunnable
 {
     Q_OBJECT
 public:
-    // action: "query", "shutdown" or "restart"
+    // action: "query", "shutdown", "restart", "sleep" or "hibernate"
     DeferredPowerTask(NvComputer* computer, QString uuid, QString action, bool force)
         : m_Computer(computer), m_Uuid(uuid), m_Action(action), m_Force(force) {}
 
@@ -197,6 +203,11 @@ public:
     {
         bool allowed = false;
         QStringList clients;
+        // Sleep and hibernation availability, and whether Wake-on-LAN wakes the host ("yes", "no"
+        // or "unknown"; a host that does not say is "unknown")
+        bool sleep = false;
+        bool hibernate = false;
+        QString wol = "unknown";
         QString error;
         try {
             NvHTTP http(m_Computer);
@@ -212,6 +223,16 @@ public:
                 else if (line.startsWith("client=")) {
                     clients.append(QString::fromUtf8(line.mid(7)).trimmed());
                 }
+                else if (line.startsWith("sleep=")) {
+                    sleep = line.mid(6).trimmed() == "1";
+                }
+                else if (line.startsWith("hibernate=")) {
+                    hibernate = line.mid(10).trimmed() == "1";
+                }
+                else if (line.startsWith("wol=")) {
+                    QByteArray value = line.mid(4).trimmed();
+                    wol = (value == "yes" || value == "no") ? QString::fromLatin1(value) : QString("unknown");
+                }
             }
             // A host that answers unknown requests with 200 does nothing
             if (isAction() ? !body.startsWith("ok") : !supported) {
@@ -219,18 +240,24 @@ public:
             }
         }
         catch (const QtNetworkReplyException& e) {
-            switch (e.getError()) {
-            case QNetworkReply::ContentAccessDenied:
-            case QNetworkReply::AuthenticationRequiredError:
-                error = "permission";
-                break;
-            case QNetworkReply::ContentNotFoundError:
-            case QNetworkReply::OperationNotImplementedError:
-                error = "unsupported";
-                break;
-            default:
-                error = QString("network:") + e.getErrorText();
-                break;
+            if (e.getHttpStatus() == 409) {
+                // Shell: the host cannot sleep or hibernate right now (hibernation turned off)
+                error = "unavailable";
+            }
+            else {
+                switch (e.getError()) {
+                case QNetworkReply::ContentAccessDenied:
+                case QNetworkReply::AuthenticationRequiredError:
+                    error = "permission";
+                    break;
+                case QNetworkReply::ContentNotFoundError:
+                case QNetworkReply::OperationNotImplementedError:
+                    error = "unsupported";
+                    break;
+                default:
+                    error = QString("network:") + e.getErrorText();
+                    break;
+                }
             }
         }
         catch (const HostHttpResponseException& e) {
@@ -241,12 +268,13 @@ public:
             emit powerActionCompleted(m_Uuid, error);
         }
         else {
-            emit powerQueryCompleted(m_Uuid, allowed, clients, error);
+            emit powerQueryCompleted(m_Uuid, allowed, clients, sleep, hibernate, wol, error);
         }
     }
 
 signals:
-    void powerQueryCompleted(QString uuid, bool allowed, QStringList clients, QString error);
+    void powerQueryCompleted(QString uuid, bool allowed, QStringList clients,
+                             bool sleep, bool hibernate, QString wol, QString error);
     void powerActionCompleted(QString uuid, QString error);
 
 private:
@@ -283,25 +311,51 @@ void ComputerModel::queryPower(QString uuid)
 {
     NvComputer* computer = findComputer(uuid);
     if (computer == nullptr) {
-        emit powerQueryCompleted(uuid, false, QStringList(), "gone");
+        emit powerQueryCompleted(uuid, false, QStringList(), "unknown", "gone");
         return;
     }
 
     auto* task = new DeferredPowerTask(computer, uuid, "query", false);
     QObject::connect(task, &DeferredPowerTask::powerQueryCompleted,
-                     this, &ComputerModel::powerQueryCompleted);
+                     this, &ComputerModel::handlePowerQueryCompleted);
     QThreadPool::globalInstance()->start(task);
 }
 
-void ComputerModel::powerComputer(QString uuid, bool restart, bool force)
+void ComputerModel::handlePowerQueryCompleted(QString uuid, bool allowed, QStringList clients,
+                                              bool sleep, bool hibernate, QString wol, QString error)
+{
+    if (error.isEmpty()) {
+        // Remembered for the PC menu, which only offers what the host can do
+        PowerModes modes;
+        modes.sleep = sleep;
+        modes.hibernate = hibernate;
+        const PowerModes before = m_PowerModes.value(uuid);
+        if (before.sleep != modes.sleep || before.hibernate != modes.hibernate) {
+            m_PowerModes[uuid] = modes;
+            for (int i = 0; i < m_Computers.count(); i++) {
+                if (computerUuid(i) == uuid) {
+                    emit dataChanged(createIndex(i, 0), createIndex(i, 0), {CanSleepRole, CanHibernateRole});
+                    break;
+                }
+            }
+        }
+    }
+    emit powerQueryCompleted(uuid, allowed, clients, wol, error);
+}
+
+void ComputerModel::powerComputer(QString uuid, QString action, bool force)
 {
     NvComputer* computer = findComputer(uuid);
     if (computer == nullptr) {
         emit powerActionCompleted(uuid, "gone");
         return;
     }
+    if (action != "shutdown" && action != "restart" && action != "sleep" && action != "hibernate") {
+        emit powerActionCompleted(uuid, "unsupported");
+        return;
+    }
 
-    auto* task = new DeferredPowerTask(computer, uuid, restart ? "restart" : "shutdown", force);
+    auto* task = new DeferredPowerTask(computer, uuid, action, force);
     QObject::connect(task, &DeferredPowerTask::powerActionCompleted,
                      this, &ComputerModel::powerActionCompleted);
     QThreadPool::globalInstance()->start(task);
