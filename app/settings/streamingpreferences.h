@@ -12,8 +12,12 @@ class StreamingPreferences : public QObject
 public:
     static StreamingPreferences* get(QQmlEngine *qmlEngine = nullptr);
 
-    Q_INVOKABLE static int
-    getDefaultBitrate(int width, int height, int fps, bool yuv444);
+    // The recommended bitrate for the chosen codec: the H.264 figure unless HEVC or AV1 is
+    // forced (automatic codec selection keeps the H.264 figure, so a fallback to H.264 is not
+    // left short). The "Use recommended" buttons and the bitrate following a resolution change
+    // use it, so they agree with the recommendation shown.
+    Q_INVOKABLE int
+    getDefaultBitrate(int width, int height, int fps, bool yuv444) const;
 
     // Recommended bitrate in kbps for H.264, or for HEVC/AV1 when efficientCodec is set.
     Q_INVOKABLE static int

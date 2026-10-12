@@ -135,7 +135,7 @@ void StreamingPreferences::reload()
     height = settings.value(SER_HEIGHT, 720).toInt();
     fps = settings.value(SER_FPS, 60).toInt();
     enableYUV444 = settings.value(SER_YUV444, false).toBool();
-    bitrateKbps = settings.value(SER_BITRATE, getDefaultBitrate(width, height, fps, enableYUV444)).toInt();
+    bitrateKbps = settings.value(SER_BITRATE, -1).toInt();  // default set once the codec is known
     unlockBitrate = settings.value(SER_UNLOCK_BITRATE, false).toBool();
     autoAdjustBitrate = settings.value(SER_AUTOADJUSTBITRATE, true).toBool();
     enableVsync = settings.value(SER_VSYNC, true).toBool();
@@ -207,6 +207,11 @@ void StreamingPreferences::reload()
     if (videoCodecConfig == VCC_FORCE_HEVC_HDR_DEPRECATED) {
         videoCodecConfig = VCC_AUTO;
         enableHdr = true;
+    }
+
+    // Hermit: the bitrate default depends on the codec, which is loaded above
+    if (bitrateKbps <= 0) {
+        bitrateKbps = getDefaultBitrate(width, height, fps, enableYUV444);
     }
 }
 
@@ -442,8 +447,10 @@ int StreamingPreferences::getRecommendedBitrate(int width, int height, int fps, 
     return qMax(1, qRound(kbps / 1000.0)) * 1000;
 }
 
-int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)
+int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444) const
 {
-    // The H.264 figure, so a fallback from HEVC/AV1 to H.264 never leaves too little bitrate.
-    return getRecommendedBitrate(width, height, fps, yuv444, false);
+    // Only a forced HEVC/AV1 takes the lower figure: with automatic selection the stream may
+    // fall back to H.264, which must not be left with too little bitrate.
+    const bool efficientCodec = videoCodecConfig == VCC_FORCE_HEVC || videoCodecConfig == VCC_FORCE_AV1;
+    return getRecommendedBitrate(width, height, fps, yuv444, efficientCodec);
 }

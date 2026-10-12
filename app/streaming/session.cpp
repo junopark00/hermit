@@ -1824,14 +1824,14 @@ bool Session::startConnectionAsync()
     // that value and not second guess them.
     if (m_Preferences->enableYUV444 &&
         !(m_StreamConfig.supportedVideoFormats & VIDEO_FORMAT_MASK_YUV444) &&
-        m_StreamConfig.bitrate == StreamingPreferences::getDefaultBitrate(m_StreamConfig.width,
-                                                                          m_StreamConfig.height,
-                                                                          m_StreamConfig.fps,
-                                                                          true)) {
-        m_StreamConfig.bitrate = StreamingPreferences::getDefaultBitrate(m_StreamConfig.width,
-                                                                         m_StreamConfig.height,
-                                                                         m_StreamConfig.fps,
-                                                                         false);
+        m_StreamConfig.bitrate == m_Preferences->getDefaultBitrate(m_StreamConfig.width,
+                                                                   m_StreamConfig.height,
+                                                                   m_StreamConfig.fps,
+                                                                   true)) {
+        m_StreamConfig.bitrate = m_Preferences->getDefaultBitrate(m_StreamConfig.width,
+                                                                  m_StreamConfig.height,
+                                                                  m_StreamConfig.fps,
+                                                                  false);
     }
 
     int err = LiStartConnection(&hostInfo, &m_StreamConfig, &k_ConnCallbacks,
