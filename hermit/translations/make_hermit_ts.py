@@ -64,6 +64,7 @@ TRANSLATIONS = {
     ('SettingsView', 'Queue delay'): '큐 대기',
     ('SettingsView', 'Render time'): '렌더 시간',
     ('SettingsView', 'Decoder'): '디코더',
+    ('SettingsView', 'Cursor (which side draws the pointer)'): '커서 (포인터를 그리는 쪽)',
     ('SettingsView', 'Text size'): '글자 크기',
     ('SettingsView', 'Small'): '작게',
     ('SettingsView', 'Medium'): '보통',
@@ -178,6 +179,7 @@ TRANSLATIONS = {
     ('StreamPanel', 'Queue delay'): '큐 대기',
     ('StreamPanel', 'Render time'): '렌더 시간',
     ('StreamPanel', 'Decoder'): '디코더',
+    ('StreamPanel', 'Cursor'): '커서',
     ('StreamPanel', 'Text size'): '글자 크기',
     ('StreamPanel', 'Small'): '작게',
     ('StreamPanel', 'Medium'): '보통',
@@ -190,11 +192,11 @@ TRANSLATIONS = {
     ('StreamPanel', 'Mute on this PC'): '이 PC에서 소리 끄기',
     ('StreamPanel', 'Sync clipboard with the host'): '호스트와 클립보드 동기화',
     ('StreamPanel', 'Local cursor (remote desktop mouse)'): '로컬 커서 (원격 데스크톱 마우스)',
-    ('StreamPanel', 'On Shell hosts that support it, this PC draws the pointer in the host cursor\'s shape, without the stream\'s delay. Only with the remote desktop mouse; the performance overlay shows which side draws the pointer.'):
-        '지원하는 Shell 호스트에서는 이 PC가 호스트 커서 모양으로 포인터를 직접 그려 스트림 지연 없이 움직입니다. 원격 데스크톱 마우스에서만 쓰이며, 어느 쪽이 포인터를 그리는지는 성능 오버레이에 표시됩니다.',
+    ('StreamPanel', 'On Shell hosts that support it, this PC draws the pointer in the host cursor\'s shape, without the stream\'s delay. Only with the remote desktop mouse; the performance overlay\'s Cursor metric shows which side draws the pointer.'):
+        '지원하는 Shell 호스트에서는 이 PC가 호스트 커서 모양으로 포인터를 직접 그려 스트림 지연 없이 움직입니다. 원격 데스크톱 마우스에서만 쓰이며, 어느 쪽이 포인터를 그리는지는 성능 오버레이의 커서 지표에 표시됩니다.',
     ('SettingsView', 'Local cursor in remote desktop mouse mode'): '원격 데스크톱 마우스 모드에서 로컬 커서 사용',
-    ('SettingsView', 'With a Shell host that supports it, the mouse pointer is drawn by this PC in the shape the host cursor has, instead of being encoded into the video, so it follows the mouse without the stream\'s delay. Used only with the remote desktop mouse. The host draws the pointer itself again while another client streams the same desktop without this option. The performance overlay shows which side draws it.'):
-        '지원하는 Shell 호스트에서는 마우스 포인터를 영상에 넣어 보내는 대신 이 PC가 호스트 커서의 모양으로 직접 그려, 스트림 지연 없이 마우스를 따라 움직입니다. 원격 데스크톱 마우스에서만 쓰입니다. 이 옵션 없이 같은 데스크톱을 스트리밍하는 다른 클라이언트가 있는 동안에는 호스트가 다시 포인터를 그립니다. 어느 쪽이 그리는지는 성능 오버레이에 표시됩니다.',
+    ('SettingsView', 'With a Shell host that supports it, the mouse pointer is drawn by this PC in the shape the host cursor has, instead of being encoded into the video, so it follows the mouse without the stream\'s delay. Used only with the remote desktop mouse. The host draws the pointer itself again while another client streams the same desktop without this option. The performance overlay\'s Cursor metric shows which side draws it.'):
+        '지원하는 Shell 호스트에서는 마우스 포인터를 영상에 넣어 보내는 대신 이 PC가 호스트 커서의 모양으로 직접 그려, 스트림 지연 없이 마우스를 따라 움직입니다. 원격 데스크톱 마우스에서만 쓰입니다. 이 옵션 없이 같은 데스크톱을 스트리밍하는 다른 클라이언트가 있는 동안에는 호스트가 다시 포인터를 그립니다. 어느 쪽이 그리는지는 성능 오버레이의 커서 지표에 표시됩니다.',
     ('Session', 'Local cursor not available on this host: the host draws the pointer'): '이 호스트에서는 로컬 커서를 쓸 수 없어 호스트가 포인터를 그립니다',
     ('StatsOverlay', 'Cursor'): '커서',
     ('StatsOverlay', 'local'): '로컬',

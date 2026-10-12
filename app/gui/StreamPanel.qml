@@ -560,7 +560,7 @@ Window {
                     }
                 }
 
-                // The twelve metrics stay folded away until asked for
+                // The thirteen metrics stay folded away until asked for
                 Button {
                     Layout.leftMargin: 20
                     visible: StreamingPreferences.showPerformanceOverlay
@@ -592,7 +592,8 @@ Window {
                             { bit: 1 << 7, text: qsTr("Decode time") },
                             { bit: 1 << 8, text: qsTr("Queue delay") },
                             { bit: 1 << 9, text: qsTr("Render time") },
-                            { bit: 1 << 11, text: qsTr("Decoder") }
+                            { bit: 1 << 11, text: qsTr("Decoder") },
+                            { bit: 1 << 12, text: qsTr("Cursor") }
                         ]
                         delegate: CheckBox {
                             Layout.fillWidth: true
@@ -663,7 +664,7 @@ Window {
                     ToolTip.visible: hovered || activeFocus
                     ToolTip.delay: 600
                     ToolTip.timeout: 15000
-                    ToolTip.text: qsTr("On Shell hosts that support it, this PC draws the pointer in the host cursor's shape, without the stream's delay. Only with the remote desktop mouse; the performance overlay shows which side draws the pointer.")
+                    ToolTip.text: qsTr("On Shell hosts that support it, this PC draws the pointer in the host cursor's shape, without the stream's delay. Only with the remote desktop mouse; the performance overlay's Cursor metric shows which side draws the pointer.")
                 }
 
                 Button {

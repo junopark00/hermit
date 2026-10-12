@@ -45,8 +45,8 @@ QString format(const Inputs& in, int metrics)
                 .arg(in.codec.isEmpty() ? QString() : QStringLiteral(" · ") + in.codec));
     }
     if (in.cursorState != CursorNone) {
-        // Who draws the mouse cursor on a host with local cursor support (shown with the video line)
-        add(MetricVideo, QCoreApplication::translate("StatsOverlay", "Cursor"),
+        // Who draws the mouse cursor on a host with local cursor support
+        add(MetricCursor, QCoreApplication::translate("StatsOverlay", "Cursor"),
             in.cursorState == CursorLocal ? QCoreApplication::translate("StatsOverlay", "local") :
             in.cursorState == CursorHostOtherClient ? QCoreApplication::translate("StatsOverlay", "host (another client connected)") :
                                                       QCoreApplication::translate("StatsOverlay", "host"));

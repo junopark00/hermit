@@ -388,9 +388,10 @@ delay (capture interval, encoding, network, decoding and V-Sync: typically 25 to
 - **The setting.** "Local cursor in remote desktop mouse mode" in Settings → Input (on by default)
   and "Local cursor (remote desktop mouse)" in the stream panel, which applies at once. Turn it off
   to see the host's pointer exactly as the host draws it.
-- **The overlay line.** On hosts with the feature, the performance overlay's video metric gains a
-  "Cursor" line: "local" (Hermit draws the pointer), "host" (the host draws it: the game mouse, the
-  setting off, or the host declined) or "host (another client connected)".
+- **The overlay line.** On hosts with the feature, the performance overlay's optional "Cursor"
+  metric (Settings → Performance overlay, or "Choose metrics" in the stream panel) shows who draws
+  the pointer: "local" (Hermit draws it), "host" (the host draws it: the game mouse, the setting
+  off, or the host declined) or "host (another client connected)".
 - **Mixed sessions.** The host captures one picture for every client, so it can only leave the
   pointer out when every connected client uses a local cursor. While another client streams the
   same desktop without one (for example a phone, or an older client), the host draws the pointer
@@ -443,7 +444,8 @@ overlay.
 - Default metrics: video (resolution, FPS, codec), bitrate (average and peak), network loss, round-trip
   time, host latency (average, minimum to maximum) and estimated total latency.
 - Optional metrics: received / decoded / rendered FPS, jitter drops, decode time, queue delay, render
-  time and decoder.
+  time, decoder and cursor (which side draws the pointer on hosts with the local cursor feature; see
+  [Local cursor](#local-cursor-shell)).
 - Estimated total latency = host latency + half the round-trip time + decode + queue delay + render.
   It is an estimate and can differ from the real input-to-display latency (monitor response time and
   so on are not included).

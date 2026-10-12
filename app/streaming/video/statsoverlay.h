@@ -25,6 +25,7 @@ enum Metric : int {
     MetricRenderTime = 1 << 9,
     MetricTotalLatency = 1 << 10,  // estimated end-to-end latency
     MetricDecoder = 1 << 11,       // renderer / decoder in use
+    MetricCursor = 1 << 12,        // who draws the mouse cursor (hosts with local cursor support)
 };
 
 // Shown by default: what tells whether the stream is healthy and responsive.

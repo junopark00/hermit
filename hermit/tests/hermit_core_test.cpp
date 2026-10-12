@@ -171,24 +171,32 @@ static void testStatsOverlay()
     // 6.7 host + 2.5 half RTT + 0.5 decode + 1.0 queue + 0.2 render
     CHECK_EQ(lines.value(5), QString("Estimated total latency\t10.9 ms"));
 
-    const int all = 0xFFF;
-    CHECK_EQ(StatsOverlay::format(in, all).split('\n').size(), 12);
+    const int all = 0x1FFF;
+    CHECK_EQ(StatsOverlay::format(in, all).split('\n').size(), 12);  // no cursor line without the feature
     CHECK(StatsOverlay::format(in, 0).isEmpty());
     CHECK(StatsOverlay::format(in, StatsOverlay::MetricDecoder).endsWith("\tD3D11VA"));
     for (const QString& line : StatsOverlay::format(in, all).split('\n')) {
         CHECK(line.count('\t') == 1);
     }
 
-    // The local cursor line comes with the video metric on hosts that have the feature
+    // The local cursor line is its own metric (MetricCursor), shown only on hosts that have the feature
+    CHECK_EQ(StatsOverlay::MetricCursor, 1 << 12);
+    CHECK((StatsOverlay::kDefaultMetrics & StatsOverlay::MetricCursor) == 0);
     in.cursorState = StatsOverlay::CursorLocal;
-    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricVideo).split('\n').value(1), QString("Cursor\tlocal"));
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricCursor), QString("Cursor\tlocal"));
+    CHECK_EQ(StatsOverlay::format(in, all).split('\n').size(), 13);
+    CHECK_EQ(StatsOverlay::format(in, all).split('\n').value(1), QString("Cursor\tlocal"));  // right after the video line
     in.cursorState = StatsOverlay::CursorHostOtherClient;
-    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricVideo).split('\n').value(1), QString("Cursor\thost (another client connected)"));
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricCursor), QString("Cursor\thost (another client connected)"));
     in.cursorState = StatsOverlay::CursorHost;
-    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricVideo).split('\n').value(1), QString("Cursor\thost"));
-    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricBitrate).split('\n').size(), 1);
-    in.cursorState = StatsOverlay::CursorNone;
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricCursor), QString("Cursor\thost"));
+    // No longer tied to the video metric, and the default set does not show it
     CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricVideo).split('\n').size(), 1);
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricBitrate).split('\n').size(), 1);
+    CHECK(!StatsOverlay::format(in, StatsOverlay::kDefaultMetrics).contains("Cursor\t"));
+    in.cursorState = StatsOverlay::CursorNone;
+    CHECK(StatsOverlay::format(in, StatsOverlay::MetricCursor).isEmpty());
+    CHECK_EQ(StatsOverlay::format(in, all).split('\n').size(), 12);
 }
 
 // Local cursor messages (cursorpacket.h): the wire layout shared with Shell
