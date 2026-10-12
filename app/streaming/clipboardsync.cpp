@@ -9,7 +9,9 @@
 #include "SDL_compat.h"
 
 #include <QBuffer>
+#include <QClipboard>
 #include <QCoreApplication>
+#include <QGuiApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QElapsedTimer>
@@ -2219,6 +2221,18 @@ ClipboardSync::ClipboardSync(NvComputer* computer, int sdlEventCode, SDL_Window*
         useTrueUid = !computer->isNvidiaServerSoftware;
     }
 
+    // Hermit: SDL only looks at the clipboard when the stream window gains focus (Windows: no
+    // WM_CLIPBOARDUPDATE listener), so a copy made while the stream window has focus (a
+    // screenshot tool's hotkey) would wait for the next focus change. Qt's clipboard window does
+    // get the change, and its message handling runs inside SDL's event pump on this thread, so
+    // the signal arrives during the stream: it becomes the SDL event the session already
+    // handles. Our own writes come through as well and are found handled by their sequence number.
+    m_ClipboardChanged = QObject::connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, []() {
+        SDL_Event event = {};
+        event.type = SDL_CLIPBOARDUPDATE;
+        SDL_PushEvent(&event);
+    });
+
     m_Address = address;
     m_HttpsPort = httpsPort;
     m_ServerCert = serverCert;
@@ -2237,6 +2251,7 @@ ClipboardSync::ClipboardSync(NvComputer* computer, int sdlEventCode, SDL_Window*
 
 ClipboardSync::~ClipboardSync()
 {
+    QObject::disconnect(m_ClipboardChanged);
     if (s_ActiveSync == this) {
         s_ActiveSync = nullptr;
     }

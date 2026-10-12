@@ -186,7 +186,7 @@ to sync the clipboard in both directions.
 
 | Type | Hosts | Local to host | Host to local | Limit |
 |---|---|---|---|---|
-| Text | Shell, and hosts with the text clipboard extension | At stream start, when you return to the stream window, and immediately on copy | Within about a second of the copy on the host (every 2 seconds with text-only hosts) | 1 MB |
+| Text | Shell, and hosts with the text clipboard extension | At stream start, when you return to the stream window, and immediately on copy (also while the stream window has focus, for example a screenshot tool's hotkey) | Within about a second of the copy on the host (every 2 seconds with text-only hosts) | 1 MB |
 | Images | Shell | At stream start, when you return to the stream window, and immediately on copy | Within about a second of the copy on the host | PNG, 32 MB, 8192×8192 |
 | Files and folders | Shell | At stream start and when you return to the stream window | Within about a second of the copy on the host (the list; each file downloads while you paste it) | To the host 256 MB, from the host 4 GB; 1,000 items |
 

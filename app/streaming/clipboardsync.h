@@ -381,6 +381,8 @@ private:
 
     bool m_LocalSeqValid;
     quint32 m_LocalSeq;
+    // Qt's clipboard change signal, turned into the SDL event (see the constructor)
+    QMetaObject::Connection m_ClipboardChanged;
 
     // Hermit: local changes observed so far (ClipboardChangeOrder), and the local clipboard
     // sequence number of the last one
