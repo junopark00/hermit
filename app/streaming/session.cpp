@@ -1993,6 +1993,7 @@ void Session::notifyMouseMode(bool absolute)
 
 Uint32 Session::cursorRetryTimerCallback(Uint32 interval, void* param)
 {
+    Q_UNUSED(interval);
     SDL_Event event = {};
     event.type = SDL_USEREVENT;
     event.user.code = SDL_CODE_CURSOR_RETRY;
