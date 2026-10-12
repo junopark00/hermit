@@ -37,6 +37,10 @@
 #define SDL_CODE_CLIPBOARD_FROM_HOST 106
 #define SDL_CODE_CURSOR_UPDATE 110       // Hermit: cursor messages wait in the mailbox (107-109: streampanel.h)
 #define SDL_CODE_CURSOR_MODE_RESULT 111  // Hermit: data1 = serial << 1 | requested local, data2 = result
+#define SDL_CODE_CURSOR_RETRY 112        // Hermit: data1 = serial << 34 | shape id << 2 | kind (1 mode, 2 shape)
+#define CURSOR_RETRY_MODE 1
+#define CURSOR_RETRY_SHAPE 2
+#define CURSOR_RETRY_DELAY_MS 2000
 
 #include <openssl/rand.h>
 
@@ -732,6 +736,9 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_CursorOverlayState(StatsOverlay::CursorNone),
       m_CursorShapeFetchInFlight(false),
       m_CursorShapePendingId(0),
+      m_CursorModeRetryTimer(0),
+      m_CursorShapeRetryTimer(0),
+      m_CursorModeRetried(false),
       m_MouseEmulationRefCount(0),
       m_FlushingWindowEventsRef(0),
       m_ShouldExit(false),
@@ -1984,10 +1991,40 @@ void Session::notifyMouseMode(bool absolute)
     updateCursorMode();
 }
 
-void Session::updateCursorMode()
+Uint32 Session::cursorRetryTimerCallback(Uint32 interval, void* param)
+{
+    SDL_Event event = {};
+    event.type = SDL_USEREVENT;
+    event.user.code = SDL_CODE_CURSOR_RETRY;
+    event.user.data1 = param;
+    SDL_PushEvent(&event);
+    return 0;  // one-shot
+}
+
+void Session::cancelCursorTimers()
+{
+    if (m_CursorModeRetryTimer != 0) {
+        SDL_RemoveTimer(m_CursorModeRetryTimer);
+        m_CursorModeRetryTimer = 0;
+    }
+    if (m_CursorShapeRetryTimer != 0) {
+        SDL_RemoveTimer(m_CursorShapeRetryTimer);
+        m_CursorShapeRetryTimer = 0;
+    }
+}
+
+void Session::updateCursorMode(bool retry)
 {
     if (m_InputHandler == nullptr || m_CursorUnsupported) {
         return;
+    }
+    if (!retry) {
+        // A mode or setting change supersedes a pending retry and earns a new one
+        m_CursorModeRetried = false;
+        if (m_CursorModeRetryTimer != 0) {
+            SDL_RemoveTimer(m_CursorModeRetryTimer);
+            m_CursorModeRetryTimer = 0;
+        }
     }
     int hostVersion;
     {
@@ -2070,8 +2107,14 @@ void Session::applyCursorModeResult(bool requestedLocal, int result)
         return;
     }
     if (result == -2) {
-        // Unknown what the host did; the next mode change asks again
+        // Unknown what the host did (a timeout, or 403 while the host still registers the
+        // session): once more in 2 seconds, then the next mode change asks again
         m_CursorModeSent = -1;
+        if (!m_CursorModeRetried && m_CursorModeRetryTimer == 0 && !m_CursorModeDirty) {
+            m_CursorModeRetried = true;
+            m_CursorModeRetryTimer = SDL_AddTimer(CURSOR_RETRY_DELAY_MS, cursorRetryTimerCallback,
+                reinterpret_cast<void*>(static_cast<intptr_t>(((uint64_t)m_CursorModeSerial << 34) | CURSOR_RETRY_MODE)));
+        }
     }
     else {
         m_CursorModeSent = requestedLocal ? 1 : 0;
@@ -2120,6 +2163,15 @@ void Session::handleCursorUpdates()
         updates.swap(m_CursorMailbox->updates);
     }
     for (const CursorPacket::Update& update : std::as_const(updates)) {
+        if ((update.kind == CursorPacket::Update::ShapeArrived || update.kind == CursorPacket::Update::StateArrived) &&
+                m_CursorModeSent == -1 && !m_CursorUnsupported && m_CursorOverlayState != StatsOverlay::CursorNone) {
+            // The host sends cursor messages, so it has this session in local mode (the answer
+            // to the request was lost): take it as answered; a different wanted mode is sent
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Local cursor: the host sends cursor messages; taking the mode as local");
+            m_CursorModeSent = 1;
+            m_InputHandler->setLocalCursorActive(true);
+            updateCursorMode();
+        }
         switch (update.kind) {
         case CursorPacket::Update::ShapeArrived:
             m_InputHandler->handleCursorShape(update.shape);
@@ -2131,10 +2183,10 @@ void Session::handleCursorUpdates()
             break;
         case CursorPacket::Update::ShapeFetched:
             m_InputHandler->handleFetchedCursorShape(update.shape);
-            finishCursorShapeFetch();
+            finishCursorShapeFetch(update.fetchedId, false);
             break;
         case CursorPacket::Update::FetchFailed:
-            finishCursorShapeFetch();
+            finishCursorShapeFetch(update.fetchedId, true);
             break;
         }
     }
@@ -2146,16 +2198,18 @@ void Session::handleCursorUpdates()
 void Session::requestCursorShape(uint32_t id)
 {
     // A shape named by a state message but not in the cache (its message was lost before the
-    // stream started, or it fell out of the cache): fetched over HTTPS, once per shape and
-    // session, one at a time. The previous cursor stays meanwhile.
-    if (m_CursorShapesRequested.contains(id)) {
+    // stream started, or it fell out of the cache): fetched over HTTPS, one at a time, at most
+    // twice per shape with 2 seconds between the attempts. The previous cursor stays meanwhile.
+    CursorShapeFetch& fetch = m_CursorShapeFetches[id];
+    if (fetch.attempts >= 2 || SDL_GetTicks64() < fetch.notBeforeMs) {
         return;
     }
     if (m_CursorShapeFetchInFlight) {
         m_CursorShapePendingId = id;
         return;
     }
-    m_CursorShapesRequested.insert(id);
+    fetch.attempts++;
+    fetch.notBeforeMs = UINT64_MAX;  // in flight
     m_CursorShapeFetchInFlight = true;
     m_CursorShapePendingId = 0;
 
@@ -2194,13 +2248,22 @@ void Session::requestCursorShape(uint32_t id)
     });
 }
 
-void Session::finishCursorShapeFetch()
+void Session::finishCursorShapeFetch(uint32_t id, bool failed)
 {
     m_CursorShapeFetchInFlight = false;
+    CursorShapeFetch& fetch = m_CursorShapeFetches[id];
+    fetch.notBeforeMs = failed ? SDL_GetTicks64() + CURSOR_RETRY_DELAY_MS : 0;
+    if (failed && fetch.attempts < 2 && m_InputHandler->localCursorWantedId() == id &&
+            m_InputHandler->localCursorShapeMissing() && m_CursorShapeRetryTimer == 0) {
+        // Still the shape the host shows: ask once more after the cooldown (a state message
+        // naming it after the cooldown also asks again)
+        m_CursorShapeRetryTimer = SDL_AddTimer(CURSOR_RETRY_DELAY_MS, cursorRetryTimerCallback,
+            reinterpret_cast<void*>(static_cast<intptr_t>(((uint64_t)m_CursorModeSerial << 34) | ((uint64_t)id << 2) | CURSOR_RETRY_SHAPE)));
+    }
     if (m_CursorShapePendingId != 0) {
-        const uint32_t id = m_CursorShapePendingId;
+        const uint32_t pending = m_CursorShapePendingId;
         m_CursorShapePendingId = 0;
-        requestCursorShape(id);
+        requestCursorShape(pending);
     }
 }
 
@@ -3009,6 +3072,26 @@ void Session::exec()
                 }
                 break;
             }
+            case SDL_CODE_CURSOR_RETRY: {
+                const uint64_t tag = static_cast<uint64_t>(reinterpret_cast<intptr_t>(event.user.data1));
+                if (static_cast<uint32_t>(tag >> 34) != m_CursorModeSerial) {
+                    break;  // a previous session's timer
+                }
+                if ((tag & 3) == CURSOR_RETRY_MODE) {
+                    m_CursorModeRetryTimer = 0;
+                    if (m_CursorModeSent == -1 && !m_CursorModeInFlight) {
+                        updateCursorMode(true);
+                    }
+                }
+                else {
+                    m_CursorShapeRetryTimer = 0;
+                    const uint32_t id = static_cast<uint32_t>((tag >> 2) & 0xFFFFFFFF);
+                    if (m_InputHandler->localCursorWantedId() == id && m_InputHandler->localCursorShapeMissing()) {
+                        requestCursorShape(id);
+                    }
+                }
+                break;
+            }
             default:
                 SDL_assert(false);
             }
@@ -3303,6 +3386,9 @@ DispatchDeferredCleanup:
             (m_Panel->appliedUncertain() || m_Panel->liveBitratePending() || m_ResyncLiveBitrate);
     delete m_Panel;
     m_Panel = nullptr;
+
+    // Hermit: no local cursor retries after the stream
+    cancelCursorTimers();
 
     // Uncapture the mouse and hide the window immediately,
     // so we can return to the Qt GUI ASAP.

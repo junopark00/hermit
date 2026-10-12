@@ -86,9 +86,10 @@ struct DualSenseOutputReport{
 #define GAMEPAD_HAPTIC_SIMPLE_LOWFREQ_MOTOR_WEIGHT 0.8
 
 // Hermit: host cursor shapes (cursorpacket.h) and the SDL cursors made from them, for the local
-// cursor. Shapes are kept by id (the newest 32, at most 256 KiB each) so a window resize can
-// make a cursor at the new scale; cursors are kept by shape and scale (the newest 32). Everything
-// is freed with the input handler, that is when the stream ends.
+// cursor. Shapes are kept by id (the 128 most recently used, as many as the host remembers having
+// sent, within 16 MiB; typical shapes are 4-16 KiB, the largest 256 KiB) so a window resize can
+// make a cursor at the new scale; cursors are kept by shape and scale (the newest 32).
+// Everything is freed with the input handler, that is when the stream ends.
 class LocalCursorCache
 {
 public:
@@ -107,12 +108,14 @@ public:
 
     void clear();
 
-    static const int k_MaxShapes = 32;
+    static const int k_MaxShapes = 128;
+    static const int k_MaxShapeBytes = 16 * 1024 * 1024;
     static const int k_MaxCursors = 32;
 
 private:
     QHash<uint32_t, CursorPacket::Shape> m_Shapes;
-    QList<uint32_t> m_ShapeOrder;    // oldest first
+    QList<uint32_t> m_ShapeOrder;    // least recently used first
+    int m_ShapeBytes = 0;            // pixel bytes of all shapes
     QHash<uint64_t, SDL_Cursor*> m_Cursors;
     QList<uint64_t> m_CursorOrder;   // oldest first
 };
@@ -225,6 +228,18 @@ public:
     bool localCursorHostComposing() const
     {
         return m_LocalCursorKnown && m_LocalCursorHostComposing;
+    }
+
+    // The shape the host last named, and whether it is still missing from the cache (a fetch
+    // over HTTPS is wanted)
+    uint32_t localCursorWantedId() const
+    {
+        return m_LocalCursorKnown ? m_LocalCursorWantedId : 0;
+    }
+
+    bool localCursorShapeMissing() const
+    {
+        return m_LocalCursorKnown && m_LocalCursorWantedId != 0 && m_LocalCursorWantedId != m_LocalCursorShapeId;
     }
 
     // After a window resize: the cursor is made again at the new scale

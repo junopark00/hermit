@@ -396,6 +396,10 @@ delay (capture interval, encoding, network, decoding and V-Sync: typically 25 to
   same desktop without one (for example a phone, or an older client), the host draws the pointer
   again for everyone and Hermit hides its own; the overlay then says "host (another client
   connected)". When that client leaves, Hermit's local cursor returns by itself.
+- Hermit keeps the shapes a stream has used (up to 128, 16 MB) so a cursor the host switches back
+  to appears at once; a shape it does not have is fetched from the host, with one more try 2 seconds
+  later if the first fails, and a request to switch the mode that got no answer is repeated once
+  after 2 seconds.
 - Ctrl+Alt+Shift+C still shows the system arrow instead of the host's shape, and hides it again.
 
 ## Keyboard shortcuts

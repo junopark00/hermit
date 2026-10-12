@@ -3,9 +3,9 @@
 #include <atomic>
 #include <memory>
 
+#include <QHash>
 #include <QMutex>
 #include <QSemaphore>
-#include <QSet>
 #include <QQuickWindow>
 
 #include <Limelight.h>
@@ -148,8 +148,10 @@ public:
     // cursor sent as shapes (remote desktop mouse mode and the setting on) or drawn into the video
     // as usual; called when the stream starts, when the mouse mode changes and when the setting
     // changes. The host's answer arrives as an event and turns the input handler's local cursor
-    // on or off. Hosts without the capability are never asked.
-    void updateCursorMode();
+    // on or off. Hosts without the capability are never asked. A request that failed (timeout,
+    // or 403 while the host still registers the session) is sent once more 2 seconds later;
+    // retry marks that attempt.
+    void updateCursorMode(bool retry = false);
 
     // Who draws the cursor, for the performance overlay (StatsOverlay::CursorState); read by the
     // decoder thread
@@ -337,9 +339,14 @@ private:
     // Hermit: local cursor (main thread)
     void handleCursorUpdates();
     void requestCursorShape(uint32_t id);
-    void finishCursorShapeFetch();
+    void finishCursorShapeFetch(uint32_t id, bool failed);
     void applyCursorModeResult(bool requestedLocal, int result);
     void refreshCursorOverlayState();
+    void cancelCursorTimers();
+
+    // Hermit: the 2-second retries of the local cursor (SDL timer thread): posts an event
+    static
+    Uint32 cursorRetryTimerCallback(Uint32 interval, void* param);
     struct CursorMailbox;
     static void postCursorUpdate(CursorMailbox& mailbox, CursorPacket::Update&& update);
 
@@ -414,9 +421,18 @@ private:
     bool m_CursorUnsupported;          // the host answered 404: not asked again this session
     bool m_CursorDeclineNotified;      // one notice per session when the host declines
     std::atomic<int> m_CursorOverlayState;
-    QSet<uint32_t> m_CursorShapesRequested;  // fetched over HTTPS at most once per shape
+    // Shapes fetched over HTTPS: at most two attempts per shape, the second 2 seconds after a
+    // failure (the host answers 404 once its cursor has changed again)
+    struct CursorShapeFetch {
+        int attempts = 0;
+        uint64_t notBeforeMs = 0;
+    };
+    QHash<uint32_t, CursorShapeFetch> m_CursorShapeFetches;
     bool m_CursorShapeFetchInFlight;
     uint32_t m_CursorShapePendingId;   // a second shape to fetch once the running fetch is done
+    SDL_TimerID m_CursorModeRetryTimer;
+    SDL_TimerID m_CursorShapeRetryTimer;
+    bool m_CursorModeRetried;          // the one retry of a failed mode request is used up
     Uint32 m_FullScreenFlag;
     QQuickWindow* m_QtWindow;
     bool m_UnexpectedTermination;

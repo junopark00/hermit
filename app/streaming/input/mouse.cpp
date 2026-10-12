@@ -362,6 +362,7 @@ void LocalCursorCache::clear()
     m_CursorOrder.clear();
     m_Shapes.clear();
     m_ShapeOrder.clear();
+    m_ShapeBytes = 0;
 }
 
 void LocalCursorCache::addShape(const CursorPacket::Shape& shape)
@@ -372,8 +373,11 @@ void LocalCursorCache::addShape(const CursorPacket::Shape& shape)
     }
     else {
         m_Shapes.insert(shape.id, shape);
-        while (m_Shapes.size() > k_MaxShapes && !m_ShapeOrder.isEmpty()) {
-            m_Shapes.remove(m_ShapeOrder.takeFirst());
+        m_ShapeBytes += shape.pixels.size();
+        // Over the count or the byte limit: the least recently used shapes go (their cursors
+        // stay until they fall out of the cursor cache)
+        while ((m_Shapes.size() > k_MaxShapes || m_ShapeBytes > k_MaxShapeBytes) && !m_ShapeOrder.isEmpty()) {
+            m_ShapeBytes -= m_Shapes.take(m_ShapeOrder.takeFirst()).pixels.size();
         }
     }
     m_ShapeOrder.append(shape.id);
@@ -394,6 +398,9 @@ SDL_Cursor* LocalCursorCache::cursor(uint32_t id, double scale)
         return nullptr;
     }
     const CursorPacket::Shape& shape = shapeIt.value();
+    // Used now: kept longest
+    m_ShapeOrder.removeOne(id);
+    m_ShapeOrder.append(id);
 
     // BGRA32 straight alpha is QImage::Format_ARGB32 on little-endian machines
     QImage image(reinterpret_cast<const uchar*>(shape.pixels.constData()),
