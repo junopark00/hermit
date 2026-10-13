@@ -48,7 +48,7 @@ class StreamPanel : public QObject
     Q_PROPERTY(int autoFecPercent MEMBER m_AutoFecPercent NOTIFY liveBitrateChanged)
     // The frame rate the host streams at while network adaptation lowered it (0 otherwise)
     Q_PROPERTY(int autoFps MEMBER m_AutoFps NOTIFY liveBitrateChanged)
-    // The playback policy (StatsOverlay::PlaybackMode): 1 newest frame, 2 jitter buffer
+    // What playback does (StatsOverlay::PlaybackMode): 1 newest frame, 2 jitter buffer, 3 direct
     Q_PROPERTY(int playbackMode MEMBER m_PlaybackMode NOTIFY liveBitrateChanged)
     Q_PROPERTY(int startVideoCodecConfig MEMBER m_StartVideoCodecConfig CONSTANT)
     Q_PROPERTY(bool startEnableHdr MEMBER m_StartEnableHdr CONSTANT)
@@ -162,7 +162,7 @@ public:
         }
     }
 
-    // The playback policy now (session.cpp), for the "Playback: ..." line
+    // What playback does now (session.cpp, from the decoder), for the "Playback: ..." line
     void setPlaybackMode(int mode)
     {
         if (m_PlaybackMode != mode) {
@@ -284,7 +284,7 @@ private:
     int m_AutoBitrateKbps = 0;   // where network adaptation holds the bitrate (0 when it is off)
     int m_AutoFecPercent = 0;    // and the FEC step it asked the host for (0: not controlled)
     int m_AutoFps = 0;           // and the lowered frame rate (0: the stream's)
-    int m_PlaybackMode = 0;      // the playback policy (0: not known yet)
+    int m_PlaybackMode = 0;      // what playback does (0: not known yet)
     bool m_BitrateEditing = false;
     bool m_HandleFailed = false;   // the handle's QML could not be created; do not retry
     qreal m_LastDpr = 0;

@@ -45,7 +45,6 @@ typedef struct _DECODER_PARAMETERS {
     bool enableVsync;
     bool enableFramePacing;
     bool testOnly;
-    bool jitterBuffer;  // Hermit: quality priority playback, fixed for the stream (Pacer::initialize)
 } DECODER_PARAMETERS, *PDECODER_PARAMETERS;
 
 #define WINDOW_STATE_CHANGE_SIZE 0x01
@@ -81,4 +80,11 @@ public:
 
     // Hermit: the frame priority playback policy (Pacer::setLowLatency), changed live
     virtual void setLowLatency(bool) {}
+
+    // Hermit: the frame rate the host streams at, for the jitter buffer's timer
+    // (Pacer::setPacingFps), changed live
+    virtual void setPacingFps(int) {}
+
+    // Hermit: what playback does now (StatsOverlay::PlaybackMode; 0 unknown)
+    virtual int getPlaybackMode() { return 0; }
 };

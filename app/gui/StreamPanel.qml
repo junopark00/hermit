@@ -351,10 +351,12 @@ Window {
                           (panel.autoFps > 0 ? " · " + panel.autoFps + " fps" : "")
                 }
                 Helper {
-                    // The playback policy: frame priority shows the newest frame at once,
-                    // quality priority keeps a jitter buffer
+                    // What playback does: frame priority shows the newest frame at once; otherwise
+                    // a jitter buffer (without V-Sync, or with frame pacing) or frames go straight
+                    // to the renderer
                     visible: panel.playbackMode !== 0
-                    text: panel.playbackMode === 1 ? qsTr("Playback: newest frame") : qsTr("Playback: jitter buffer")
+                    text: panel.playbackMode === 1 ? qsTr("Playback: newest frame") :
+                          panel.playbackMode === 2 ? qsTr("Playback: jitter buffer") : qsTr("Playback: direct")
                 }
                 Helper {
                     visible: text.length > 0

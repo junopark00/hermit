@@ -81,10 +81,12 @@ QString format(const Inputs& in, int metrics)
         add(MetricBitrate, QCoreApplication::translate("StatsOverlay", "Automatic"), value);
     }
     if (in.playback != PlaybackNone) {
-        // The playback policy: the newest frame at once, or a jitter buffer
+        // What playback does: the newest frame at once, a jitter buffer, or frames straight to
+        // the renderer
         add(MetricBitrate, QCoreApplication::translate("StatsOverlay", "Playback"),
-            in.playback == PlaybackNewestFrame ? QCoreApplication::translate("StatsOverlay", "newest frame")
-                                               : QCoreApplication::translate("StatsOverlay", "jitter buffer"));
+            in.playback == PlaybackNewestFrame ? QCoreApplication::translate("StatsOverlay", "newest frame") :
+            in.playback == PlaybackJitterBuffer ? QCoreApplication::translate("StatsOverlay", "jitter buffer") :
+                                                  QCoreApplication::translate("StatsOverlay", "direct"));
     }
     if (haveFrames) {
         add(MetricNetworkLoss, QCoreApplication::translate("StatsOverlay", "Network loss"), pct(s.totalFrames ? 100.0 * s.networkDroppedFrames / s.totalFrames : 0.0));

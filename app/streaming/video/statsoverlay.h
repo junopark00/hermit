@@ -47,12 +47,13 @@ enum AdaptRegime : int {
     AdaptCongested = 2,
 };
 
-// The playback policy (pacer.h): frame priority shows the newest frame, quality priority keeps a
-// jitter buffer
+// What playback does (pacer.h): frame priority shows the newest frame; otherwise a jitter buffer
+// (the timer without V-Sync, or V-Sync pacing) or frames go to the renderer directly
 enum PlaybackMode : int {
     PlaybackNone = 0,
     PlaybackNewestFrame = 1,
     PlaybackJitterBuffer = 2,
+    PlaybackDirect = 3,
 };
 
 struct Inputs {

@@ -505,10 +505,13 @@ NvHTTP::setLiveFec(int percent, int timeoutMs)
     QByteArray body = reply->readAll();
     delete reply;
 
-    // "percent=<effective>"; a host that answers unknown requests with 200 changed nothing
+    // "percent=<effective>"; a host that answers unknown requests with 200 changed nothing, and
+    // a value that is not a positive number counts as not supported (never retried)
     for (const QByteArray& line : body.split('\n')) {
         if (line.startsWith("percent=")) {
-            return line.mid(8).trimmed().toInt();
+            bool ok = false;
+            const int value = line.mid(8).trimmed().toInt(&ok);
+            return ok && value > 0 ? value : -1;
         }
     }
     return -1;
@@ -525,10 +528,13 @@ NvHTTP::setLiveFps(int fps, int timeoutMs)
     QByteArray body = reply->readAll();
     delete reply;
 
-    // "fps=<effective>"; a host that answers unknown requests with 200 changed nothing
+    // "fps=<effective>"; a host that answers unknown requests with 200 changed nothing, and a
+    // value that is not a positive number counts as not supported (never retried)
     for (const QByteArray& line : body.split('\n')) {
         if (line.startsWith("fps=")) {
-            return line.mid(4).trimmed().toInt();
+            bool ok = false;
+            const int value = line.mid(4).trimmed().toInt(&ok);
+            return ok && value > 0 ? value : -1;
         }
     }
     return -1;

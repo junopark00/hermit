@@ -227,18 +227,18 @@ public:
     // Shell host extension (serverinfo LiveFec=1): GET /actions/fec?percent=<1..100> sets the
     // forward error correction of this client's running stream per frame, without a stream reset;
     // percent 0 sends "default", which clears the override (back to the host's configured value).
-    // Returns the effective percentage from the host's "percent=" line, or -1 without one. Throws
-    // on HTTP or network errors (404: not supported, 400: bad value, 403: the caller has no running
-    // stream).
+    // Returns the effective percentage from the host's "percent=" line, or -1 without one (or
+    // when it is not a positive number). Throws on HTTP or network errors (404: not supported,
+    // 400: bad value, 403: the caller has no running stream).
     int
     setLiveFec(int percent, int timeoutMs);
 
     // Shell host extension (serverinfo LiveFps=1): GET /actions/fps?fps=<n> lowers the frame rate
     // the host encodes this client's running stream at, without a stream reset; fps 0 sends
     // "default", which clears the override (back to the stream's frame rate). Returns the
-    // effective frame rate from the host's "fps=" line, or -1 without one. Throws on HTTP or
-    // network errors (404: not supported, 501: the encoder cannot, 400: bad value, 403: the
-    // caller has no running stream).
+    // effective frame rate from the host's "fps=" line, or -1 without one (or when it is not a
+    // positive number). Throws on HTTP or network errors (404: not supported, 501: the encoder
+    // cannot, 400: bad value, 403: the caller has no running stream).
     int
     setLiveFps(int fps, int timeoutMs);
 

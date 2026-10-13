@@ -737,6 +737,10 @@ Start를 길게 눌러 끄기</translation>
       <source>jitter buffer</source>
       <translation>지터 버퍼</translation>
     </message>
+    <message>
+      <source>direct</source>
+      <translation>바로 표시</translation>
+    </message>
   </context>
   <context>
     <name>ConnectionProfiles</name>
@@ -1148,6 +1152,10 @@ Start를 길게 눌러 끄기</translation>
     <message>
       <source>Playback: jitter buffer</source>
       <translation>재생: 지터 버퍼</translation>
+    </message>
+    <message>
+      <source>Playback: direct</source>
+      <translation>재생: 바로 표시</translation>
     </message>
     <message>
       <source>Toggle full screen</source>

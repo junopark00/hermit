@@ -220,6 +220,8 @@ static void testStatsOverlay()
     bitrate = StatsOverlay::format(in, StatsOverlay::MetricBitrate).split('\n');
     CHECK_EQ(bitrate.size(), 2);
     CHECK_EQ(bitrate.value(1), QString("Playback\tjitter buffer"));
+    in.playback = StatsOverlay::PlaybackDirect;                // no timer, no V-Sync pacing
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricBitrate).split('\n').value(1), QString("Playback\tdirect"));
     in.playback = StatsOverlay::PlaybackNone;
     CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricBitrate).split('\n').size(), 1);
 }

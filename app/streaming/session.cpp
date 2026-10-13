@@ -404,8 +404,7 @@ void Session::clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlag
 bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
                             StreamingPreferences::RendererSelection renderer,
                             SDL_Window* window, int videoFormat, int width, int height,
-                            int frameRate, bool enableVsync, bool enableFramePacing, bool testOnly, IVideoDecoder*& chosenDecoder,
-                            bool jitterBuffer)
+                            int frameRate, bool enableVsync, bool enableFramePacing, bool testOnly, IVideoDecoder*& chosenDecoder)
 {
     DECODER_PARAMETERS params;
 
@@ -422,7 +421,6 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
     params.enableVsync = enableVsync;
     params.enableFramePacing = enableFramePacing;
     params.testOnly = testOnly;
-    params.jitterBuffer = jitterBuffer;
     params.vds = vds;
     params.renderer = renderer;
 
@@ -742,9 +740,7 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_FpsEffective(0),
       m_FpsUncertain(false),
       m_FpsRetryMs(0),
-      m_PlaybackJitterBuffer(false),
       m_PlaybackLowLatency(false),
-      m_PlaybackOverlayState(0),
       m_HotkeyHelpSerial(0),
       m_LoopStartMs(0),
       m_StartHintPending(false),
@@ -2516,19 +2512,18 @@ void Session::handleNetworkWindow(uint64_t now)
     publishNetDiagState();
 
     // Playback policy (pacer.h): follows the network policy (the mouse mode with Auto) live; the
-    // jitter buffer's timer stays as the stream started
+    // panel shows what the pacer does with it
     const bool lowLatency = networkPolicy() == NetworkAdapt::Policy::FramePriority;
     if (lowLatency != m_PlaybackLowLatency) {
         m_PlaybackLowLatency = lowLatency;
         if (m_VideoDecoder != nullptr) {
             m_VideoDecoder->setLowLatency(lowLatency);
         }
-        m_PlaybackOverlayState = lowLatency ? StatsOverlay::PlaybackNewestFrame : StatsOverlay::PlaybackJitterBuffer;
-        if (m_Panel != nullptr) {
-            m_Panel->setPlaybackMode(m_PlaybackOverlayState.load());
-        }
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Playback: %s", lowLatency ? "newest frame" : "jitter buffer");
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Playback policy: %s", lowLatency ? "newest frame" : "jitter buffer");
         NetDiagLog::note(lowLatency ? QStringLiteral("playback: newest frame") : QStringLiteral("playback: jitter buffer"));
+    }
+    if (m_Panel != nullptr) {
+        m_Panel->setPlaybackMode(m_VideoDecoder != nullptr ? m_VideoDecoder->getPlaybackMode() : 0);
     }
 
     // The window's figures: the frames that arrived and the frame numbers skipped since the last
@@ -2746,6 +2741,9 @@ void Session::handleLiveFecResult(uint32_t serial, int result)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live FEC: not supported by this host, not asked again");
     }
     else {
+        // The request may or may not have reached the host: sent again (the default first while
+        // the host's default is unknown), even when the wanted value is back at the last confirmed one
+        m_FecSentPercent = -1;
         m_FecUncertain = true;
         m_FecRetryMs = SDL_GetTicks64();
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live FEC %d%%: failed, trying again in 5 seconds", requested);
@@ -2806,6 +2804,10 @@ void Session::handleLiveFpsResult(uint32_t serial, int result)
         m_FpsEffective = result;
         m_FpsUncertain = false;
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live frame rate %d (0: the stream's): the host now encodes %d FPS", requested, result);
+        // The jitter buffer's timer ticks at the rate the host streams at
+        if (m_VideoDecoder != nullptr) {
+            m_VideoDecoder->setPacingFps(result);
+        }
     }
     else if (result < 0) {
         m_LiveFps = false;
@@ -2813,6 +2815,9 @@ void Session::handleLiveFpsResult(uint32_t serial, int result)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live frame rate: not supported by this host, not asked again");
     }
     else {
+        // The request may or may not have reached the host: the next window sends the wanted
+        // value again, even when it is back at the last confirmed one
+        m_FpsSentValue = -1;
         m_FpsUncertain = true;
         m_FpsRetryMs = SDL_GetTicks64();
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live frame rate %d: failed, trying again in 5 seconds", requested);
@@ -3260,13 +3265,9 @@ void Session::exec()
     }
     updateCursorMode();
 
-    // Hermit: playback policy (pacer.h): the jitter buffer's timer is chosen now, for the whole
-    // stream (the decoder is created at the first window event, after this)
-    m_PlaybackJitterBuffer = networkPolicy() == NetworkAdapt::Policy::QualityPriority;
-    m_PlaybackLowLatency = !m_PlaybackJitterBuffer;
-    m_PlaybackOverlayState = m_PlaybackLowLatency ? StatsOverlay::PlaybackNewestFrame : StatsOverlay::PlaybackJitterBuffer;
-    m_Panel->setPlaybackMode(m_PlaybackOverlayState.load());
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Playback: %s", m_PlaybackLowLatency ? "newest frame" : "jitter buffer");
+    // Hermit: playback policy (pacer.h), for the decoder created at the first window event
+    m_PlaybackLowLatency = networkPolicy() == NetworkAdapt::Policy::FramePriority;
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Playback policy: %s", m_PlaybackLowLatency ? "newest frame" : "jitter buffer");
 
     // Hermit: network adaptation (networkadapt.h): a window every 250 ms. A FEC request of the
     // previous session still running can reach the host after this stream started: the first
@@ -3669,8 +3670,7 @@ void Session::exec()
                                    enableVsync,
                                    enableVsync && m_Preferences->framePacing,
                                    false,
-                                   s_ActiveSession->m_VideoDecoder,
-                                   m_PlaybackJitterBuffer)) {
+                                   s_ActiveSession->m_VideoDecoder)) {
                     SDL_UnlockMutex(m_DecoderLock);
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                                  "Failed to recreate decoder after reset");
@@ -3687,8 +3687,9 @@ void Session::exec()
                 }
             }
 
-            // Hermit: the playback policy in effect now
+            // Hermit: the playback policy in effect now, and the frame rate the host streams at
             m_VideoDecoder->setLowLatency(m_PlaybackLowLatency);
+            m_VideoDecoder->setPacingFps(m_FpsEffective > 0 ? m_FpsEffective : m_StreamConfig.fps);
 
             // Request an IDR frame to complete the reset
             LiRequestIdrFrame();

@@ -203,9 +203,9 @@ automatically to the network" in the stream panel. It is off by default.
   - **Keep the frame rate** (game): congestion cuts the bitrate by 30% per step, down to one eighth
     of the chosen bitrate (at least 2 Mbps). The picture gets blurry for a moment but keeps moving;
     the frame rate never changes. Playback shows the newest frame: frames that arrive bunched up
-    after a stall do not wait for each other (with V-Sync one frame waits for the next refresh;
-    without it, a new frame replaces one that is not drawn yet). The dropped frames count as jitter
-    drops.
+    after a stall do not wait for each other (with frame pacing one frame waits for the next
+    refresh; otherwise a new frame replaces any that is not drawn yet, and the jitter buffer's
+    timer is bypassed). The dropped frames count as jitter drops.
   - **Keep the quality** (remote desktop): congestion cuts by 20% per step, down to one third of the
     chosen bitrate (at least 4 Mbps), and the link-loss rule stops there too, keeping FEC at 50%.
     Sharp text and UI come first. On a Shell host that changes the frame rate live (serverinfo
@@ -223,17 +223,18 @@ automatically to the network" in the stream panel. It is off by default.
     through the values it was halved from (35, 70, 144). Switching to **Keep the frame rate**
     brings the stream's frame rate back at once; a new chosen bitrate keeps the lowered frame rate.
     Playback keeps a jitter buffer: with V-Sync the queues stay lenient (up to 3 frames); without
-    V-Sync, frames are paced by a timer at the stream's frame rate, which evens out uneven arrivals
-    at the cost of up to 3 frames of delay. The timer is chosen when the stream starts (by the
-    policy then in effect); a later switch changes only how many frames may wait.
+    V-Sync, frames are paced by a timer at the frame rate the host streams at (it follows a
+    lowered frame rate), which evens out uneven arrivals at the cost of up to 3 frames of delay.
+    Without V-Sync the timer is there in every stream; frame priority bypasses it at once.
     Floors are rounded down to 0.5 Mbps. Switching to this policy while the bitrate is below its
     floor raises it to the floor at the next clean window (one request).
   - **Auto** (default) follows the mouse mode: the game (relative) mouse keeps the frame rate, the
     remote desktop (absolute) mouse keeps the quality. Switching the mouse mode switches the policy
     at once.
   - The playback part applies with any host, also while automatic bitrate is off. The panel shows
-    "Playback: newest frame" or "Playback: jitter buffer", and the performance overlay a "Playback"
-    line under the bitrate.
+    what playback does: "Playback: newest frame", "Playback: jitter buffer" (the timer, or frame
+    pacing) or "Playback: direct" (V-Sync without frame pacing); the performance overlay shows the
+    same in a "Playback" line under the bitrate.
 - The chosen bitrate is the upper limit. Changing it in the panel sets a new limit and a new starting
   point. The panel shows "Automatic: now N Mbps, FEC F% (up to M Mbps)" with the host's effective
   FEC ("FEC ?" until the host has answered; no FEC part on hosts that cannot change it) and
@@ -244,6 +245,9 @@ automatically to the network" in the stream panel. It is off by default.
 - FEC requests work like bitrate requests: one at a time, the newest value follows, a failed one is
   sent again after 5 s, and a host that refuses them (404) is not asked again this session. Turning
   the setting off sends the host's default FEC back when it had been raised.
+- A request that failed on the way is sent again even when the wanted value went back to the last
+  confirmed one (the failed one may still have reached the host). A reply without a positive
+  value counts as a refusal.
 - Frame rate requests follow the same rules (a host that answers 404, 501 or 400 is not asked again
   this session). Each stream sends `fps=default` once at the start, which also tells whether the
   host takes them; turning the setting off sends it again when the frame rate had been lowered.

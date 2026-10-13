@@ -161,9 +161,8 @@ public:
     // Network adaptation for the performance overlay (StatsOverlay::Inputs adapt fields); read by
     // the decoder thread. bitrateKbps is 0 while the controller is off; fecPercent is 0 on hosts
     // without live FEC and -1 until the host told its value; fps is the frame rate the host
-    // streams at while it is below the stream's (0 otherwise); playback is the playback policy
-    // (StatsOverlay::PlaybackMode), also while the controller is off.
-    void adaptOverlayState(int& bitrateKbps, int& fecPercent, int& regime, int& fps, int& playback) const
+    // streams at while it is below the stream's (0 otherwise).
+    void adaptOverlayState(int& bitrateKbps, int& fecPercent, int& regime, int& fps) const
     {
         const uint64_t packed = m_AdaptOverlayState.load();
         bitrateKbps = static_cast<int>(packed & 0xFFFFFFFFu);
@@ -171,7 +170,6 @@ public:
         fecPercent = fec == 0xFF ? -1 : fec;
         regime = static_cast<int>((packed >> 40) & 0xFF);
         fps = static_cast<int>((packed >> 48) & 0xFF);
-        playback = m_PlaybackOverlayState.load();
     }
 
     // Hermit: performance overlay on or off (Ctrl+Alt+Shift+S, gamepad combo). The setting
@@ -331,8 +329,7 @@ private:
                        SDL_Window* window, int videoFormat, int width, int height,
                        int frameRate, bool enableVsync, bool enableFramePacing,
                        bool testOnly,
-                       IVideoDecoder*& chosenDecoder,
-                       bool jitterBuffer = false);
+                       IVideoDecoder*& chosenDecoder);
 
     static
     void clStageStarting(int stage);
@@ -515,9 +512,7 @@ private:
     uint64_t m_FpsRetryMs;
     // Playback policy (pacer.h): frame priority shows the newest frame at once, quality priority
     // keeps the lenient queues and, without V-Sync, paces frames with a timer (a jitter buffer)
-    bool m_PlaybackJitterBuffer;       // the timer, chosen when the stream starts (fixed)
     bool m_PlaybackLowLatency;         // frame priority now (follows the policy live)
-    std::atomic<int> m_PlaybackOverlayState;  // StatsOverlay::PlaybackMode, read by the decoder thread
     int m_MouseEmulationRefCount;
     int m_FlushingWindowEventsRef;
     QStringList m_LaunchWarnings;

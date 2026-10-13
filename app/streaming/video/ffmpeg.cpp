@@ -94,6 +94,18 @@ void FFmpegVideoDecoder::setLowLatency(bool lowLatency)
     }
 }
 
+void FFmpegVideoDecoder::setPacingFps(int fps)
+{
+    if (m_Pacer != nullptr) {
+        m_Pacer->setPacingFps(fps);
+    }
+}
+
+int FFmpegVideoDecoder::getPlaybackMode()
+{
+    return m_Pacer != nullptr ? m_Pacer->playbackMode() : 0;
+}
+
 int FFmpegVideoDecoder::getDecoderCapabilities()
 {
     int capabilities;
@@ -524,11 +536,11 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
     // Don't bother initializing Pacer if we're not actually going to render
     if (testMode != TestMode::TestFrameOnly) {
         m_Pacer = new Pacer(m_FrontendRenderer, &m_ActiveWndVideoStats);
-        // Hermit: the jitter buffer's timer only without V-Sync (with V-Sync the lenient queues
-        // stay as they are)
+        // Hermit: without V-Sync a timer paces the frames (the jitter buffer; frame priority
+        // bypasses it live); with V-Sync the lenient queues stay as they are
         if (!m_Pacer->initialize(params->window, params->frameRate,
                                  params->enableFramePacing || (params->enableVsync && (m_FrontendRenderer->getRendererAttributes() & RENDERER_ATTRIBUTE_FORCE_PACING)),
-                                 params->jitterBuffer && !params->enableVsync)) {
+                                 !params->enableVsync)) {
             return false;
         }
     }
@@ -2189,7 +2201,8 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
             }
             inputs.cursorState = Session::get()->cursorOverlayState();
             Session::get()->adaptOverlayState(inputs.adaptBitrateKbps, inputs.adaptFecPercent, inputs.adaptRegime,
-                                              inputs.adaptFps, inputs.playback);
+                                              inputs.adaptFps);
+            inputs.playback = m_Pacer != nullptr ? m_Pacer->playbackMode() : StatsOverlay::PlaybackNone;
             const QByteArray overlayText = StatsOverlay::format(inputs, overlay.statsMetrics()).toUtf8();
             SDL_utf8strlcpy(overlay.getOverlayText(Overlay::OverlayDebug), overlayText.constData(),
                             overlay.getOverlayMaxTextLength());
