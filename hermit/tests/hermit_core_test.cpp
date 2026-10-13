@@ -797,11 +797,11 @@ static void testNetworkAdapt()
         CHECK(adapt.regime() == Regime::Loss);
 
         // Clean again (the last cut is 3 s old): the bitrate rises after 12 clean windows, which
-        // is 6 s after the cut; again 3 s later; FEC steps down after 24 clean windows (one
-        // action gap behind the raise due in the same window) and again 6 s later
+        // is 6 s after the cut; again 3 s later; FEC steps down after 120 clean windows (30 s)
+        // and again 30 s later
         QVector<ReplayAction> recovery;
         const uint64_t cleanFrom = t;
-        for (int i = 0; i < 60; i++) {
+        for (int i = 0; i < 280; i++) {
             t += 250;
             const NetworkAdapt::Action r = adapt.update(cleanWindow(5), t, 20000);
             if (r.reason != nullptr) {
@@ -815,9 +815,9 @@ static void testNetworkAdapt()
             CHECK_EQ(recovery[1].bitrateKbps, 20000);
             CHECK(near(recovery[1].atS, 6.0));
             CHECK_EQ(recovery[2].fecPercent, 35);
-            CHECK(near(recovery[2].atS, 6.5));
+            CHECK(near(recovery[2].atS, 30.0));
             CHECK_EQ(recovery[3].fecPercent, 20);
-            CHECK(near(recovery[3].atS, 12.5));
+            CHECK(near(recovery[3].atS, 60.0));
         }
         CHECK_EQ(adapt.fec(), 20);
         CHECK_EQ(adapt.bitrate(), 20000);
@@ -848,6 +848,90 @@ static void testNetworkAdapt()
         }
         CHECK_EQ(noFec.bitrate(), 14000);
         CHECK_EQ(noFec.fec(), 20);
+    }
+
+    // ---- The third recording (notes/data/Hermit-netdiag-1791872489.csv, clumsy 4% drop): FEC 20
+    // turned the loss into dropped frames within 0.5 s, FEC 35 hid it completely. Loss windows
+    // come only while FEC is at the base: the first step down waits 30 s, a relapse within 10 s
+    // doubles the next wait (60 s, then 120 s at most), and FEC requests stay rare ----
+    {
+        NetworkAdapt adapt;
+        adapt.reset(35000, 0, Policy::QualityPriority, true);
+        CHECK_EQ(adapt.fecHoldMs(), 30000u);
+        uint64_t t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            adapt.update(cleanWindow(5), t, 35000);
+        }
+        QVector<ReplayAction> fecActions;
+        int bitrateActions = 0;
+        for (int i = 0; i < 1600; i++) {                          // 400 s
+            t += 250;
+            const bool lossy = adapt.fec() == adapt.fecBase();
+            const NetworkAdapt::Action a = adapt.update(lossy ? lossWindow(6, 6) : cleanWindow(5), t, 35000);
+            if (a.bitrateKbps > 0) {
+                bitrateActions++;
+            }
+            if (a.fecPercent > 0) {
+                fecActions.append({ t / 1000.0, a.bitrateKbps, a.fecPercent, a.reason });
+            }
+        }
+        // 35 at once, then down after 30 s; up again at once (relapse), down after 60 s; up,
+        // down after 120 s; up, down after 120 s (the most)
+        double holds[4] = { -1, -1, -1, -1 };
+        int downs = 0;
+        for (int i = 0; i + 1 < fecActions.size(); i++) {
+            if (fecActions[i].fecPercent == 35 && fecActions[i + 1].fecPercent == 20 && downs < 4) {
+                holds[downs++] = fecActions[i + 1].atS - fecActions[i].atS;
+            }
+            CHECK(fecActions[i].fecPercent == 35 || fecActions[i].fecPercent == 20);   // never 50
+        }
+        CHECK_EQ(bitrateActions, 0);                              // loss that FEC 35 hides never cuts
+        CHECK(downs >= 4);
+        CHECK(holds[0] >= 30.0 && holds[0] <= 30.5);
+        CHECK(holds[1] >= 60.0 && holds[1] <= 60.5);
+        CHECK(holds[2] >= 120.0 && holds[2] <= 120.5);
+        CHECK(holds[3] >= 120.0 && holds[3] <= 120.5);
+        // At most two FEC requests (a step down and the relapse) within any 30 s
+        int most = 0;
+        for (int i = 0; i < fecActions.size(); i++) {
+            int inWindow = 0;
+            for (int j = i; j < fecActions.size() && fecActions[j].atS - fecActions[i].atS < 30.0; j++) {
+                inWindow++;
+            }
+            most = qMax(most, inWindow);
+        }
+        CHECK(most <= 2);
+        std::printf("  network adaptation FEC backoff (3rd recording pattern): %d FEC requests in 400 s, holds %.2f / %.2f / %.2f / %.2f s\n",
+                    (int)fecActions.size(), holds[0], holds[1], holds[2], holds[3]);
+
+        // A step down that holds for 10 s brings the wait back to 30 s
+        NetworkAdapt calm;
+        calm.reset(35000, 0, Policy::QualityPriority, true);
+        t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            calm.update(cleanWindow(5), t, 35000);
+        }
+        int phase = 0;      // 0: first loss; 1: relapse once after the first step down; 2: calm
+        uint64_t lastDownMs = 0;
+        for (int i = 0; i < 1200 && phase < 3; i++) {
+            t += 250;
+            const bool lossy = calm.fec() == calm.fecBase() && phase < 2;
+            const NetworkAdapt::Action a = calm.update(lossy ? lossWindow(6, 6) : cleanWindow(5), t, 35000);
+            if (a.fecPercent == 20) {
+                lastDownMs = t;
+                phase++;
+            }
+            if (phase == 2 && t - lastDownMs == 10000) {
+                CHECK_EQ(calm.fecHoldMs(), 30000u);               // back to the usual wait
+                phase = 3;
+            }
+            if (phase == 2 && t - lastDownMs == 9750) {
+                CHECK_EQ(calm.fecHoldMs(), 60000u);               // still doubled within the 10 s
+            }
+        }
+        CHECK_EQ(phase, 3);
     }
 
     // ---- Hysteresis: a single window of the other kind does not switch the regime ----

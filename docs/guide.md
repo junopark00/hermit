@@ -184,7 +184,11 @@ automatically to the network" in the stream panel. It is off by default.
     for one) decide nothing and count as neither good nor bad, so desktop work with pauses recovers.
   - **Recovery**: after 3 s of clean windows (less than 1% loss, usual round trip) the bitrate rises
     by 15% of the chosen bitrate, every 3 s, up to the chosen bitrate; the first rise after a cut
-    waits 6 s after that cut. FEC goes down one step after 6 s of clean windows, and again 6 s later.
+    waits 6 s after that cut. FEC goes down one step after 30 s of clean windows, and again 30 s
+    later at the earliest. The third recording showed 4% loss that FEC 35% hid completely while 20%
+    turned it into dropped frames within 0.5 s, so a quicker step down only found the loss again.
+    When loss raises FEC again within 10 s of a step down, the next step down waits twice as long
+    (60 s, then 120 s at most); a step down that holds for 10 s brings the wait back to 30 s.
     A grey window (1 to 5% loss, or a round trip 16 to 40 ms above usual) counts as half a clean
     window, and 24 grey or clean windows in a row end a trouble regime, so a link with a steady 2%
     loss still recovers, at half speed.

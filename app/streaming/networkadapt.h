@@ -32,7 +32,11 @@
 // second), so a congestion that lasts is not mistaken for the new normal.
 // Recovery: after 12 clean windows (3 s) the bitrate rises by 15% of the chosen value towards
 // it, every 3 s; the first rise after a cut waits 6 s after that cut. FEC goes down one step
-// after 24 clean windows (6 s), every 6 s. A grey window (1-5% loss or a single dropped frame,
+// after 120 clean windows (30 s), 30 s after the last step down at the earliest: the third
+// recording showed 4% loss that FEC 35 hid completely and FEC 20 turned into dropped frames within
+// 0.5 s, so a step down after 6 s only found the loss again every 6.5 s. When loss raises FEC
+// again within 10 s of a step down, the next step down waits twice as long (60 s, then 120 s at
+// most); a step down that holds for 10 s brings the wait back to 30 s. A grey window (1-5% loss or a single dropped frame,
 // or a round trip 16-40 ms above usual) counts half a clean window towards recovery, and 24 grey
 // or clean windows in a row end a trouble regime, so a link with a steady 2% loss still
 // recovers, slowly.
@@ -78,11 +82,12 @@ public:
     static constexpr int kLossWindowsBeforeCut = 8;
     static constexpr int kMaxLossCuts = 2;
     static constexpr int kRaiseAfterCleanWindows = 12;
-    static constexpr int kFecDownAfterCleanWindows = 24;
     static constexpr int kGreyWindowsEndRegime = 24;
     static constexpr uint64_t kRaiseGapMs = 3000;
     static constexpr uint64_t kRaiseHoldAfterCutMs = 6000;
-    static constexpr uint64_t kFecDownGapMs = 6000;
+    static constexpr uint64_t kFecDownHoldMs = 30000;       // clean time (and gap) before a FEC step down
+    static constexpr uint64_t kFecDownHoldMaxMs = 120000;   // after relapses
+    static constexpr uint64_t kFecRelapseMs = 10000;        // loss this soon after a step down doubles the hold
 
     // chosenKbps: the user's bitrate, the ceiling; startKbps: where the host streams now (0: at
     // the ceiling); fecAvailable: the host takes live FEC changes and its default is known
@@ -98,6 +103,8 @@ public:
         m_Regime = Regime::Clean;
         m_RaiseToFloor = false;
         m_LastActionMs = m_LastCutMs = m_LastRaiseMs = m_LastFecDownMs = 0;
+        m_FecHoldMs = kFecDownHoldMs;
+        m_FecDownWatch = false;
         clearStreaks();
         m_LossCuts = m_CongestionCuts = 0;
         m_SymptomCur = m_SymptomPrev = false;
@@ -110,6 +117,7 @@ public:
     Policy policy() const { return m_Policy; }
     Regime regime() const { return m_Regime; }
     float baseRtt() const { return m_BaseRtt; }
+    uint64_t fecHoldMs() const { return m_FecHoldMs; }
 
     // The policy follows the mouse mode; its floor applies from the next cut on. Quality priority
     // taken up below its floor raises the bitrate to the floor at the next clean window.
@@ -172,6 +180,11 @@ public:
             action.bitrateKbps = m_Bitrate;
             action.reason = "ceiling";
             return action;
+        }
+
+        if (m_FecDownWatch && nowMs - m_LastFecDownMs >= kFecRelapseMs) {
+            m_FecDownWatch = false;  // the step down held: the next one waits the usual time
+            m_FecHoldMs = kFecDownHoldMs;
         }
 
         // Usual round trip: follows drops at once; rises (0.5 ms per second) only in clean
@@ -258,6 +271,11 @@ public:
             return congestionCut(w, nowMs, action);
         }
         if (m_Fec < fecMax() && m_FecAvailable) {
+            if (m_FecDownWatch) {
+                // Loss again soon after a step down: that step was too early
+                m_FecDownWatch = false;
+                m_FecHoldMs = (std::min)(kFecDownHoldMaxMs, m_FecHoldMs * 2);
+            }
             m_Fec = m_Fec < fecMid() ? fecMid() : fecMax();
             m_LastActionMs = nowMs;
             m_LossWindowsAtMaxFec = 0;
@@ -358,11 +376,12 @@ private:
             action.reason = "recover";
             return action;
         }
-        if (m_Fec > m_FecBase && m_FecAvailable && m_FecHalves >= 2 * kFecDownAfterCleanWindows &&
-                nowMs - m_LastFecDownMs >= kFecDownGapMs) {
+        if (m_Fec > m_FecBase && m_FecAvailable && m_FecHalves >= 2 * (int)(m_FecHoldMs / kWindowMs) &&
+                nowMs - m_LastFecDownMs >= m_FecHoldMs) {
             m_Fec = m_Fec > fecMid() ? fecMid() : m_FecBase;
             m_LastActionMs = m_LastFecDownMs = nowMs;
             m_FecHalves = 0;
+            m_FecDownWatch = true;
             action.fecPercent = m_Fec;
             action.reason = "recover";
         }
@@ -401,4 +420,6 @@ private:
     uint64_t m_LastCutMs = 0;
     uint64_t m_LastRaiseMs = 0;
     uint64_t m_LastFecDownMs = 0;
+    uint64_t m_FecHoldMs = kFecDownHoldMs;  // clean time a FEC step down needs (doubles after a relapse)
+    bool m_FecDownWatch = false;   // a step down in the last 10 s: loss now doubles the hold
 };
