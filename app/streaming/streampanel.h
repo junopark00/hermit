@@ -46,6 +46,8 @@ class StreamPanel : public QObject
     // Bitrate the automatic adjustment is at (0 when it is off)
     Q_PROPERTY(int autoBitrateKbps MEMBER m_AutoBitrateKbps NOTIFY liveBitrateChanged)
     Q_PROPERTY(int autoFecPercent MEMBER m_AutoFecPercent NOTIFY liveBitrateChanged)
+    // The frame rate the host streams at while network adaptation lowered it (0 otherwise)
+    Q_PROPERTY(int autoFps MEMBER m_AutoFps NOTIFY liveBitrateChanged)
     // The playback policy (StatsOverlay::PlaybackMode): 1 newest frame, 2 jitter buffer
     Q_PROPERTY(int playbackMode MEMBER m_PlaybackMode NOTIFY liveBitrateChanged)
     Q_PROPERTY(int startVideoCodecConfig MEMBER m_StartVideoCodecConfig CONSTANT)
@@ -147,13 +149,15 @@ public:
     Q_INVOKABLE void setBitrateEditing(bool editing) { m_BitrateEditing = editing; }
     bool bitrateEditing() const { return m_BitrateEditing; }
 
-    // Network adaptation (session.cpp): the controller's bitrate (0 when it is off) and its FEC
-    // step (0 when the host takes no live FEC changes), for the "Automatic: now ..." line
-    void setAutoBitrate(int kbps, int fecPercent = 0)
+    // Network adaptation (session.cpp): the controller's bitrate (0 when it is off), its FEC
+    // step (0 when the host takes no live FEC changes) and the lowered frame rate (0 when not
+    // lowered), for the "Automatic: now ..." line
+    void setAutoBitrate(int kbps, int fecPercent = 0, int fps = 0)
     {
-        if (m_AutoBitrateKbps != kbps || m_AutoFecPercent != fecPercent) {
+        if (m_AutoBitrateKbps != kbps || m_AutoFecPercent != fecPercent || m_AutoFps != fps) {
             m_AutoBitrateKbps = kbps;
             m_AutoFecPercent = fecPercent;
+            m_AutoFps = fps;
             emit liveBitrateChanged();
         }
     }
@@ -279,6 +283,7 @@ private:
     int m_QueuedBitrateKbps = 0;   // the latest value asked for while a request was pending
     int m_AutoBitrateKbps = 0;   // where network adaptation holds the bitrate (0 when it is off)
     int m_AutoFecPercent = 0;    // and the FEC step it asked the host for (0: not controlled)
+    int m_AutoFps = 0;           // and the lowered frame rate (0: the stream's)
     int m_PlaybackMode = 0;      // the playback policy (0: not known yet)
     bool m_BitrateEditing = false;
     bool m_HandleFailed = false;   // the handle's QML could not be created; do not retry

@@ -65,9 +65,11 @@ struct Inputs {
     QString decoder;
     int cursorState = CursorNone;  // local cursor (Shell), see CursorState
     // Network adaptation (Shell): the controller's bitrate (0 when it is off), its FEC step
-    // (0 when the host takes no live FEC) and regime; shown with the bitrate metric
+    // (0 when the host takes no live FEC), the frame rate while it is lowered (0 otherwise) and
+    // regime; shown with the bitrate metric
     int adaptBitrateKbps = 0;
     int adaptFecPercent = 0;
+    int adaptFps = 0;
     int adaptRegime = AdaptClean;
     int playback = PlaybackNone;  // see PlaybackMode; shown with the bitrate metric
 };

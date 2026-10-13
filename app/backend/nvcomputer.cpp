@@ -59,6 +59,7 @@ NvComputer::NvComputer(QSettings& settings)
     this->serverCodecModeSupport = 0;
     this->localCursorVersion = 0;
     this->liveFec = false;
+    this->liveFps = false;
     this->pendingQuit = false;
     this->gpuModel = nullptr;
     this->externalPort = this->remoteAddress.port();
@@ -167,6 +168,7 @@ NvComputer::NvComputer(NvHTTP& http, QString serverInfo)
     // 0 until the host is paired)
     this->localCursorVersion = qMax(0, NvHTTP::getXmlString(serverInfo, "LocalCursor").toInt());
     this->liveFec = NvHTTP::getXmlString(serverInfo, "LiveFec").toInt() == 1;
+    this->liveFps = NvHTTP::getXmlString(serverInfo, "LiveFps").toInt() == 1;
 
     this->displayModes = NvHTTP::getDisplayModeList(serverInfo);
     std::stable_sort(this->displayModes.begin(), this->displayModes.end(),
@@ -573,6 +575,7 @@ bool NvComputer::update(const NvComputer& that)
     ASSIGN_IF_CHANGED(maxLumaPixelsHEVC);
     ASSIGN_IF_CHANGED(localCursorVersion);
     ASSIGN_IF_CHANGED(liveFec);
+    ASSIGN_IF_CHANGED(liveFps);
     ASSIGN_IF_CHANGED(gpuModel);
     ASSIGN_IF_CHANGED_AND_NONNULL(serverCert);
     ASSIGN_IF_CHANGED_AND_NONEMPTY(displayModes);

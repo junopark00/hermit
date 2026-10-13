@@ -40,6 +40,7 @@
 #define SDL_CODE_CURSOR_MODE_RESULT 111  // Hermit: data1 = serial << 1 | requested local, data2 = result
 #define SDL_CODE_CURSOR_RETRY 112        // Hermit: data1 = serial << 34 | shape id << 2 | kind (1 mode, 2 shape)
 #define SDL_CODE_LIVE_FEC_RESULT 113     // Hermit: data1 = request serial, data2 = result (networkadapt.h plumbing)
+#define SDL_CODE_LIVE_FPS_RESULT 114     // Hermit: data1 = request serial, data2 = result (networkadapt.h plumbing)
 #define CURSOR_RETRY_MODE 1
 #define CURSOR_RETRY_SHAPE 2
 #define CURSOR_RETRY_DELAY_MS 2000
@@ -102,6 +103,7 @@ Session* Session::s_ActiveSession;
 // Hermit: live bitrate requests running on pool threads (they can outlive their session)
 static std::atomic<int> s_LiveBitrateInFlight {0};
 static std::atomic<int> s_LiveFecInFlight {0};
+static std::atomic<int> s_LiveFpsInFlight {0};
 static bool s_LastSessionBitrateUncertain = false;
 QSemaphore Session::s_ActiveSessionSemaphore(1);
 
@@ -733,6 +735,13 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_FecEffectivePercent(0),
       m_FecUncertain(false),
       m_FecRetryMs(0),
+      m_LiveFps(false),
+      m_FpsPendingSerial(0),
+      m_FpsPendingValue(0),
+      m_FpsSentValue(-1),
+      m_FpsEffective(0),
+      m_FpsUncertain(false),
+      m_FpsRetryMs(0),
       m_PlaybackJitterBuffer(false),
       m_PlaybackLowLatency(false),
       m_PlaybackOverlayState(0),
@@ -2482,6 +2491,11 @@ bool Session::liveFecReady() const
     return m_LiveFec && m_FecDefaultPercent > 0;
 }
 
+bool Session::liveFpsReady() const
+{
+    return m_LiveFps;
+}
+
 NetworkAdapt::Policy Session::networkPolicy() const
 {
     switch (m_Preferences->networkPolicy) {
@@ -2585,11 +2599,13 @@ void Session::handleNetworkWindow(uint64_t now)
             // Nothing is pending, so the user's last pick has had its result
             m_Panel->setUserPickUnconfirmed(false);
             // From where the host streams now (an earlier request may have failed)
-            m_NetworkAdapt.reset(chosen, m_Panel->appliedBitrateKbps(), networkPolicy(), liveFecReady());
+            m_NetworkAdapt.reset(chosen, m_Panel->appliedBitrateKbps(), networkPolicy(), liveFecReady(),
+                                 m_StreamConfig.fps, liveFpsReady());
         }
         // The policy follows the mouse mode (Auto) or the setting, both of which can change any time
         m_NetworkAdapt.setPolicy(networkPolicy());
         m_NetworkAdapt.setFecAvailable(liveFecReady());
+        m_NetworkAdapt.setFpsAvailable(liveFpsReady());
 
         const NetworkAdapt::Action action = m_NetworkAdapt.update(window, now, chosen);
         if (action.bitrateKbps > 0) {
@@ -2612,6 +2628,10 @@ void Session::handleNetworkWindow(uint64_t now)
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Network adaptation (%s): FEC %d%%", action.reason, action.fecPercent);
             NetDiagLog::note(QStringLiteral("adapt: %1 -> fec %2").arg(QLatin1String(action.reason)).arg(action.fecPercent));
         }
+        if (action.fps > 0) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Network adaptation (%s): %d FPS", action.reason, action.fps);
+            NetDiagLog::note(QStringLiteral("adapt: %1 -> fps %2").arg(QLatin1String(action.reason)).arg(action.fps));
+        }
     }
 
     // FEC follows the controller's step (0, the host's default, while it is off): one request in
@@ -2633,14 +2653,29 @@ void Session::handleNetworkWindow(uint64_t now)
         }
     }
 
+    // The frame rate follows the controller's (0, the stream's own, while it is off or not
+    // lowered) by the same rules; the stream's rate is known, so only a change is sent, and the
+    // default once at the start, after any request of the previous session is done (one that
+    // reached the host late would otherwise leave this stream lowered)
+    if (m_LiveFps && m_FpsPendingSerial == 0 && s_LiveFpsInFlight.load() == 0 &&
+            (!m_FpsUncertain || now - m_FpsRetryMs >= 5000)) {
+        const int wanted = m_AutoBitrateRunning && m_NetworkAdapt.fps() < m_StreamConfig.fps ? m_NetworkAdapt.fps() : 0;
+        if (m_FpsSentValue != wanted) {
+            sendLiveFps(wanted);
+        }
+    }
+
     if (m_AutoBitrateRunning) {
         // The panel's "Automatic: now ..." line and the overlay: the host's effective FEC once
         // known (-1, shown as "?", before its first reply); nothing when the host takes no FEC
         const int fecShown = !m_LiveFec ? 0 : (m_FecEffectivePercent > 0 ? m_FecEffectivePercent : -1);
-        m_Panel->setAutoBitrate(m_NetworkAdapt.bitrate(), fecShown);
+        // The frame rate the host confirmed, while it is below the stream's
+        const int fpsShown = m_LiveFps && m_FpsEffective > 0 && m_FpsEffective < m_StreamConfig.fps ? m_FpsEffective : 0;
+        m_Panel->setAutoBitrate(m_NetworkAdapt.bitrate(), fecShown, fpsShown);
         m_AdaptOverlayState = static_cast<uint64_t>(static_cast<uint32_t>(m_NetworkAdapt.bitrate())) |
                               (static_cast<uint64_t>(fecShown & 0xFF) << 32) |
-                              (static_cast<uint64_t>(static_cast<int>(m_NetworkAdapt.regime()) & 0xFF) << 40);
+                              (static_cast<uint64_t>(static_cast<int>(m_NetworkAdapt.regime()) & 0xFF) << 40) |
+                              (static_cast<uint64_t>(fpsShown & 0xFF) << 48);
     }
     publishNetDiagState();
 }
@@ -2713,6 +2748,73 @@ void Session::handleLiveFecResult(uint32_t serial, int result)
         m_FecUncertain = true;
         m_FecRetryMs = SDL_GetTicks64();
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live FEC %d%%: failed, trying again in 5 seconds", requested);
+    }
+    publishNetDiagState();
+}
+
+void Session::sendLiveFps(int fps)
+{
+    // Unique across sessions (all sessions run on the SDL main thread)
+    static uint32_t s_NextSerial = 0;
+    if (++s_NextSerial == 0) {
+        s_NextSerial = 1;
+    }
+    m_FpsPendingSerial = s_NextSerial;
+    m_FpsPendingValue = fps;
+    const uint32_t serial = m_FpsPendingSerial;
+    NvComputer* computer = m_Computer;
+    s_LiveFpsInFlight++;
+    QThreadPool::globalInstance()->start([computer, fps, serial]() {
+        // > 0: the host's effective frame rate; -1: the host cannot (404, 501, 400, or no "fps="
+        // line), not asked again this session; 0: failed on the way (timeout, or 403 while the
+        // host still registers the session), tried again later
+        int result;
+        try {
+            NvHTTP http(computer);
+            result = http.setLiveFps(fps, 5000);
+        } catch (const QtNetworkReplyException& e) {
+            result = (e.getError() == QNetworkReply::ContentNotFoundError ||
+                      e.getError() == QNetworkReply::OperationNotImplementedError ||
+                      e.getError() == QNetworkReply::ProtocolInvalidOperationError) ? -1 : 0;
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Live frame rate change failed: %s", e.what());
+        } catch (const HostHttpResponseException& e) {
+            result = -1;
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Live frame rate change failed: %s", e.what());
+        } catch (...) {
+            result = 0;
+        }
+        SDL_Event resultEvent = {};
+        resultEvent.type = SDL_USEREVENT;
+        resultEvent.user.code = SDL_CODE_LIVE_FPS_RESULT;
+        resultEvent.user.data1 = reinterpret_cast<void*>(static_cast<intptr_t>(serial));
+        resultEvent.user.data2 = reinterpret_cast<void*>(static_cast<intptr_t>(result));
+        s_LiveFpsInFlight--;
+        SDL_PushEvent(&resultEvent);
+    });
+}
+
+void Session::handleLiveFpsResult(uint32_t serial, int result)
+{
+    if (serial == 0 || serial != m_FpsPendingSerial) {
+        return;  // a request of the previous session
+    }
+    m_FpsPendingSerial = 0;
+    const int requested = m_FpsPendingValue;
+    if (result > 0) {
+        m_FpsSentValue = requested;
+        m_FpsEffective = result;
+        m_FpsUncertain = false;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live frame rate %d (0: the stream's): the host now encodes %d FPS", requested, result);
+    }
+    else if (result < 0) {
+        m_LiveFps = false;
+        m_FpsUncertain = false;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live frame rate: not supported by this host, not asked again");
+    }
+    else {
+        m_FpsUncertain = true;
+        m_FpsRetryMs = SDL_GetTicks64();
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live frame rate %d: failed, trying again in 5 seconds", requested);
     }
     publishNetDiagState();
 }
@@ -3153,6 +3255,7 @@ void Session::exec()
         QReadLocker lock(&m_Computer->lock);
         m_CursorOverlayState = m_Computer->localCursorVersion > 0 ? StatsOverlay::CursorHost : StatsOverlay::CursorNone;
         m_LiveFec = m_Computer->liveFec;
+        m_LiveFps = m_Computer->liveFps;
     }
     updateCursorMode();
 
@@ -3326,6 +3429,10 @@ void Session::exec()
                 break;
             case SDL_CODE_LIVE_FEC_RESULT:
                 handleLiveFecResult(static_cast<uint32_t>(reinterpret_cast<intptr_t>(event.user.data1)),
+                                    static_cast<int>(reinterpret_cast<intptr_t>(event.user.data2)));
+                break;
+            case SDL_CODE_LIVE_FPS_RESULT:
+                handleLiveFpsResult(static_cast<uint32_t>(reinterpret_cast<intptr_t>(event.user.data1)),
                                     static_cast<int>(reinterpret_cast<intptr_t>(event.user.data2)));
                 break;
             case SDL_CODE_STREAM_PANEL_ACTION:

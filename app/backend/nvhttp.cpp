@@ -514,6 +514,26 @@ NvHTTP::setLiveFec(int percent, int timeoutMs)
     return -1;
 }
 
+int
+NvHTTP::setLiveFps(int fps, int timeoutMs)
+{
+    QNetworkReply* reply = openConnection(m_BaseUrlHttps,
+                                          "actions/fps",
+                                          "fps=" + (fps > 0 ? QString::number(fps) : QStringLiteral("default")),
+                                          timeoutMs,
+                                          NvLogLevel::NVLL_ERROR);
+    QByteArray body = reply->readAll();
+    delete reply;
+
+    // "fps=<effective>"; a host that answers unknown requests with 200 changed nothing
+    for (const QByteArray& line : body.split('\n')) {
+        if (line.startsWith("fps=")) {
+            return line.mid(4).trimmed().toInt();
+        }
+    }
+    return -1;
+}
+
 QByteArray
 NvHTTP::powerRequest(const QString& action, bool force, int timeoutMs)
 {

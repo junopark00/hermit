@@ -106,6 +106,9 @@ public:
     // Hermit: serverinfo "LiveFec", a Shell host that changes the forward error correction of a
     // running stream (/actions/fec); false until the host is paired (HTTPS only)
     bool liveFec;
+    // Hermit: serverinfo "LiveFps", a Shell host that lowers the frame rate of a running stream
+    // (/actions/fps); false until the host is paired (HTTPS only)
+    bool liveFps;
 
     // Persisted traits
     NvAddress localAddress;

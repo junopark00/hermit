@@ -160,15 +160,17 @@ public:
 
     // Network adaptation for the performance overlay (StatsOverlay::Inputs adapt fields); read by
     // the decoder thread. bitrateKbps is 0 while the controller is off; fecPercent is 0 on hosts
-    // without live FEC and -1 until the host told its value; playback is the playback policy
+    // without live FEC and -1 until the host told its value; fps is the frame rate the host
+    // streams at while it is below the stream's (0 otherwise); playback is the playback policy
     // (StatsOverlay::PlaybackMode), also while the controller is off.
-    void adaptOverlayState(int& bitrateKbps, int& fecPercent, int& regime, int& playback) const
+    void adaptOverlayState(int& bitrateKbps, int& fecPercent, int& regime, int& fps, int& playback) const
     {
         const uint64_t packed = m_AdaptOverlayState.load();
         bitrateKbps = static_cast<int>(packed & 0xFFFFFFFFu);
         const int fec = static_cast<int>((packed >> 32) & 0xFF);
         fecPercent = fec == 0xFF ? -1 : fec;
         regime = static_cast<int>((packed >> 40) & 0xFF);
+        fps = static_cast<int>((packed >> 48) & 0xFF);
         playback = m_PlaybackOverlayState.load();
     }
 
@@ -299,7 +301,8 @@ private:
 
     // Hermit: network adaptation (networkadapt.h). The 250 ms timer (SDL timer thread) posts
     // SDL_CODE_NETWORK_WINDOW; the main loop reads the frame totals and the round trip, runs the
-    // controller and sends its bitrate (stream panel path) and FEC (/actions/fec) decisions.
+    // controller and sends its bitrate (stream panel path), FEC (/actions/fec) and frame rate
+    // (/actions/fps) decisions.
     static
     Uint32 adaptTimerCallback(Uint32 interval, void* param);
     void handleNetworkWindow(uint64_t now);
@@ -307,6 +310,9 @@ private:
     bool liveFecReady() const;         // the host takes FEC changes and told its default
     void sendLiveFec(int percent);
     void handleLiveFecResult(uint32_t serial, int result);
+    bool liveFpsReady() const;         // the host takes frame rate changes
+    void sendLiveFps(int fps);
+    void handleLiveFpsResult(uint32_t serial, int result);
 
     enum class DecoderAvailability {
         None,
@@ -487,7 +493,7 @@ private:
     SDL_TimerID m_AdaptTimer;
     uint32_t m_AdaptLastReceived;      // frame totals at the last window (netdiag.h)
     uint32_t m_AdaptLastDropped;
-    std::atomic<uint64_t> m_AdaptOverlayState;  // bitrate | fec << 32 | regime << 40
+    std::atomic<uint64_t> m_AdaptOverlayState;  // bitrate | fec << 32 | regime << 40 | fps << 48
     // Live FEC (/actions/fec): one request in flight, the newest value waits; serials are unique
     // across sessions so a late result of the previous stream is ignored
     bool m_LiveFec;                    // the host advertises LiveFec and has not refused it
@@ -499,6 +505,14 @@ private:
     int m_FecEffectivePercent;         // the host's effective value from its last reply (0: unknown)
     bool m_FecUncertain;               // the last request failed on the way: sent again every 5 s
     uint64_t m_FecRetryMs;
+    // Live frame rate (/actions/fps), quality priority: the same rules as live FEC
+    bool m_LiveFps;                    // the host advertises LiveFps and has not refused it
+    uint32_t m_FpsPendingSerial;       // 0: nothing in flight
+    int m_FpsPendingValue;
+    int m_FpsSentValue;                // the override the host confirmed (0: the stream's rate); -1: unknown
+    int m_FpsEffective;                // the host's effective frame rate from its last reply (0: unknown)
+    bool m_FpsUncertain;               // the last request failed on the way: sent again every 5 s
+    uint64_t m_FpsRetryMs;
     // Playback policy (pacer.h): frame priority shows the newest frame at once, quality priority
     // keeps the lenient queues and, without V-Sync, paces frames with a timer (a jitter buffer)
     bool m_PlaybackJitterBuffer;       // the timer, chosen when the stream starts (fixed)

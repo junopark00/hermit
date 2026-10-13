@@ -2188,7 +2188,8 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
                 inputs.decoder = QString::fromUtf8(m_BackendRenderer->getRendererName());
             }
             inputs.cursorState = Session::get()->cursorOverlayState();
-            Session::get()->adaptOverlayState(inputs.adaptBitrateKbps, inputs.adaptFecPercent, inputs.adaptRegime, inputs.playback);
+            Session::get()->adaptOverlayState(inputs.adaptBitrateKbps, inputs.adaptFecPercent, inputs.adaptRegime,
+                                              inputs.adaptFps, inputs.playback);
             const QByteArray overlayText = StatsOverlay::format(inputs, overlay.statsMetrics()).toUtf8();
             SDL_utf8strlcpy(overlay.getOverlayText(Overlay::OverlayDebug), overlayText.constData(),
                             overlay.getOverlayMaxTextLength());

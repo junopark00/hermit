@@ -69,6 +69,9 @@ QString format(const Inputs& in, int metrics)
         else if (in.adaptFecPercent < 0) {
             value += QStringLiteral(" · FEC ?");  // the host has not told its value yet
         }
+        if (in.adaptFps > 0) {
+            value += QStringLiteral(" · %1 fps").arg(in.adaptFps);  // quality priority lowered the frame rate
+        }
         if (in.adaptRegime == AdaptCongested) {
             value += QStringLiteral(" · ") + QCoreApplication::translate("StatsOverlay", "congested");
         }

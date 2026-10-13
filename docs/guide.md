@@ -198,17 +198,24 @@ automatically to the network" in the stream panel. It is off by default.
 - **When the network is unstable** (the setting under the checkbox, also in the panel) chooses what
   to protect:
   - **Keep the frame rate** (game): congestion cuts the bitrate by 30% per step, down to one eighth
-    of the chosen bitrate (at least 2 Mbps). The picture gets blurry for a moment but keeps moving.
-    Playback shows the newest frame: frames that arrive bunched up after a stall do not wait for
+    of the chosen bitrate (at least 2 Mbps). The picture gets blurry for a moment but keeps moving;
+    the frame rate never changes. Playback shows the newest frame: frames that arrive bunched up after a stall do not wait for
     each other (with V-Sync one frame waits for the next refresh; without it, a new frame replaces
     one that is not drawn yet). The dropped frames count as jitter drops.
   - **Keep the quality** (remote desktop): congestion cuts by 20% per step, down to one third of the
     chosen bitrate (at least 4 Mbps), and the link-loss rule stops there too, keeping FEC at 50%.
-    Sharp text and UI come first; a further step that lowers the frame rate instead is planned.
+    Sharp text and UI come first. On a Shell host that changes the frame rate live (serverinfo
+    `LiveFps`, `/actions/fps`), the cut after the precautionary one, when frames stall or go
+    missing, halves the frame rate instead (60 to 30, 120 to 60; a multiple of 5, at least 15), so
+    each frame gets twice the bits and text stays sharp; further cuts lower the bitrate to the
+    floor, and when frames still stall there the frame rate halves once more (30 to 15). Link loss
+    never changes the frame rate. On recovery the bitrate comes back first, then the frame rate
+    doubles by the same 3 s rule. Switching to **Keep the frame rate** brings the stream's frame
+    rate back at once; a new chosen bitrate keeps the lowered frame rate.
     Playback keeps a jitter buffer: with V-Sync the queues stay lenient (up to 3 frames); without
     V-Sync, frames are paced by a timer at the stream's frame rate, which evens out uneven arrivals
-    at the cost of up to 3 frames of delay. The timer is chosen when the stream starts (by the policy then
-    in effect); a later switch changes only how many frames may wait.
+    at the cost of up to 3 frames of delay. The timer is chosen when the stream starts (by the
+    policy then in effect); a later switch changes only how many frames may wait.
     Floors are rounded down to 0.5 Mbps. Switching to this policy while the bitrate is below its
     floor raises it to the floor at the next clean window (one request).
   - **Auto** (default) follows the mouse mode: the game (relative) mouse keeps the frame rate, the
@@ -219,13 +226,17 @@ automatically to the network" in the stream panel. It is off by default.
     line under the bitrate.
 - The chosen bitrate is the upper limit. Changing it in the panel sets a new limit and a new starting
   point. The panel shows "Automatic: now N Mbps, FEC F% (up to M Mbps)" with the host's effective
-  FEC ("FEC ?" until the host has answered; no FEC part on hosts that cannot change it); the
-  performance overlay's "Automatic" line adds the regime word ("congested" or "loss") while the link
-  is not clean. While it is adjusting and the connection is slow, the warning over the stream says
+  FEC ("FEC ?" until the host has answered; no FEC part on hosts that cannot change it) and
+  " · 30 fps" while the host streams at a lowered frame rate; the performance overlay's "Automatic"
+  line shows the same and adds the regime word ("congested" or "loss") while the link is not
+  clean. While it is adjusting and the connection is slow, the warning over the stream says
   that the bitrate is being lowered automatically instead of asking you to lower it.
 - FEC requests work like bitrate requests: one at a time, the newest value follows, a failed one is
   sent again after 5 s, and a host that refuses them (404) is not asked again this session. Turning
   the setting off sends the host's default FEC back when it had been raised.
+- Frame rate requests follow the same rules (a host that answers 404, 501 or 400 is not asked again
+  this session). Each stream sends `fps=default` once at the start, which also tells whether the
+  host takes them; turning the setting off sends it again when the frame rate had been lowered.
 - Turning it off returns to the chosen bitrate. While it is off, if the host's bitrate differs from
   the chosen one (right after turning it off, or after a request for your own value failed
   temporarily), Hermit sends the chosen value again every 5 seconds.
@@ -250,7 +261,8 @@ automatically to the network" in the stream panel. It is off by default.
 - The rules live in `app/streaming/networkadapt.h` (replayed over a real recording in
   `hermit/tests/hermit_core_test.cpp`); Hermit for Android still uses the earlier one-second rules.
 - With network diagnostics recording, every decision goes to the event column ("adapt: congested ->
-  24500 kbps", "adapt: loss -> fec 35", "adapt: recover -> 30000 kbps").
+  24500 kbps", "adapt: loss -> fec 35", "adapt: congested -> fps 30", "adapt: recover -> 30000
+  kbps"), and so does each playback policy change ("playback: newest frame").
 
 When the bitrate changed during a stream (in the panel or automatically), the session summary and
 history report a time-weighted average, for example "Automatic · average 14 Mbps (up to 30)".
