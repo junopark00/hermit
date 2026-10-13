@@ -350,6 +350,12 @@ Window {
                               qsTr("Automatic: now %1 Mbps (up to %2 Mbps)").arg(Math.round(panel.autoBitrateKbps / 100) / 10).arg(Math.round(panel.chosenBitrateFor(StreamingPreferences.bitrateKbps) / 100) / 10)
                 }
                 Helper {
+                    // The playback policy: frame priority shows the newest frame at once,
+                    // quality priority keeps a jitter buffer
+                    visible: panel.playbackMode !== 0
+                    text: panel.playbackMode === 1 ? qsTr("Playback: newest frame") : qsTr("Playback: jitter buffer")
+                }
+                Helper {
                     visible: text.length > 0
                     color: panel.liveBitrateState === 2 || panel.appliedUncertain ? HermitTheme.warning : HermitTheme.textHelper
                     text: panel.appliedUncertain ? qsTr("The last bitrate change could not be confirmed; trying again every 5 seconds. Apply and reconnect if it keeps failing.") :

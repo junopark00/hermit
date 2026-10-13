@@ -201,6 +201,23 @@ static void testStatsOverlay()
     in.cursorState = StatsOverlay::CursorNone;
     CHECK(StatsOverlay::format(in, StatsOverlay::MetricCursor).isEmpty());
     CHECK_EQ(StatsOverlay::format(in, all).split('\n').size(), 12);
+
+    // Network adaptation and the playback policy go with the bitrate metric
+    in.adaptBitrateKbps = 24000;
+    in.adaptFecPercent = 35;
+    in.adaptRegime = StatsOverlay::AdaptLoss;
+    in.playback = StatsOverlay::PlaybackNewestFrame;
+    QStringList bitrate = StatsOverlay::format(in, StatsOverlay::MetricBitrate).split('\n');
+    CHECK_EQ(bitrate.size(), 3);
+    CHECK_EQ(bitrate.value(1), QString::fromUtf8("Automatic\t24.0 Mbps · FEC 35% · loss"));
+    CHECK_EQ(bitrate.value(2), QString("Playback\tnewest frame"));
+    in.adaptBitrateKbps = 0;                                   // the controller is off: the policy still shows
+    in.playback = StatsOverlay::PlaybackJitterBuffer;
+    bitrate = StatsOverlay::format(in, StatsOverlay::MetricBitrate).split('\n');
+    CHECK_EQ(bitrate.size(), 2);
+    CHECK_EQ(bitrate.value(1), QString("Playback\tjitter buffer"));
+    in.playback = StatsOverlay::PlaybackNone;
+    CHECK_EQ(StatsOverlay::format(in, StatsOverlay::MetricBitrate).split('\n').size(), 1);
 }
 
 // Local cursor messages (cursorpacket.h): the wire layout shared with Shell

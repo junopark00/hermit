@@ -7,6 +7,8 @@
 #include <QMutex>
 #include <QWaitCondition>
 
+#include <atomic>
+
 // The maximum number of frames pacer will ever hold is:
 // - 3 frames in the pacing queue
 // - 1 frame removed from the render queue in the process of rendering
@@ -37,7 +39,15 @@ public:
 
     void submitFrame(AVFrame* frame);
 
-    bool initialize(SDL_Window* window, int maxVideoFps, bool enablePacing);
+    // Hermit: jitterBuffer (the quality priority playback policy without V-Sync) paces frames
+    // with a timer at the stream's frame rate when there is no V-Sync pacing, so the pacing
+    // queue's lenient history smooths out uneven arrivals (up to 3 frames).
+    bool initialize(SDL_Window* window, int maxVideoFps, bool enablePacing, bool jitterBuffer);
+
+    // Hermit: the frame priority playback policy, changed live from the main thread. On: only
+    // the newest frame waits (pacing queue 1, render queue 0, and without V-Sync pacing a new
+    // frame replaces one that is not rendering yet). Off: the lenient queue history.
+    void setLowLatency(bool lowLatency) { m_LowLatency = lowLatency; }
 
     void signalVsync();
 
@@ -79,4 +89,5 @@ private:
     int m_DisplayFps;
     PVIDEO_STATS m_VideoStats;
     int m_RendererAttributes;
+    std::atomic<bool> m_LowLatency;
 };

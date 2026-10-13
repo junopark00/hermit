@@ -29,6 +29,7 @@ public:
     virtual void renderFrameOnMainThread() override;
     virtual void setHdrMode(bool enabled) override;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) override;
+    virtual void setLowLatency(bool lowLatency) override;
 
     virtual IFFmpegRenderer* getBackendRenderer();
 

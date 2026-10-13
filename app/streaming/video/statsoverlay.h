@@ -47,6 +47,14 @@ enum AdaptRegime : int {
     AdaptCongested = 2,
 };
 
+// The playback policy (pacer.h): frame priority shows the newest frame, quality priority keeps a
+// jitter buffer
+enum PlaybackMode : int {
+    PlaybackNone = 0,
+    PlaybackNewestFrame = 1,
+    PlaybackJitterBuffer = 2,
+};
+
 struct Inputs {
     const VIDEO_STATS* stats = nullptr;  // statistics over the last ~2 seconds
     int width = 0;
@@ -61,6 +69,7 @@ struct Inputs {
     int adaptBitrateKbps = 0;
     int adaptFecPercent = 0;
     int adaptRegime = AdaptClean;
+    int playback = PlaybackNone;  // see PlaybackMode; shown with the bitrate metric
 };
 
 // Returns the overlay text for the selected metrics ("label\tvalue" per line).

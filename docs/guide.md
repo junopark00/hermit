@@ -199,14 +199,24 @@ automatically to the network" in the stream panel. It is off by default.
   to protect:
   - **Keep the frame rate** (game): congestion cuts the bitrate by 30% per step, down to one eighth
     of the chosen bitrate (at least 2 Mbps). The picture gets blurry for a moment but keeps moving.
+    Playback shows the newest frame: frames that arrive bunched up after a stall do not wait for
+    each other (with V-Sync one frame waits for the next refresh; without it, a new frame replaces
+    one that is not drawn yet). The dropped frames count as jitter drops.
   - **Keep the quality** (remote desktop): congestion cuts by 20% per step, down to one third of the
     chosen bitrate (at least 4 Mbps), and the link-loss rule stops there too, keeping FEC at 50%.
     Sharp text and UI come first; a further step that lowers the frame rate instead is planned.
+    Playback keeps a jitter buffer: with V-Sync the queues stay lenient (up to 3 frames); without
+    V-Sync, frames are paced by a timer at the stream's frame rate, which evens out uneven arrivals
+    at the cost of up to 3 frames of delay. The timer is chosen when the stream starts (by the policy then
+    in effect); a later switch changes only how many frames may wait.
     Floors are rounded down to 0.5 Mbps. Switching to this policy while the bitrate is below its
     floor raises it to the floor at the next clean window (one request).
   - **Auto** (default) follows the mouse mode: the game (relative) mouse keeps the frame rate, the
     remote desktop (absolute) mouse keeps the quality. Switching the mouse mode switches the policy
     at once.
+  - The playback part applies with any host, also while automatic bitrate is off. The panel shows
+    "Playback: newest frame" or "Playback: jitter buffer", and the performance overlay a "Playback"
+    line under the bitrate.
 - The chosen bitrate is the upper limit. Changing it in the panel sets a new limit and a new starting
   point. The panel shows "Automatic: now N Mbps, FEC F% (up to M Mbps)" with the host's effective
   FEC ("FEC ?" until the host has answered; no FEC part on hosts that cannot change it); the

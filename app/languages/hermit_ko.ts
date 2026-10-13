@@ -725,6 +725,18 @@ Start를 길게 눌러 끄기</translation>
       <source>loss</source>
       <translation>손실</translation>
     </message>
+    <message>
+      <source>Playback</source>
+      <translation>재생</translation>
+    </message>
+    <message>
+      <source>newest frame</source>
+      <translation>최신 프레임</translation>
+    </message>
+    <message>
+      <source>jitter buffer</source>
+      <translation>지터 버퍼</translation>
+    </message>
   </context>
   <context>
     <name>ConnectionProfiles</name>
@@ -1128,6 +1140,14 @@ Start를 길게 눌러 끄기</translation>
     <message>
       <source>On Shell hosts that support it, this PC draws the pointer in the host cursor's shape, without the stream's delay. Only with the remote desktop mouse; the performance overlay's Cursor metric shows which side draws the pointer.</source>
       <translation>지원하는 Shell 호스트에서는 이 PC가 호스트 커서 모양으로 포인터를 직접 그려 스트림 지연 없이 움직입니다. 원격 데스크톱 마우스에서만 쓰이며, 어느 쪽이 포인터를 그리는지는 성능 오버레이의 커서 지표에 표시됩니다.</translation>
+    </message>
+    <message>
+      <source>Playback: newest frame</source>
+      <translation>재생: 최신 프레임</translation>
+    </message>
+    <message>
+      <source>Playback: jitter buffer</source>
+      <translation>재생: 지터 버퍼</translation>
     </message>
     <message>
       <source>Toggle full screen</source>

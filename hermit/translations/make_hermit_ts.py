@@ -219,6 +219,12 @@ TRANSLATIONS = {
     ('StatsOverlay', 'Automatic'): '자동 조절',
     ('StatsOverlay', 'congested'): '혼잡',
     ('StatsOverlay', 'loss'): '손실',
+    # Playback policy (pacer.h): frame priority shows the newest frame, quality priority a jitter buffer
+    ('StatsOverlay', 'Playback'): '재생',
+    ('StatsOverlay', 'newest frame'): '최신 프레임',
+    ('StatsOverlay', 'jitter buffer'): '지터 버퍼',
+    ('StreamPanel', 'Playback: newest frame'): '재생: 최신 프레임',
+    ('StreamPanel', 'Playback: jitter buffer'): '재생: 지터 버퍼',
     ('StreamPanel', 'Toggle full screen'): '전체 화면 전환',
     ('StreamPanel', 'Disconnect'): '연결 끊기',
     ('StreamPanel', 'Quit app and disconnect'): '앱 종료 후 연결 끊기',

@@ -30,6 +30,41 @@ static_assert(PACER_MAX_OUTSTANDING_FRAMES == MAX_QUEUED_FRAMES + 2,
 // V-sync happens.
 #define TIMER_SLACK_MS 3
 
+// Hermit: the quality priority playback policy without V-Sync (a jitter buffer). A synchronous
+// V-Sync source that ticks at the stream's frame rate, so frames go through the pacing queue and
+// its lenient history evens out uneven arrivals. The ticks lie on a grid anchored when the source
+// starts; a late wake-up counts as the tick that was due and skips the ticks it missed.
+class TimerVsyncSource : public IVsyncSource
+{
+public:
+    bool initialize(SDL_Window*, int displayFps) override
+    {
+        m_IntervalUs = 1000000 / SDL_max(displayFps, 1);
+        m_NextTickUs = LiGetMicroseconds() + m_IntervalUs;
+        return true;
+    }
+
+    bool isAsync() override
+    {
+        return false;
+    }
+
+    void waitForVsync() override
+    {
+        const uint64_t now = LiGetMicroseconds();
+        if (m_NextTickUs > now) {
+            // Plain SDL_Delay() granularity (1 ms while streaming): early by less than 1 ms
+            SDL_Delay((Uint32)((m_NextTickUs - now) / 1000));
+        }
+        const uint64_t due = SDL_max(now, m_NextTickUs);
+        m_NextTickUs += ((due - m_NextTickUs) / m_IntervalUs + 1) * m_IntervalUs;
+    }
+
+private:
+    uint64_t m_IntervalUs = 0;
+    uint64_t m_NextTickUs = 0;
+};
+
 Pacer::Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats) :
     m_RenderThread(nullptr),
     m_VsyncThread(nullptr),
@@ -39,7 +74,8 @@ Pacer::Pacer(IFFmpegRenderer* renderer, PVIDEO_STATS videoStats) :
     m_VsyncRenderer(renderer),
     m_MaxVideoFps(0),
     m_DisplayFps(0),
-    m_VideoStats(videoStats)
+    m_VideoStats(videoStats),
+    m_LowLatency(false)
 {
 
 }
@@ -241,6 +277,11 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
         m_PacingQueueHistory.enqueue(m_PacingQueue.count());
     }
 
+    if (m_LowLatency) {
+        // Hermit: frame priority: only the newest frame waits for the next V-Sync
+        frameDropTarget = 1;
+    }
+
     // Catch up if we're several frames ahead
     while (m_PacingQueue.count() > frameDropTarget) {
         AVFrame* frame = m_PacingQueue.dequeue();
@@ -273,7 +314,7 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
     enqueueFrameForRenderingAndUnlock(m_PacingQueue.dequeue());
 }
 
-bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
+bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing, bool jitterBuffer)
 {
     m_MaxVideoFps = maxVideoFps;
     m_DisplayFps = StreamUtils::getDisplayRefreshRate(window);
@@ -320,6 +361,16 @@ bool Pacer::initialize(SDL_Window* window, int maxVideoFps, bool enablePacing)
             delete m_VsyncSource;
             m_VsyncSource = nullptr;
         }
+    }
+    else if (jitterBuffer) {
+        // Hermit: frames are paced at the stream's frame rate, which the history logic in
+        // handleVsync() needs as the display rate
+        m_DisplayFps = m_MaxVideoFps;
+        m_VsyncSource = new TimerVsyncSource();
+        m_VsyncSource->initialize(window, m_DisplayFps);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Frame pacing disabled; jitter buffer: timer at %d FPS",
+                    m_DisplayFps);
     }
     else {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -392,6 +443,11 @@ void Pacer::renderFrame(AVFrame* frame)
         }
 
         m_RenderQueueHistory.enqueue(m_RenderQueue.count());
+
+        if (m_LowLatency) {
+            // Hermit: frame priority: nothing waits behind the frame just rendered
+            frameDropTarget = 0;
+        }
     }
 
     // Catch up if we're several frames ahead
@@ -440,6 +496,18 @@ void Pacer::submitFrame(AVFrame* frame)
         m_PacingQueueNotEmpty.wakeOne();
     }
     else {
+        if (m_LowLatency) {
+            // Hermit: frame priority: frames that arrived bunched up do not wait for each other;
+            // the new frame replaces any that is not rendering yet
+            while (!m_RenderQueue.isEmpty()) {
+                AVFrame* stale = m_RenderQueue.dequeue();
+                m_VideoStats->pacerDroppedFrames++;
+                if (NetDiagLog::isOn()) {
+                    NetDiagLog::window().onPacerDrop();
+                }
+                av_frame_free(&stale);
+            }
+        }
         enqueueFrameForRenderingAndUnlock(frame);
     }
 }

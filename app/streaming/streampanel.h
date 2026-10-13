@@ -46,6 +46,8 @@ class StreamPanel : public QObject
     // Bitrate the automatic adjustment is at (0 when it is off)
     Q_PROPERTY(int autoBitrateKbps MEMBER m_AutoBitrateKbps NOTIFY liveBitrateChanged)
     Q_PROPERTY(int autoFecPercent MEMBER m_AutoFecPercent NOTIFY liveBitrateChanged)
+    // The playback policy (StatsOverlay::PlaybackMode): 1 newest frame, 2 jitter buffer
+    Q_PROPERTY(int playbackMode MEMBER m_PlaybackMode NOTIFY liveBitrateChanged)
     Q_PROPERTY(int startVideoCodecConfig MEMBER m_StartVideoCodecConfig CONSTANT)
     Q_PROPERTY(bool startEnableHdr MEMBER m_StartEnableHdr CONSTANT)
     // What Revert restores while the host cannot change the bitrate live: the user's last pick
@@ -152,6 +154,15 @@ public:
         if (m_AutoBitrateKbps != kbps || m_AutoFecPercent != fecPercent) {
             m_AutoBitrateKbps = kbps;
             m_AutoFecPercent = fecPercent;
+            emit liveBitrateChanged();
+        }
+    }
+
+    // The playback policy now (session.cpp), for the "Playback: ..." line
+    void setPlaybackMode(int mode)
+    {
+        if (m_PlaybackMode != mode) {
+            m_PlaybackMode = mode;
             emit liveBitrateChanged();
         }
     }
@@ -268,6 +279,7 @@ private:
     int m_QueuedBitrateKbps = 0;   // the latest value asked for while a request was pending
     int m_AutoBitrateKbps = 0;   // where network adaptation holds the bitrate (0 when it is off)
     int m_AutoFecPercent = 0;    // and the FEC step it asked the host for (0: not controlled)
+    int m_PlaybackMode = 0;      // the playback policy (0: not known yet)
     bool m_BitrateEditing = false;
     bool m_HandleFailed = false;   // the handle's QML could not be created; do not retry
     qreal m_LastDpr = 0;

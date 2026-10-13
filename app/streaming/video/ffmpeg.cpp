@@ -87,6 +87,13 @@ bool FFmpegVideoDecoder::notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info)
     return m_FrontendRenderer->notifyWindowChanged(info);
 }
 
+void FFmpegVideoDecoder::setLowLatency(bool lowLatency)
+{
+    if (m_Pacer != nullptr) {
+        m_Pacer->setLowLatency(lowLatency);
+    }
+}
+
 int FFmpegVideoDecoder::getDecoderCapabilities()
 {
     int capabilities;
@@ -517,8 +524,11 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
     // Don't bother initializing Pacer if we're not actually going to render
     if (testMode != TestMode::TestFrameOnly) {
         m_Pacer = new Pacer(m_FrontendRenderer, &m_ActiveWndVideoStats);
+        // Hermit: the jitter buffer's timer only without V-Sync (with V-Sync the lenient queues
+        // stay as they are)
         if (!m_Pacer->initialize(params->window, params->frameRate,
-                                 params->enableFramePacing || (params->enableVsync && (m_FrontendRenderer->getRendererAttributes() & RENDERER_ATTRIBUTE_FORCE_PACING)))) {
+                                 params->enableFramePacing || (params->enableVsync && (m_FrontendRenderer->getRendererAttributes() & RENDERER_ATTRIBUTE_FORCE_PACING)),
+                                 params->jitterBuffer && !params->enableVsync)) {
             return false;
         }
     }
@@ -2178,7 +2188,7 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
                 inputs.decoder = QString::fromUtf8(m_BackendRenderer->getRendererName());
             }
             inputs.cursorState = Session::get()->cursorOverlayState();
-            Session::get()->adaptOverlayState(inputs.adaptBitrateKbps, inputs.adaptFecPercent, inputs.adaptRegime);
+            Session::get()->adaptOverlayState(inputs.adaptBitrateKbps, inputs.adaptFecPercent, inputs.adaptRegime, inputs.playback);
             const QByteArray overlayText = StatsOverlay::format(inputs, overlay.statsMetrics()).toUtf8();
             SDL_utf8strlcpy(overlay.getOverlayText(Overlay::OverlayDebug), overlayText.constData(),
                             overlay.getOverlayMaxTextLength());
