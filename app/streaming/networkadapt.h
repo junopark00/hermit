@@ -12,11 +12,18 @@
 // - congestion (the round trip rises well above its usual value: by more than 40 ms and 1.5x,
 //   with or without loss) means the link may not carry the bitrate: the bitrate is cut once as a
 //   precaution, by 30% (frame priority) or 20% (quality priority). Further cuts need a delivery
-//   symptom (a dropped frame, or an arrival gap of 2.5 frame intervals) in the last two windows,
-//   then every 500 ms down to the floor; without a symptom one more cut comes only when the round
-//   trip is still rising (10 ms above the previous cut's), 1.5 s later at the earliest. The
-//   second recording showed round trips of 50-79 ms for 4-6 s with perfect delivery that did not
-//   react to cuts at all;
+//   symptom (a dropped frame, or an arrival gap of 2.5 frame intervals and 1.5x the 90th
+//   percentile of the gaps in the last 40 clean windows, once there are 12: a desktop sends
+//   frames only when the screen changes, and the fourth recording showed the plain gap rule
+//   firing in 11-30% of normal windows) in the last two windows, then every 500 ms down to the
+//   floor; without a symptom one more cut comes only when the round trip is still rising (10 ms
+//   above the previous cut's), 1.5 s later at the earliest. After two actions in a congestion
+//   (cuts or halvings, the precaution included) a symptom counts only with dropped frames in the
+//   last two windows or a round trip at least 10 ms below the one at the first action (the cuts
+//   are draining a queue): the fourth recording cut from 35 to 4 Mbps on gap symptoms alone
+//   while the round trip stayed at 95-110 ms, a path delay that no cut could change. The second
+//   recording showed round trips of 50-79 ms for 4-6 s with perfect delivery that did not react
+//   to cuts at all;
 // - link loss (5% or more of the frames lost, at least two, while the round trip stays flat,
 //   within 20 ms of usual) is not caused by the bitrate (the first recording showed the same loss
 //   at 35 and at 7 Mbps), so forward error correction is raised first, from the host's default to
@@ -35,18 +42,29 @@
 // the last two windows (as a cut does) and 1.5 s since the last halving, and clears the symptoms
 // seen before it, so the second halving answers only symptoms at the lowered rate. Frame
 // priority and link loss never change the frame rate; a switch to frame priority brings the
-// stream's frame rate back at the next window. One action per window: the frame rate and the
-// bitrate never change together.
+// stream's frame rate back at the next window. One action per window; the frame rate and the
+// bitrate change together only in a recovery step (below), a fast recovery and its revert.
 // A decision needs 2 consecutive windows of the same kind (0.5 s); one action per 500 ms at
 // most; a window of the other kind does not switch the regime until it repeats (no flapping);
 // windows with fewer than 3 frames (a still picture) decide nothing and neither add to nor clear
 // the clean windows.
 // The usual round trip is tracked as a minimum that rises only in clean windows (0.5 ms per
 // second), so a congestion that lasts is not mistaken for the new normal.
+// Fast recovery: a congestion that ends with 2 clean windows without dropped frames, 2 s or more
+// after our last cut or halving (the round trip fell on its own: the cause outside went away,
+// as when the fourth recording's 100 ms path delay stopped and the gradual recovery then took
+// 15-25 s), brings back the bitrate and frame rate from before the congestion in one action
+// ("fast-recover"). For 2 s after it, a congested window or one with 2 dropped frames or more
+// reverts to the values before the jump in one action ("probe-failed"), and fast recovery stays
+// off for 60 s; the gradual recovery goes on from there. A round trip that falls within 2 s of
+// our cut means the cuts drained our own queue: gradual recovery.
 // Recovery: after 12 clean windows (3 s) the bitrate rises by 15% of the chosen value towards
-// it, every 3 s; the first rise after a cut waits 6 s after that cut. Once the bitrate is back
-// at the chosen value, the frame rate climbs back by the same rule (and 6 s after the last
-// halving at the earliest), retracing the values it was halved from (35 -> 70 -> 144).
+// it, every 3 s; the first rise after a cut waits 6 s after that cut. A step that brings the
+// bitrate back to the value a halving was made at also brings back that frame rate in the same
+// action (so a frame is about as large as before the halving: the fourth recording dropped 10
+// frames when 35 Mbps at 15 fps made 290 KB frames); halvings still left when the bitrate is at
+// the chosen value come back by the same rule (and 6 s after the last halving at the earliest),
+// retracing the values the frame rate was halved from (35 -> 70 -> 144).
 // FEC goes down one step after 120 clean windows (30 s), 30 s after the last step down at the
 // earliest: the third recording showed 4% loss that FEC 35 hid completely and FEC 20 turned into
 // dropped frames within 0.5 s, so a step down after 6 s only found the loss again every 6.5 s.
@@ -84,7 +102,9 @@ public:
         int bitrateKbps = 0;     // 0: keep the bitrate
         int fecPercent = 0;      // 0: keep FEC; fecBase(): back to the host's default
         int fps = 0;             // 0: keep the frame rate; streamFps(): back to the stream's rate
-        const char* reason = nullptr;  // "congested", "loss", "recover", "floor", "ceiling" or "policy"; null without an action
+        // "congested", "loss", "recover", "floor", "ceiling", "policy", "fast-recover" or
+        // "probe-failed"; null without an action
+        const char* reason = nullptr;
     };
 
     static constexpr int kWindowMs = 250;
@@ -111,6 +131,14 @@ public:
     static constexpr uint64_t kFecRelapseSettleMs = 1250;   // after a relapse raise (a host 4 windows late)
     static constexpr int kMinFps = 15;
     static constexpr int kMaxFpsSteps = 2;
+    static constexpr int kGapSamples = 40;                  // clean windows: the desktop's own gaps
+    static constexpr int kGapMinSamples = 12;
+    static constexpr float kGapSymptomOverP90 = 1.5f;
+    static constexpr int kActionsBeforeProof = 2;           // then a symptom needs proof
+    static constexpr int kRttFallingMs = 10;
+    static constexpr uint64_t kFastRecoveryQuietMs = 2000;  // our last cut before the round trip fell
+    static constexpr uint64_t kProbeMs = 2000;
+    static constexpr uint64_t kFastRecoveryOffMs = 60000;   // after a failed probe
 
     // chosenKbps: the user's bitrate, the ceiling; startKbps: where the host streams now (0: at
     // the ceiling); fecAvailable: the host takes live FEC changes and its default is known
@@ -139,6 +167,14 @@ public:
         clearStreaks();
         m_LossCuts = m_CongestionCuts = 0;
         m_SymptomCur = m_SymptomPrev = false;
+        m_DropCur = m_DropPrev = false;
+        m_GapCount = m_GapNext = 0;
+        m_RttAtFirstAction = 0;
+        m_PreKbps = 0;
+        m_FastArmed = false;
+        m_FirstCleanMs = 0;
+        m_ProbeUntilMs = 0;
+        m_FastOffUntilMs = 0;
     }
 
     int bitrate() const { return m_Bitrate; }
@@ -203,14 +239,31 @@ public:
 
     // A delivery symptom: frames went missing, or arrivals stalled for 2.5 frame intervals (of
     // the rate the host streams at, or of the window's own rate when fewer frames come, as for a
-    // still picture that Shell sends at 10-12 frames a second)
-    static bool hasSymptom(const Window& w)
+    // still picture that Shell sends at 10-12 frames a second) and, once 12 clean windows are
+    // known, for 1.5x the 90th percentile of their longest gaps (the desktop's own pauses)
+    bool hasSymptom(const Window& w) const
     {
         if (w.framesDropped >= 1) {
             return true;
         }
         const float intervalMs = (std::max)(1000.0f / (std::max)(w.fps, 1), (float)kWindowMs / (std::max)(w.framesReceived, 1));
-        return w.maxGapMs > kGapSymptomIntervals * intervalMs;
+        float thresholdMs = kGapSymptomIntervals * intervalMs;
+        if (m_GapCount >= kGapMinSamples) {
+            thresholdMs = (std::max)(thresholdMs, kGapSymptomOverP90 * usualGapMs());
+        }
+        return w.maxGapMs > thresholdMs;
+    }
+
+    // The 90th percentile of the longest gaps in the last 40 clean windows (0 without any)
+    int usualGapMs() const
+    {
+        if (m_GapCount == 0) {
+            return 0;
+        }
+        int sorted[kGapSamples];
+        std::copy(m_GapRing, m_GapRing + m_GapCount, sorted);
+        std::sort(sorted, sorted + m_GapCount);
+        return sorted[(std::min)(m_GapCount - 1, m_GapCount * 9 / 10)];
     }
 
     // One 250 ms window ending at nowMs. chosenKbps: the user's current choice; a new one
@@ -241,6 +294,12 @@ public:
             return action;
         }
 
+        if (m_ProbeUntilMs != 0 && nowMs > m_ProbeUntilMs) {
+            // The fast recovery held: the congestion episode is over
+            m_ProbeUntilMs = 0;
+            m_PreKbps = 0;
+        }
+
         if (m_FecDownWatch && nowMs - m_LastFecDownMs >= kFecRelapseMs) {
             m_FecDownWatch = false;
             if (m_Fec == m_FecBase) {
@@ -260,20 +319,39 @@ public:
 
         m_SymptomPrev = m_SymptomCur;
         m_SymptomCur = hasSymptom(w);
+        m_DropPrev = m_DropCur;
+        m_DropCur = w.framesDropped >= 1;
 
         const Class c = classify(w);
         if (c == Class::Clean) {
             if (w.rttMs > 0) {
                 m_BaseRtt = (std::min<float>)(w.rttMs, m_BaseRtt + 0.125f);
             }
+            m_GapRing[m_GapNext] = w.maxGapMs;   // the desktop's own gaps
+            m_GapNext = (m_GapNext + 1) % kGapSamples;
+            m_GapCount = (std::min)(kGapSamples, m_GapCount + 1);
             m_CleanStreak++;
+            if (m_CleanStreak == 1) {
+                m_FirstCleanMs = nowMs;
+            }
             m_NonBadStreak++;
             m_RaiseHalves += 2;
             m_FecHalves += 2;
             m_BadStreak = m_LossStreak = m_CongestedStreak = 0;
             m_LossWindowsAtMaxFec = 0;
+            const bool wasCongested = m_Regime == Regime::Congested;
             if (m_CleanStreak >= kDecisionWindows || m_NonBadStreak >= kGreyWindowsEndRegime) {
                 endRegime();
+            }
+            // The congestion ended with clean windows long after our last cut: the round trip
+            // fell on its own
+            if (wasCongested && m_Regime == Regime::Clean && m_CleanStreak >= kDecisionWindows &&
+                    !m_DropCur && !m_DropPrev && episodeOpen() && nowMs >= m_FastOffUntilMs &&
+                    m_FirstCleanMs - kWindowMs >= (std::max)(m_LastCutMs, m_LastFpsCutMs) + kFastRecoveryQuietMs) {
+                m_FastArmed = true;
+            }
+            if (m_FastArmed && nowMs - m_LastActionMs >= kActionGapMs) {
+                return fastRecover(nowMs, action);
             }
             if (m_RaiseToFloor && nowMs - m_LastActionMs >= kActionGapMs) {
                 // Quality priority taken up below its floor: one step up to the floor
@@ -288,6 +366,7 @@ public:
         }
 
         m_CleanStreak = 0;
+        m_FastArmed = false;
         m_BadStreak++;
         if (c == Class::Grey) {
             // Mild loss, or a somewhat higher round trip: no decision, half a clean window
@@ -313,6 +392,12 @@ public:
         if (m_CongestedStreak >= kDecisionWindows && m_Regime != Regime::Congested) {
             m_Regime = Regime::Congested;
             m_CongestionCuts = 0;
+            if (!episodeOpen()) {
+                // A new congestion episode: what fast recovery brings back
+                m_PreKbps = m_Bitrate;
+                m_PreFps = m_Fps;
+                m_PreFpsSteps = m_FpsSteps;
+            }
         }
         else if (m_LossStreak >= kDecisionWindows && m_Regime != Regime::Loss) {
             m_Regime = Regime::Loss;
@@ -320,6 +405,9 @@ public:
         }
         if (c == Class::Loss && m_Regime == Regime::Loss && (m_Fec >= fecMax() || !m_FecAvailable)) {
             m_LossWindowsAtMaxFec++;  // loss going on at the top of the ladder (grey windows do not count)
+        }
+        if (m_ProbeUntilMs != 0 && (c == Class::Congested || w.framesDropped >= 2)) {
+            return probeFailed(nowMs, action);
         }
 
         if (m_Regime == Regime::Clean) {
@@ -376,6 +464,55 @@ private:
         return Class::Grey;
     }
 
+    // A congestion episode that has not come back to the values from before it
+    bool episodeOpen() const
+    {
+        return m_PreKbps > 0 && (m_Bitrate < (std::min)(m_PreKbps, m_Chosen) || m_Fps < m_PreFps);
+    }
+
+    Action& fastRecover(uint64_t nowMs, Action& action)
+    {
+        m_FastArmed = false;
+        m_ProbeKbps = m_Bitrate;
+        m_ProbeFps = m_Fps;
+        m_ProbeFpsSteps = m_FpsSteps;
+        const int target = (std::min)(m_PreKbps, m_Chosen);
+        if (target > m_Bitrate) {
+            m_Bitrate = target;
+            action.bitrateKbps = target;
+        }
+        if (m_PreFps > m_Fps) {
+            m_Fps = m_PreFps;
+            m_FpsSteps = m_PreFpsSteps;
+            action.fps = m_Fps;
+        }
+        m_LastActionMs = m_LastRaiseMs = nowMs;
+        m_RaiseHalves = 0;
+        m_ProbeUntilMs = nowMs + kProbeMs;
+        action.reason = "fast-recover";
+        return action;
+    }
+
+    // The jump was too early: back to the values before it, gradual recovery from there
+    Action& probeFailed(uint64_t nowMs, Action& action)
+    {
+        m_ProbeUntilMs = 0;
+        m_FastOffUntilMs = nowMs + kFastRecoveryOffMs;
+        if (m_Bitrate != m_ProbeKbps) {
+            m_Bitrate = m_ProbeKbps;
+            action.bitrateKbps = m_Bitrate;
+        }
+        if (m_Fps != m_ProbeFps) {
+            m_Fps = m_ProbeFps;
+            m_FpsSteps = m_ProbeFpsSteps;
+            m_LastFpsCutMs = nowMs;
+            action.fps = m_Fps;
+        }
+        m_LastActionMs = m_LastCutMs = nowMs;
+        action.reason = "probe-failed";
+        return action;
+    }
+
     void endRegime()
     {
         m_Regime = Regime::Clean;
@@ -392,7 +529,12 @@ private:
     Action& congestionCut(const Window& w, uint64_t nowMs, Action& action)
     {
         const float factor = m_Policy == Policy::FramePriority ? 0.7f : 0.8f;
-        const bool symptom = m_SymptomCur || m_SymptomPrev;
+        // After two actions a symptom needs proof that cutting helps: dropped frames, or a round
+        // trip that follows the cuts down
+        const bool drops = m_DropCur || m_DropPrev;
+        const bool rttFalling = m_CongestionCuts > 0 && w.rttMs > 0 && w.rttMs <= m_RttAtFirstAction - kRttFallingMs;
+        const bool symptom = (m_SymptomCur || m_SymptomPrev) &&
+                             (m_CongestionCuts < kActionsBeforeProof || drops || rttFalling);
         bool allowed;
         if (m_CongestionCuts == 0) {
             allowed = true;
@@ -414,9 +556,13 @@ private:
         const bool atFloor = m_Bitrate <= floorKbps();
         const bool fpsStepDue = m_FpsSteps == 0 ? (m_CongestionCuts > 0 || atFloor) : (m_FpsSteps == 1 && atFloor);
         if (fpsStepDue && symptom && canLowerFps() && nowMs - m_LastFpsCutMs >= kCongestionCutGapMs) {
+            m_FpsCutKbps[m_FpsSteps] = m_Bitrate;
             m_FpsFrom[m_FpsSteps++] = m_Fps;
             m_Fps = halved(m_Fps);
             m_LastActionMs = m_LastCutMs = m_LastFpsCutMs = nowMs;
+            if (m_CongestionCuts == 0) {
+                m_RttAtFirstAction = w.rttMs;
+            }
             m_CongestionCuts++;
             m_RttAtLastCut = w.rttMs;
             // What came before the halving says nothing about the lower rate
@@ -427,6 +573,9 @@ private:
         }
         cut(factor, nowMs, "congested", action);
         if (action.reason != nullptr) {
+            if (m_CongestionCuts == 0) {
+                m_RttAtFirstAction = w.rttMs;
+            }
             m_CongestionCuts++;
             m_RttAtLastCut = w.rttMs;
         }
@@ -465,6 +614,12 @@ private:
             m_LastActionMs = m_LastRaiseMs = nowMs;
             m_RaiseHalves = 0;
             action.bitrateKbps = m_Bitrate;
+            if (m_FpsSteps > 0 && m_Bitrate >= m_FpsCutKbps[m_FpsSteps - 1] &&
+                    nowMs - m_LastFpsCutMs >= kRaiseHoldAfterCutMs) {
+                // Back at the bitrate the last halving was made at: its frame rate comes too
+                m_Fps = m_FpsFrom[--m_FpsSteps];
+                action.fps = m_Fps;
+            }
             action.reason = "recover";
             return action;
         }
@@ -509,6 +664,7 @@ private:
     bool m_RestoreFps = false;     // frame priority taken up at a lowered frame rate
     int m_FpsSteps = 0;            // halvings in effect (0: the stream's rate)
     int m_FpsFrom[kMaxFpsSteps] = {};  // the frame rate before each halving, for the way back
+    int m_FpsCutKbps[kMaxFpsSteps] = {};  // and the bitrate each halving was made at
     uint64_t m_LastFpsCutMs = 0;   // the last halving (a new ceiling does not clear it)
     float m_BaseRtt = -1;
     Regime m_Regime = Regime::Clean;
@@ -523,6 +679,22 @@ private:
     int m_RttAtLastCut = 0;
     bool m_SymptomCur = false;     // delivery symptom in this window and the one before
     bool m_SymptomPrev = false;
+    bool m_DropCur = false;        // dropped frames in this window and the one before
+    bool m_DropPrev = false;
+    int m_RttAtFirstAction = 0;    // the round trip at the congestion regime's first action
+    int m_GapRing[kGapSamples] = {};  // the longest gaps of the last clean windows
+    int m_GapCount = 0;
+    int m_GapNext = 0;
+    int m_PreKbps = 0;             // before the congestion episode (0: no episode)
+    int m_PreFps = 0;
+    int m_PreFpsSteps = 0;
+    bool m_FastArmed = false;      // fast recovery due at the next window the action gap allows
+    uint64_t m_FirstCleanMs = 0;   // the end of the clean streak's first window
+    uint64_t m_ProbeUntilMs = 0;   // after a fast recovery (0: no probe)
+    int m_ProbeKbps = 0;           // the values before the jump
+    int m_ProbeFps = 0;
+    int m_ProbeFpsSteps = 0;
+    uint64_t m_FastOffUntilMs = 0; // fast recovery off until then (after a failed probe)
     int m_RaiseHalves = 0;         // clean windows (2) and grey windows (1) since the last raise
     int m_FecHalves = 0;           // and since the last FEC step down
     uint64_t m_LastActionMs = 0;

@@ -167,6 +167,15 @@ automatically to the network" in the stream panel. It is off by default.
     above the previous cut's), 1.5 s later at the earliest, and that is all. The second recording
     showed round trips of 50 to 79 ms for 4 to 6 s with every frame delivered on time, which did
     not react to cuts at all.
+  - A desktop sends frames only when the screen changes, so its gaps are uneven: the fourth
+    recording showed the plain gap rule firing in 11 to 30% of normal windows. Once 12 clean
+    windows are known, a gap counts only when it is also longer than 1.5 times the 90th percentile
+    of the longest gaps in the last 40 clean windows. After two actions in a congestion (cuts or
+    frame rate halvings, the precaution included), a symptom counts only with dropped frames in
+    the last two windows or a round-trip time at least 10 ms below the one at the first action
+    (the cuts are draining a queue). In the fourth recording frame priority went from 35 to 4 Mbps
+    in 4.3 s on gap symptoms alone while the round trip stayed at 95 to 110 ms: a path delay that
+    no cut could change.
   - **Link loss**: 5% or more of the frames are lost, at least two in a window (a single dropped
     frame is a blip), while the round-trip time stays flat (within 20 ms of usual). Lowering the
     bitrate does not help here (the first recording showed the same
@@ -182,6 +191,13 @@ automatically to the network" in the stream panel. It is off by default.
     windows, so a congestion that lasts is never mistaken for the new normal.
   - Windows with fewer than 3 frames (a still picture: Shell sends only 10 to 12 frames per second
     for one) decide nothing and count as neither good nor bad, so desktop work with pauses recovers.
+  - **Fast recovery**: when a congestion ends with two clean windows without dropped frames 2 s
+    or more after Hermit's last cut or halving, the round trip fell on its own (the cause outside
+    went away), and the bitrate and frame rate from before the congestion come back in one step.
+    For 2 s after that step, a congested window or one with 2 dropped frames or more undoes it in
+    one step, and fast recovery stays off for 60 s; recovery then goes on gradually. When the round
+    trip falls within 2 s of a cut, the cuts drained Hermit's own queue: gradual recovery. In the
+    fourth recording the gradual recovery took 15 to 25 s after the 100 ms delay stopped.
   - **Recovery**: after 3 s of clean windows (less than 1% loss, usual round trip) the bitrate rises
     by 15% of the chosen bitrate, every 3 s, up to the chosen bitrate; the first rise after a cut
     waits 6 s after that cut. FEC goes down one step after 30 s of clean windows, and again 30 s
@@ -218,9 +234,13 @@ automatically to the network" in the stream panel. It is off by default.
     the previous halving; the second halving counts only stalls after the first. The first halving
     happens only at the stream's frame rate and the second only at the floor, so congestion that
     ends and comes back does not halve again above the floor. Gaps between arrivals are measured
-    against the frame rate the host confirmed. Link loss never changes the frame rate. On recovery
-    the bitrate comes back first, then the frame rate climbs back by the same 3 s rule (6 s after
-    its last halving at the earliest), through the values it was halved from (35, 70, 144).
+    against the frame rate the host confirmed. Link loss never changes the frame rate. On gradual
+    recovery the step that brings the bitrate back to the value a halving was made at also brings
+    that frame rate back, so a frame stays about as large as before the halving (in the fourth
+    recording 35 Mbps at 15 fps made 290 KB frames, and 10 frames were dropped when 30 fps came
+    back); halvings still left at the chosen bitrate come back by the same 3 s rule (6 s after the
+    last halving at the earliest), through the values the frame rate was halved from (35, 70,
+    144).
     Switching to **Keep the frame rate** brings the stream's frame rate back at once; a new chosen
     bitrate keeps the lowered frame rate. Playback keeps a jitter buffer: with V-Sync the queues
     stay lenient (up to 3 frames); without V-Sync, frames are paced by a timer at the frame rate the
@@ -276,7 +296,8 @@ automatically to the network" in the stream panel. It is off by default.
   `hermit/tests/hermit_core_test.cpp`); Hermit for Android still uses the earlier one-second rules.
 - With network diagnostics recording, every decision goes to the event column ("adapt: congested ->
   24500 kbps", "adapt: loss -> fec 35", "adapt: congested -> fps 30", "adapt: recover -> 30000
-  kbps"), and so does each playback policy change ("playback: newest frame").
+  kbps", "adapt: fast-recover -> 35000 kbps, fps 60", "adapt: probe-failed -> 28000 kbps, fps
+  30"), and so does each playback policy change ("playback: newest frame").
 
 When the bitrate changed during a stream (in the panel or automatically), the session summary and
 history report a time-weighted average, for example "Automatic · average 14 Mbps (up to 30)".

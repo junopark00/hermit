@@ -2604,9 +2604,19 @@ void Session::handleNetworkWindow(uint64_t now)
         m_NetworkAdapt.setFpsAvailable(liveFpsReady());
 
         const NetworkAdapt::Action action = m_NetworkAdapt.update(window, now, chosen);
-        if (action.bitrateKbps > 0) {
+        if (action.bitrateKbps > 0 && action.fps > 0) {
+            // A fast recovery, its revert or a recovery step that brings a frame rate back: both
+            // in one action (the frame rate goes through the /actions/fps plumbing below)
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Network adaptation (%s): %d kbps, %d FPS",
+                        action.reason, action.bitrateKbps, action.fps);
+            NetDiagLog::note(QStringLiteral("adapt: %1 -> %2 kbps, fps %3").arg(QLatin1String(action.reason))
+                             .arg(action.bitrateKbps).arg(action.fps));
+        }
+        else if (action.bitrateKbps > 0) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Network adaptation (%s): %d kbps", action.reason, action.bitrateKbps);
             NetDiagLog::note(QStringLiteral("adapt: %1 -> %2 kbps").arg(QLatin1String(action.reason)).arg(action.bitrateKbps));
+        }
+        if (action.bitrateKbps > 0) {
             if (action.bitrateKbps != chosen) {
                 // The controller took over (not just starting again at the new pick)
                 m_Panel->setUserPickUnconfirmed(false);
@@ -2624,7 +2634,7 @@ void Session::handleNetworkWindow(uint64_t now)
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Network adaptation (%s): FEC %d%%", action.reason, action.fecPercent);
             NetDiagLog::note(QStringLiteral("adapt: %1 -> fec %2").arg(QLatin1String(action.reason)).arg(action.fecPercent));
         }
-        if (action.fps > 0) {
+        if (action.fps > 0 && action.bitrateKbps == 0) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Network adaptation (%s): %d FPS", action.reason, action.fps);
             NetDiagLog::note(QStringLiteral("adapt: %1 -> fps %2").arg(QLatin1String(action.reason)).arg(action.fps));
         }
