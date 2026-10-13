@@ -189,7 +189,7 @@ automatically to the network" in the stream panel. It is off by default.
     turned it into dropped frames within 0.5 s, so a quicker step down only found the loss again.
     Only windows with frames count, so a still desktop keeps FEC up longer. When loss raises FEC
     again within 10 s of a step down, the next step down waits twice as long (60 s, then 120 s at
-    most), and the step it goes back to gets 1 s to reach the host before loss raises FEC further.
+    most), and the step it goes back to gets 1.25 s to reach the host before loss raises FEC further.
     A step down to the host's default that holds for 10 s brings the wait back to 30 s; one from
     50% to 35% that holds does not.
     A grey window (1 to 5% loss, or a round trip 16 to 40 ms above usual) counts as half a clean
@@ -214,8 +214,9 @@ automatically to the network" in the stream panel. It is off by default.
     least 15), so each frame gets twice the bits and text stays sharp; further cuts lower the
     bitrate to the floor, and when frames still stall there the frame rate halves once more (30 to
     15). In a fresh congestion at the floor, where the precaution has nothing to cut, the halving
-    is the first action. A halving needs a stall or a missing frame in its own 250 ms window and
-    1.5 s since the previous halving. The first halving happens only at the stream's frame rate and
+    is the first action. A halving needs a stall or a missing frame in the last 0.5 s and 1.5 s
+    since the previous halving; the second halving counts only stalls after the first. The first
+    halving happens only at the stream's frame rate and
     the second only at the floor, so congestion that ends and comes back does not halve again
     above the floor. Gaps between arrivals are measured against the frame rate the host confirmed.
     Link loss never changes the frame rate. On recovery the bitrate comes back first, then the

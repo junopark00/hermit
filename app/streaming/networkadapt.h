@@ -32,7 +32,8 @@
 // fresh congestion regime at the floor (the precaution has nothing to cut) the halving is the
 // first action. The first halving happens only at the stream's frame rate and the second only at
 // the floor one halving below it, whatever regimes came between. A halving needs a symptom in
-// its own window and 1.5 s since the last one, and clears the symptoms seen before it. Frame
+// the last two windows (as a cut does) and 1.5 s since the last halving, and clears the symptoms
+// seen before it, so the second halving answers only symptoms at the lowered rate. Frame
 // priority and link loss never change the frame rate; a switch to frame priority brings the
 // stream's frame rate back at the next window. One action per window: the frame rate and the
 // bitrate never change together.
@@ -52,7 +53,7 @@
 // Only windows with frames count, so a still desktop keeps FEC up longer. When loss raises FEC
 // again within 10 s of a step down, the next step down waits twice as long (60 s, then 120 s at
 // most); a step down to the base that holds for 10 s brings the wait back to 30 s (one from 50
-// to 35 that holds does not). After such a relapse the step that held before gets 1 s to take
+// to 35 that holds does not). After such a relapse the step that held before gets 1.25 s to take
 // effect on the host before loss raises FEC further (loss in the meantime may still come from
 // before the change), so a relapse costs two requests, not three.
 // A grey window (1-5% loss or a single dropped frame, or a round trip 16-40 ms above usual)
@@ -107,7 +108,7 @@ public:
     static constexpr uint64_t kFecDownHoldMs = 30000;       // clean time (and gap) before a FEC step down
     static constexpr uint64_t kFecDownHoldMaxMs = 120000;   // after relapses
     static constexpr uint64_t kFecRelapseMs = 10000;        // loss this soon after a step down doubles the hold
-    static constexpr uint64_t kFecRelapseSettleMs = 1000;   // after a relapse raise, before the next raise
+    static constexpr uint64_t kFecRelapseSettleMs = 1250;   // after a relapse raise (a host 4 windows late)
     static constexpr int kMinFps = 15;
     static constexpr int kMaxFpsSteps = 2;
 
@@ -162,10 +163,9 @@ public:
         }
         m_Policy = policy;
         m_RaiseToFloor = m_Bitrate < floorKbps();
+        // The steps follow the frame rate when the restore runs (m_FpsSteps == 0 exactly when
+        // m_Fps is the stream's), so a switch back before then leaves both as they are
         m_RestoreFps = policy == Policy::FramePriority && m_Fps < m_StreamFps;
-        if (m_RestoreFps) {
-            m_FpsSteps = 0;
-        }
     }
 
     void setFecAvailable(bool available) { m_FecAvailable = available; }
@@ -234,6 +234,7 @@ public:
             // Frame priority taken up at a lowered frame rate
             m_RestoreFps = false;
             m_Fps = m_StreamFps;
+            m_FpsSteps = 0;
             m_LastActionMs = nowMs;
             action.fps = m_Fps;
             action.reason = "policy";
@@ -412,7 +413,7 @@ private:
         // from the state, so a regime that ends and starts again does not repeat a halving.
         const bool atFloor = m_Bitrate <= floorKbps();
         const bool fpsStepDue = m_FpsSteps == 0 ? (m_CongestionCuts > 0 || atFloor) : (m_FpsSteps == 1 && atFloor);
-        if (fpsStepDue && m_SymptomCur && canLowerFps() && nowMs - m_LastFpsCutMs >= kCongestionCutGapMs) {
+        if (fpsStepDue && symptom && canLowerFps() && nowMs - m_LastFpsCutMs >= kCongestionCutGapMs) {
             m_FpsFrom[m_FpsSteps++] = m_Fps;
             m_Fps = halved(m_Fps);
             m_LastActionMs = m_LastCutMs = m_LastFpsCutMs = nowMs;

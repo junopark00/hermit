@@ -887,7 +887,8 @@ static void testNetworkAdapt()
         CHECK_EQ(again.fps(), 30);
 
         // Spacing: at the floor the second halving waits 1.5 s after the first, and needs a
-        // symptom in its own window (the ones before the first halving do not count)
+        // symptom after the first halving: 3 s of congestion without one change nothing, the
+        // next symptom halves
         NetworkAdapt spaced;
         spaced.reset(30000, 11000, Policy::QualityPriority, true, 60, true);
         CHECK_EQ(spaced.floorKbps(), 10000);
@@ -910,6 +911,32 @@ static void testNetworkAdapt()
         NetworkAdapt::Action floorHalving = fresh.update(congestedWindow(65), t, 30000);
         CHECK_EQ(floorHalving.fps, 15);                           // the first fresh symptom
         CHECK_EQ(QString(floorHalving.reason), QString("congested"));
+
+        // A symptom in every other window (one the action gap blocks, then a quiet one): the
+        // frame rate still goes first, as the cuts see the symptom of the window before
+        NetworkAdapt alternate;
+        alternate.reset(30000, 0, Policy::QualityPriority, true, 60, true);
+        t = 0;
+        runWindows(alternate, t, 20, cleanWindow(5), 30000);
+        actions.clear();
+        for (int i = 0; i < 12; i++) {
+            actions += runWindows(alternate, t, 1, i % 2 == 0 ? congestedWindow(65) : quietCongested, 30000);
+        }
+        CHECK(sequence(actions).startsWith("24000, fps 30, 19000"));
+
+        // A switch to frame priority and back before the restore ran (a ceiling took that
+        // window): the frame rate stays lowered and still climbs back to the stream's
+        NetworkAdapt flip;
+        flip.reset(30000, 0, Policy::QualityPriority, true, 60, true);
+        t = 0;
+        runWindows(flip, t, 20, cleanWindow(5), 30000);
+        CHECK_EQ(sequence(runWindows(flip, t, 4, congestedWindow(65), 30000)), QString("24000, fps 30"));
+        flip.setPolicy(Policy::FramePriority);
+        t += 250;
+        CHECK_EQ(QString(flip.update(cleanWindow(5), t, 24000).reason), QString("ceiling"));
+        flip.setPolicy(Policy::QualityPriority);
+        CHECK_EQ(sequence(runWindows(flip, t, 40, cleanWindow(5), 24000)), QString("fps 60"));
+        CHECK_EQ(flip.fps(), 60);
 
         // The way back retraces the halvings: 144 -> 70 -> 35 and back 70, 144; 165 -> 80 -> 40
         // and back 80, 165
@@ -1199,8 +1226,8 @@ static void testNetworkAdapt()
         }
         feedUntil(true, 35);
         const uint64_t downTo20 = feedUntil(false, 20);
-        const uint64_t upTo50 = feedUntil(true, 50);               // a relapse: 35, then 50 after 1 s
-        CHECK(upTo50 - downTo20 >= 1500 && upTo50 - downTo20 <= 2000);
+        const uint64_t upTo50 = feedUntil(true, 50);               // a relapse: 35, then 50 after 1.25 s
+        CHECK_EQ(upTo50 - downTo20, 1750u);
         CHECK_EQ(ladder.fecHoldMs(), 60000u);
         const uint64_t downTo35 = feedUntil(false, 35);
         CHECK_EQ(downTo35 - upTo50, 60000u);
