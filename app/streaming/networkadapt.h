@@ -46,8 +46,9 @@
 // bitrate change together only in a recovery step (below), a fast recovery and its revert.
 // A decision needs 2 consecutive windows of the same kind (0.5 s); one action per 500 ms at
 // most; a window of the other kind does not switch the regime until it repeats (no flapping);
-// windows with fewer than 3 frames (a still picture) decide nothing and neither add to nor clear
-// the clean windows.
+// windows with fewer than 3 frames received and lost together (a still picture) decide nothing
+// and neither add to nor clear the clean windows; lost frames count, so a stream that collapses
+// (2 frames arrive, 6 are lost) is judged, not taken for a still picture.
 // The usual round trip is tracked as a minimum that rises only in clean windows (0.5 ms per
 // second), so a congestion that lasts is not mistaken for the new normal.
 // Fast recovery: a congestion regime that ends with 2 clean windows in a row without a dropped
@@ -322,8 +323,8 @@ public:
             m_BaseRtt = w.rttMs;
         }
 
-        if (w.framesReceived < kMinFramesPerWindow) {
-            return action;  // too few frames to judge: neither clean nor trouble
+        if (w.framesReceived + w.framesDropped < kMinFramesPerWindow) {
+            return action;  // a still picture: too few frames to judge, neither clean nor trouble
         }
 
         m_SymptomPrev = m_SymptomCur;

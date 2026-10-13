@@ -1567,7 +1567,8 @@ static void testNetworkAdapt()
         CHECK(mild.regime() == Regime::Clean);
     }
 
-    // ---- Idle windows (fewer than 3 frames) decide nothing and keep the clean streak ----
+    // ---- Idle windows (fewer than 3 frames received and lost) decide nothing and keep the clean
+    // streak; lost frames count, so a collapsing stream is judged ----
     {
         NetworkAdapt adapt;
         adapt.reset(30000, 0, Policy::FramePriority, true);
@@ -1581,12 +1582,11 @@ static void testNetworkAdapt()
             adapt.update(cleanWindow(60), t, 30000);
         }
         CHECK_EQ(adapt.bitrate(), 21000);
-        // A still picture with a lost frame among two: no decision, whatever the ratio
+        // A still picture: two frames, none lost: no decision
         for (int i = 0; i < 40; i++) {
             t += 250;
             NetworkAdapt::Window w;
             w.framesReceived = 2;
-            w.framesDropped = 2;
             w.rttMs = 60;
             CHECK(adapt.update(w, t, 30000).reason == nullptr);
         }
@@ -1624,6 +1624,75 @@ static void testNetworkAdapt()
         const NetworkAdapt::Action a = adapt.update(cleanWindow(4), t, 30000);
         CHECK_EQ(QString(a.reason), QString("recover"));
         CHECK_EQ(a.bitrateKbps, 23500);
+
+        // Two frames and one lost make three: judged. At the usual round trip that is a grey
+        // window (33% loss, but one lost frame is not link loss): no decision, the regime stays
+        // clean, and the clean streak towards the next raise starts again
+        NetworkAdapt grey;
+        grey.reset(30000, 0, Policy::FramePriority, true);
+        t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            grey.update(cleanWindow(4), t, 30000);
+        }
+        NetworkAdapt::Window twoAndOne;
+        twoAndOne.framesReceived = 2;
+        twoAndOne.framesDropped = 1;
+        twoAndOne.rttMs = 4;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            CHECK(grey.update(twoAndOne, t, 30000).reason == nullptr);
+            CHECK(grey.regime() == Regime::Clean);
+        }
+        // At a congested round trip it is a congested window: the precaution comes
+        twoAndOne.rttMs = 60;
+        t += 250;
+        grey.update(twoAndOne, t, 30000);
+        t += 250;
+        CHECK_EQ(grey.update(twoAndOne, t, 30000).bitrateKbps, 21000);
+
+        // A collapse: 2 frames arrive and 6 are lost in every window. With the round trip at
+        // 300 ms the congestion rule runs to the floor (and the frame rate halves twice); with a
+        // flat round trip it is link loss: FEC first
+        NetworkAdapt collapse;
+        collapse.reset(35000, 0, Policy::QualityPriority, true, 60, true);
+        t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            collapse.update(cleanWindow(4), t, 35000);
+        }
+        NetworkAdapt::Window collapsing;
+        collapsing.framesReceived = 2;
+        collapsing.framesDropped = 6;
+        collapsing.rttMs = 300;
+        QStringList steps;
+        for (int i = 0; i < 40; i++) {
+            t += 250;
+            const NetworkAdapt::Action c = collapse.update(collapsing, t, 35000);
+            if (c.reason != nullptr) {
+                steps.append(c.fps > 0 ? QString("fps %1").arg(c.fps) : QString::number(c.bitrateKbps));
+            }
+        }
+        CHECK_EQ(steps.join(", "), QString("28000, fps 30, 22000, 17500, 14000, 11500, fps 15"));
+        NetworkAdapt lossy;
+        lossy.reset(35000, 0, Policy::QualityPriority, true, 60, true);
+        t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            lossy.update(cleanWindow(4), t, 35000);
+        }
+        collapsing.rttMs = 5;
+        steps.clear();
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            const NetworkAdapt::Action c = lossy.update(collapsing, t, 35000);
+            if (c.reason != nullptr) {
+                steps.append(QString("%1 fec %2").arg(c.reason).arg(c.fecPercent));
+            }
+        }
+        CHECK_EQ(steps.join(", "), QString("loss fec 35, loss fec 50"));
+        CHECK(lossy.regime() == Regime::Loss);
+        CHECK_EQ(lossy.fps(), 60);
     }
 
     // ---- A new chosen bitrate restarts there; the policy can change any time ----

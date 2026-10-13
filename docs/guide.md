@@ -189,8 +189,10 @@ automatically to the network" in the stream panel. It is off by default.
     per 0.5 s. One window of the other kind does not switch the regime until it repeats.
   - The usual round-trip time is the minimum seen; it rises (0.5 ms per second) only in clean
     windows, so a congestion that lasts is never mistaken for the new normal.
-  - Windows with fewer than 3 frames (a still picture: Shell sends only 10 to 12 frames per second
-    for one) decide nothing and count as neither good nor bad, so desktop work with pauses recovers.
+  - Windows with fewer than 3 frames received and lost together (a still picture: Shell sends only
+    10 to 12 frames per second for one) decide nothing and count as neither good nor bad, so
+    desktop work with pauses recovers. Lost frames count: a window where 2 frames arrive and 6 are
+    lost is judged like any other.
   - **Fast recovery**: when a congestion ends with two clean windows in a row without a dropped
     frame, and the round trip 2 s after Hermit's last cut or halving was still congested and no
     more than 10 ms below its value at that action, the round trip fell on its own later (the
