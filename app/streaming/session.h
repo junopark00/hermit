@@ -159,12 +159,14 @@ public:
     }
 
     // Network adaptation for the performance overlay (StatsOverlay::Inputs adapt fields); read by
-    // the decoder thread. bitrateKbps is 0 while the controller is off.
+    // the decoder thread. bitrateKbps is 0 while the controller is off; fecPercent is 0 on hosts
+    // without live FEC and -1 until the host told its value.
     void adaptOverlayState(int& bitrateKbps, int& fecPercent, int& regime) const
     {
         const uint64_t packed = m_AdaptOverlayState.load();
         bitrateKbps = static_cast<int>(packed & 0xFFFFFFFFu);
-        fecPercent = static_cast<int>((packed >> 32) & 0xFF);
+        const int fec = static_cast<int>((packed >> 32) & 0xFF);
+        fecPercent = fec == 0xFF ? -1 : fec;
         regime = static_cast<int>((packed >> 40) & 0xFF);
     }
 
@@ -300,6 +302,7 @@ private:
     Uint32 adaptTimerCallback(Uint32 interval, void* param);
     void handleNetworkWindow(uint64_t now);
     NetworkAdapt::Policy networkPolicy() const;
+    bool liveFecReady() const;         // the host takes FEC changes and told its default
     void sendLiveFec(int percent);
     void handleLiveFecResult(uint32_t serial, int result);
 
@@ -487,8 +490,9 @@ private:
     bool m_LiveFec;                    // the host advertises LiveFec and has not refused it
     uint32_t m_FecPendingSerial;       // 0: nothing in flight
     int m_FecPendingPercent;
-    int m_FecSentPercent;              // the last value the host confirmed (NetworkAdapt::kFecBase: the
-                                       // default); -1: unknown, the default is sent once
+    int m_FecSentPercent;              // the override the host confirmed (0: its default); -1: unknown
+                                       // after a reconnect, the default is sent once
+    int m_FecDefaultPercent;           // the host's configured value, from the first "default" reply (0: unknown)
     int m_FecEffectivePercent;         // the host's effective value from its last reply (0: unknown)
     bool m_FecUncertain;               // the last request failed on the way: sent again every 5 s
     uint64_t m_FecRetryMs;

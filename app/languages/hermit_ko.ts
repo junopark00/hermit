@@ -1170,8 +1170,8 @@ Start를 길게 눌러 끄기</translation>
       <translation>자동 조절: 지금 %1 Mbps (최대 %2 Mbps)</translation>
     </message>
     <message>
-      <source>Automatic: now %1 Mbps, FEC %2% (up to %3 Mbps)</source>
-      <translation>자동 조절: 지금 %1 Mbps, FEC %2% (최대 %3 Mbps)</translation>
+      <source>Automatic: now %1 Mbps, FEC %2 (up to %3 Mbps)</source>
+      <translation>자동 조절: 지금 %1 Mbps, FEC %2 (최대 %3 Mbps)</translation>
     </message>
     <message>
       <source>When unstable</source>

@@ -236,7 +236,7 @@ TRANSLATIONS = {
     ('StreamPanel', 'Tells congestion (the round trip rises) from link loss (frames lost while the round trip stays flat) every 250 ms. Congestion lowers the bitrate at once; loss raises the forward error correction first (Shell 1.4). Both recover step by step when the network is calm. Needs a Shell host.'):
         '250 ms마다 혼잡(왕복 지연 상승)과 링크 손실(왕복 지연은 그대로인데 프레임 손실)을 구분합니다. 혼잡이면 비트레이트를 바로 낮추고, 손실이면 먼저 FEC(순방향 오류 정정)를 올립니다(Shell 1.4). 네트워크가 안정되면 둘 다 단계적으로 되돌립니다. Shell 호스트가 필요합니다.',
     ('StreamPanel', 'Automatic: now %1 Mbps (up to %2 Mbps)'): '자동 조절: 지금 %1 Mbps (최대 %2 Mbps)',
-    ('StreamPanel', 'Automatic: now %1 Mbps, FEC %2% (up to %3 Mbps)'): '자동 조절: 지금 %1 Mbps, FEC %2% (최대 %3 Mbps)',
+    ('StreamPanel', 'Automatic: now %1 Mbps, FEC %2 (up to %3 Mbps)'): '자동 조절: 지금 %1 Mbps, FEC %2 (최대 %3 Mbps)',
     ('StreamPanel', 'When unstable'): '불안정할 때',
     ('StreamPanel', 'Auto (follows the mouse mode)'): '자동 (마우스 모드에 따름)',
     ('StreamPanel', 'Keep the frame rate'): '프레임 유지',

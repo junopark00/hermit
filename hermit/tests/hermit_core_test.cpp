@@ -582,20 +582,22 @@ static void testNetworkAdapt()
         // FEC reaches 50% within 1.5 s of the first lossy window (35% after the second window,
         // 50% one action gap later)
         CHECK(fec50AtS > 0 && fec50AtS <= firstLossyS + 1.5);
-        // The round trip stayed flat: never congestion, and the bitrate never below chosen/3
+        // The round trip stayed flat: never congestion, and the bitrate never below chosen/3.
+        // Two 15% cuts at most per loss run: the floor is never reached.
         CHECK(!congested);
-        CHECK_EQ(adapt.floorKbps(), 35000 / 3);
-        CHECK(minBitrate >= 35000 / 3);
-        CHECK(floorAtS > 0);
+        CHECK_EQ(adapt.floorKbps(), 11500);                      // 35000/3 rounded down to 500 kbps
+        CHECK(minBitrate >= adapt.floorKbps());
+        CHECK_EQ(minBitrate, 25000);
+        CHECK(floorAtS < 0);
         // The bitrate rises within 4 s of the link becoming clean (12 clean windows and the
         // action gap), unless the last cut is younger than 6 s by then: the first rise after a
         // cut waits that long (in this recording the last cut came 1.75 s before the link cleared)
         CHECK(lastCutS > 0 && firstRecoverS > 0);
         CHECK(firstRecoverS <= qMax(lastLossyS + 4.0, lastCutS + 6.0));
         CHECK(firstRecoverS <= lastLossyS + 4.25);
-        std::printf("  network adaptation replay (quality): %d actions, FEC 50%% at %.2f s (first loss %.2f s), floor %d kbps at %.2f s, "
+        std::printf("  network adaptation replay (quality): %d actions, FEC 50%% at %.2f s (first loss %.2f s), lowest %d kbps (floor %d), "
                     "recovery at %.2f s (last loss %.2f s, last cut %.2f s), end %d kbps FEC %d%%\n",
-                    (int)actions.size(), fec50AtS, firstLossyS, adapt.floorKbps(), floorAtS, firstRecoverS, lastLossyS, lastCutS,
+                    (int)actions.size(), fec50AtS, firstLossyS, minBitrate, adapt.floorKbps(), firstRecoverS, lastLossyS, lastCutS,
                     adapt.bitrate(), adapt.fec());
     }
 
@@ -622,13 +624,14 @@ static void testNetworkAdapt()
                 }
             }
         }
-        CHECK_EQ(adapt.floorKbps(), 35000 / 8);
-        CHECK(minBitrate >= 35000 / 8);
-        CHECK(floorAtS > 0);
+        CHECK_EQ(adapt.floorKbps(), 4000);                       // 35000/8 rounded down to 500 kbps
+        CHECK(minBitrate >= adapt.floorKbps());
+        CHECK_EQ(minBitrate, 25000);                             // the same two cuts: loss, not congestion
+        CHECK(floorAtS < 0);
         CHECK(lastCutS > 0 && firstRecoverS > 0);
         CHECK(firstRecoverS <= qMax(lastLossyS + 4.0, lastCutS + 6.0));
-        std::printf("  network adaptation replay (frame): %d actions, floor %d kbps at %.2f s, recovery at %.2f s (last cut %.2f s), end %d kbps FEC %d%%\n",
-                    (int)actions.size(), adapt.floorKbps(), floorAtS, firstRecoverS, lastCutS, adapt.bitrate(), adapt.fec());
+        std::printf("  network adaptation replay (frame): %d actions, lowest %d kbps (floor %d), recovery at %.2f s (last cut %.2f s), end %d kbps FEC %d%%\n",
+                    (int)actions.size(), minBitrate, adapt.floorKbps(), firstRecoverS, lastCutS, adapt.bitrate(), adapt.fec());
     }
 
     // ---- Synthetic congestion: the round trip jumps from 4 to 60 ms, no loss ----
@@ -664,7 +667,7 @@ static void testNetworkAdapt()
             t += 250;
             adapt.update(cleanWindow(60), t, 30000);
         }
-        CHECK_EQ(adapt.bitrate(), 3750);
+        CHECK_EQ(adapt.bitrate(), 3500);                        // 30000/8 rounded down to 500 kbps
         CHECK_EQ(adapt.fec(), 20);                              // congestion never touches FEC
 
         // Quality priority cuts by 20% and stops at max(4 Mbps, chosen/3)
@@ -735,8 +738,9 @@ static void testNetworkAdapt()
         CHECK(adapt.update(lossWindow(3, 6), t, 20000).reason == nullptr);  // 500 ms between actions
         t += 250;
         CHECK_EQ(adapt.update(lossWindow(3, 6), t, 20000).fecPercent, 50);
-        // Loss goes on at 50%: the bitrate is cut by 15% after 4 more windows, then every 4 windows
-        for (int i = 0; i < 3; i++) {
+        // Loss goes on at 50%: the bitrate is cut by 15% after 8 more lossy windows (2 s), once
+        // more 8 windows later, and then held (two cuts at most in a loss run)
+        for (int i = 0; i < 7; i++) {
             t += 250;
             CHECK(adapt.update(lossWindow(3, 6), t, 20000).reason == nullptr);
         }
@@ -744,16 +748,22 @@ static void testNetworkAdapt()
         a = adapt.update(lossWindow(3, 6), t, 20000);
         CHECK_EQ(a.bitrateKbps, 17000);
         CHECK_EQ(QString(a.reason), QString("loss"));
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 7; i++) {
             t += 250;
             CHECK(adapt.update(lossWindow(3, 6), t, 20000).reason == nullptr);
         }
         t += 250;
         CHECK_EQ(adapt.update(lossWindow(3, 6), t, 20000).bitrateKbps, 14000);
+        for (int i = 0; i < 12; i++) {
+            t += 250;
+            CHECK(adapt.update(lossWindow(3, 6), t, 20000).reason == nullptr);
+        }
+        CHECK_EQ(adapt.bitrate(), 14000);
         CHECK(adapt.regime() == Regime::Loss);
 
-        // Clean again: the bitrate rises 6 s after the last cut (the clean streak is long enough
-        // by then), FEC steps down after 6 s and again 6 s later, the bitrate again 3 s later
+        // Clean again (the last cut is 3 s old): the bitrate rises after 12 clean windows, which
+        // is 6 s after the cut; again 3 s later; FEC steps down after 24 clean windows (one
+        // action gap behind the raise due in the same window) and again 6 s later
         QVector<ReplayAction> recovery;
         const uint64_t cleanFrom = t;
         for (int i = 0; i < 60; i++) {
@@ -766,18 +776,18 @@ static void testNetworkAdapt()
         CHECK_EQ(recovery.size(), 4);
         if (recovery.size() >= 4) {
             CHECK_EQ(recovery[0].bitrateKbps, 17000);
-            CHECK(near(recovery[0].atS, 6.0));            // 6 s after the cut, which ended the loss run
-            CHECK_EQ(recovery[1].fecPercent, 35);
-            CHECK(near(recovery[1].atS, 6.5));            // 24 clean windows, one action gap after the raise
-            CHECK_EQ(recovery[2].bitrateKbps, 20000);
-            CHECK(near(recovery[2].atS, 9.0));            // 3 s after the previous raise
+            CHECK(near(recovery[0].atS, 3.0));
+            CHECK_EQ(recovery[1].bitrateKbps, 20000);
+            CHECK(near(recovery[1].atS, 6.0));
+            CHECK_EQ(recovery[2].fecPercent, 35);
+            CHECK(near(recovery[2].atS, 6.5));
             CHECK_EQ(recovery[3].fecPercent, 20);
-            CHECK(near(recovery[3].atS, 12.5));           // 6 s after the previous FEC step
+            CHECK(near(recovery[3].atS, 12.5));
         }
         CHECK_EQ(adapt.fec(), 20);
         CHECK_EQ(adapt.bitrate(), 20000);
 
-        // Without live FEC on the host, loss goes straight to the bitrate rule (after 2 + 4 windows)
+        // Without live FEC on the host, loss goes straight to the bitrate rule (after 2 + 8 windows)
         NetworkAdapt noFec;
         noFec.reset(20000, 0, Policy::QualityPriority, false);
         t = 0;
@@ -786,7 +796,7 @@ static void testNetworkAdapt()
             noFec.update(cleanWindow(5), t, 20000);
         }
         int cutAtWindow = -1;
-        for (int i = 1; i <= 8; i++) {
+        for (int i = 1; i <= 12; i++) {
             t += 250;
             const NetworkAdapt::Action r = noFec.update(lossWindow(3, 6), t, 20000);
             CHECK_EQ(r.fecPercent, 0);
@@ -795,13 +805,13 @@ static void testNetworkAdapt()
                 CHECK_EQ(r.bitrateKbps, 17000);
             }
         }
-        CHECK_EQ(cutAtWindow, 5);
-        // Quality priority stops at chosen/3 and keeps FEC where it is
+        CHECK_EQ(cutAtWindow, 9);                                 // regime at window 2, 8 lossy windows more
+        // One more cut 8 windows later, then the hold (two cuts per loss run); FEC stays
         for (int i = 0; i < 80; i++) {
             t += 250;
             noFec.update(lossWindow(3, 6), t, 20000);
         }
-        CHECK_EQ(noFec.bitrate(), 6666);
+        CHECK_EQ(noFec.bitrate(), 14000);
         CHECK_EQ(noFec.fec(), 20);
     }
 
@@ -913,9 +923,112 @@ static void testNetworkAdapt()
         CHECK_EQ(QString(a.reason), QString("ceiling"));
         CHECK_EQ(adapt.floorKbps(), 2500);
         adapt.setPolicy(Policy::QualityPriority);
-        CHECK_EQ(adapt.floorKbps(), 6666);
+        CHECK_EQ(adapt.floorKbps(), 6500);                        // 20000/3 rounded down to 500 kbps
         adapt.reset(50000, 1000, Policy::FramePriority, false);
-        CHECK_EQ(adapt.bitrate(), 6250);                          // not below the floor
+        CHECK_EQ(adapt.bitrate(), 6000);                          // not below the floor (50000/8 rounded)
+    }
+
+    // ---- A congestion that lasts: the usual round trip follows only clean windows, so the link
+    // stays congested and the bitrate at the floor; nothing recovers while the round trip is up ----
+    {
+        NetworkAdapt adapt;
+        adapt.reset(30000, 0, Policy::FramePriority, true);
+        uint64_t t = 0;
+        for (int i = 0; i < 20; i++) {
+            t += 250;
+            adapt.update(cleanWindow(4), t, 30000);
+        }
+        int raises = 0;
+        for (int i = 1; i <= 240; i++) {                          // 60 s at +45 ms
+            t += 250;
+            const NetworkAdapt::Action a = adapt.update(cleanWindow(49), t, 30000);
+            if (QString(a.reason) == "recover") {
+                raises++;
+            }
+            if (i >= 2) {
+                CHECK(adapt.regime() == Regime::Congested);
+            }
+        }
+        CHECK_EQ(raises, 0);
+        CHECK_EQ(adapt.bitrate(), 3500);
+        CHECK(near(adapt.baseRtt(), 4.0));
+
+        // Switching to quality priority below its floor (3500 < 10000): one step up to the floor
+        // at the next clean window, not while the congestion lasts
+        adapt.setPolicy(Policy::QualityPriority);
+        t += 250;
+        CHECK(adapt.update(cleanWindow(49), t, 30000).reason == nullptr);
+        t += 250;
+        const NetworkAdapt::Action a = adapt.update(cleanWindow(4), t, 30000);
+        CHECK_EQ(QString(a.reason), QString("floor"));
+        CHECK_EQ(a.bitrateKbps, 10000);
+        adapt.setPolicy(Policy::FramePriority);                   // the other way: nothing to do
+        t += 250;
+        CHECK(adapt.update(cleanWindow(4), t, 30000).reason == nullptr);
+    }
+
+    // ---- Grey windows: half a clean window each, no cuts, and 24 in a row end the regime ----
+    {
+        NetworkAdapt adapt;
+        adapt.reset(30000, 0, Policy::FramePriority, true);
+        uint64_t t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            adapt.update(cleanWindow(4), t, 30000);
+        }
+        for (int i = 0; i < 2; i++) {
+            t += 250;
+            adapt.update(cleanWindow(60), t, 30000);
+        }
+        CHECK_EQ(adapt.bitrate(), 21000);
+        NetworkAdapt::Window grey;                                // 3% loss, usual round trip
+        grey.framesReceived = 97;
+        grey.framesDropped = 3;
+        grey.rttMs = 4;
+        int raiseAt = -1;
+        for (int i = 1; i <= 30; i++) {
+            t += 250;
+            const NetworkAdapt::Action a = adapt.update(grey, t, 30000);
+            if (i < 24) {
+                CHECK(adapt.regime() == Regime::Congested);
+            }
+            if (a.bitrateKbps > 0 && raiseAt < 0) {
+                raiseAt = i;
+                CHECK_EQ(a.bitrateKbps, 25500);
+                CHECK_EQ(QString(a.reason), QString("recover"));
+            }
+        }
+        CHECK(adapt.regime() == Regime::Clean);
+        CHECK_EQ(raiseAt, 24);                                    // 24 grey = 12 clean windows, 6 s after the cut
+        CHECK_EQ(adapt.bitrate(), 25500);                         // and no cut on the way
+    }
+
+    // ---- The host's default FEC is the ladder's base ----
+    {
+        NetworkAdapt adapt;
+        adapt.reset(20000, 0, Policy::FramePriority, true);
+        CHECK_EQ(adapt.fecBase(), 20);
+        CHECK_EQ(adapt.fecMid(), 35);
+        CHECK_EQ(adapt.fecMax(), 50);
+        adapt.setFecBase(40);
+        CHECK_EQ(adapt.fec(), 40);
+        CHECK_EQ(adapt.fecMid(), 40);
+        CHECK_EQ(adapt.fecMax(), 50);
+        uint64_t t = 0;
+        for (int i = 0; i < 4; i++) {
+            t += 250;
+            adapt.update(cleanWindow(5), t, 20000);
+        }
+        t += 250;
+        adapt.update(lossWindow(3, 6), t, 20000);
+        t += 250;
+        CHECK_EQ(adapt.update(lossWindow(3, 6), t, 20000).fecPercent, 50);  // 40 -> 50 in one step
+        // A default of 50 or more leaves no step up: loss goes to the bitrate rule
+        NetworkAdapt high;
+        high.reset(20000, 0, Policy::FramePriority, true);
+        high.setFecBase(60);
+        CHECK_EQ(high.fec(), 60);
+        CHECK_EQ(high.fecMax(), 60);
     }
 }
 

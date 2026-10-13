@@ -66,6 +66,9 @@ QString format(const Inputs& in, int metrics)
         if (in.adaptFecPercent > 0) {
             value += QStringLiteral(" · FEC %1%").arg(in.adaptFecPercent);
         }
+        else if (in.adaptFecPercent < 0) {
+            value += QStringLiteral(" · FEC ?");  // the host has not told its value yet
+        }
         if (in.adaptRegime == AdaptCongested) {
             value += QStringLiteral(" · ") + QCoreApplication::translate("StatsOverlay", "congested");
         }

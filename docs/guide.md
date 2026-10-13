@@ -164,18 +164,27 @@ automatically to the network" in the stream panel. It is off by default.
     and again every 0.5 s while it lasts, down to the policy's floor (below).
   - **Link loss**: 5% or more of the frames are lost while the round-trip time stays flat (within
     20 ms of usual). Lowering the bitrate does not help here (the first recording showed the same
-    loss at 35 and at 7 Mbps), so Hermit first raises the host's forward error correction (FEC):
-    20% → 35% → 50%. Only when loss goes on for one more second at 50% is the bitrate cut by 15%,
-    again every second while it lasts, down to the floor (smaller frames, fewer packets per frame).
-    FEC changes need Shell 1.4 (serverinfo `LiveFec`); on older hosts the bitrate rule applies alone.
+    loss at 35 and at 7 Mbps), so Hermit first raises the host's forward error correction (FEC) from
+    the host's default (usually 20%) to 35% and then 50%. 50% parity puts 1.5 times the bytes on the
+    wire, so when loss goes on for 2 more seconds at 50% the bitrate is cut by 15%, at most twice
+    (about 0.72 times, which brings the wire rate back near the original); further cuts come only
+    from congestion. FEC changes need Shell 1.4 (serverinfo `LiveFec`); on older hosts the bitrate
+    rule applies alone.
   - A decision needs two windows of the same kind in a row (0.5 s), and there is at most one action
     per 0.5 s. One window of the other kind does not switch the regime until it repeats.
+  - The usual round-trip time is the minimum seen; it rises (0.5 ms per second) only in clean
+    windows, so a congestion that lasts is never mistaken for the new normal.
   - Windows with fewer than 3 frames (a still picture: Shell sends only 10 to 12 frames per second
     for one) decide nothing and count as neither good nor bad, so desktop work with pauses recovers.
   - **Recovery**: after 3 s of clean windows (less than 1% loss, usual round trip) the bitrate rises
     by 15% of the chosen bitrate, every 3 s, up to the chosen bitrate; the first rise after a cut
     waits 6 s after that cut. FEC goes down one step after 6 s of clean windows, and again 6 s later.
-  - When turned on, it starts from the bitrate the host is currently sending and the host's FEC.
+    A grey window (1 to 5% loss, or a round trip 16 to 40 ms above usual) counts as half a clean
+    window, and 24 grey or clean windows in a row end a trouble regime, so a link with a steady 2%
+    loss still recovers, at half speed.
+  - When turned on, it starts from the bitrate the host is currently sending and asks the host for
+    its default FEC once (`percent=default`); that reply is the ladder's base, and Hermit never sends
+    a value below it.
 - **When the network is unstable** (the setting under the checkbox, also in the panel) chooses what
   to protect:
   - **Keep the frame rate** (game): congestion cuts the bitrate by 30% per step, down to one eighth
@@ -183,15 +192,17 @@ automatically to the network" in the stream panel. It is off by default.
   - **Keep the quality** (remote desktop): congestion cuts by 20% per step, down to one third of the
     chosen bitrate (at least 4 Mbps), and the link-loss rule stops there too, keeping FEC at 50%.
     Sharp text and UI come first; a further step that lowers the frame rate instead is planned.
+    Floors are rounded down to 0.5 Mbps. Switching to this policy while the bitrate is below its
+    floor raises it to the floor at the next clean window (one request).
   - **Auto** (default) follows the mouse mode: the game (relative) mouse keeps the frame rate, the
     remote desktop (absolute) mouse keeps the quality. Switching the mouse mode switches the policy
     at once.
 - The chosen bitrate is the upper limit. Changing it in the panel sets a new limit and a new starting
-  point. The panel shows "Automatic: now N Mbps, FEC F% (up to M Mbps)" (without the FEC part on
-  hosts that cannot change it); the performance overlay's "Automatic" line adds the regime word
-  ("congested" or "loss") while the link is not clean. While it is adjusting and the connection is
-  slow, the warning over the stream says that the bitrate is being lowered automatically instead of
-  asking you to lower it.
+  point. The panel shows "Automatic: now N Mbps, FEC F% (up to M Mbps)" with the host's effective
+  FEC ("FEC ?" until the host has answered; no FEC part on hosts that cannot change it); the
+  performance overlay's "Automatic" line adds the regime word ("congested" or "loss") while the link
+  is not clean. While it is adjusting and the connection is slow, the warning over the stream says
+  that the bitrate is being lowered automatically instead of asking you to lower it.
 - FEC requests work like bitrate requests: one at a time, the newest value follows, a failed one is
   sent again after 5 s, and a host that refuses them (404) is not asked again this session. Turning
   the setting off sends the host's default FEC back when it had been raised.

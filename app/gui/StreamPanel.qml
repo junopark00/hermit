@@ -343,8 +343,10 @@ Window {
                 }
                 Helper {
                     visible: StreamingPreferences.adaptiveBitrate && panel.autoBitrateKbps > 0
-                    text: panel.autoFecPercent > 0 ?
-                              qsTr("Automatic: now %1 Mbps, FEC %2% (up to %3 Mbps)").arg(Math.round(panel.autoBitrateKbps / 100) / 10).arg(panel.autoFecPercent).arg(Math.round(panel.chosenBitrateFor(StreamingPreferences.bitrateKbps) / 100) / 10) :
+                    // FEC: the host's effective value; "?" until the host told it (-1); no FEC part
+                    // on hosts without live FEC (0)
+                    text: panel.autoFecPercent !== 0 ?
+                              qsTr("Automatic: now %1 Mbps, FEC %2 (up to %3 Mbps)").arg(Math.round(panel.autoBitrateKbps / 100) / 10).arg(panel.autoFecPercent > 0 ? panel.autoFecPercent + "%" : "?").arg(Math.round(panel.chosenBitrateFor(StreamingPreferences.bitrateKbps) / 100) / 10) :
                               qsTr("Automatic: now %1 Mbps (up to %2 Mbps)").arg(Math.round(panel.autoBitrateKbps / 100) / 10).arg(Math.round(panel.chosenBitrateFor(StreamingPreferences.bitrateKbps) / 100) / 10)
                 }
                 Helper {

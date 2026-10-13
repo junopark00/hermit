@@ -726,7 +726,8 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_LiveFec(false),
       m_FecPendingSerial(0),
       m_FecPendingPercent(0),
-      m_FecSentPercent(NetworkAdapt::kFecBase),
+      m_FecSentPercent(0),
+      m_FecDefaultPercent(0),
       m_FecEffectivePercent(0),
       m_FecUncertain(false),
       m_FecRetryMs(0),
@@ -2471,6 +2472,11 @@ Uint32 Session::adaptTimerCallback(Uint32 interval, void* param)
     return interval;  // periodic
 }
 
+bool Session::liveFecReady() const
+{
+    return m_LiveFec && m_FecDefaultPercent > 0;
+}
+
 NetworkAdapt::Policy Session::networkPolicy() const
 {
     switch (m_Preferences->networkPolicy) {
@@ -2556,11 +2562,11 @@ void Session::handleNetworkWindow(uint64_t now)
             // Nothing is pending, so the user's last pick has had its result
             m_Panel->setUserPickUnconfirmed(false);
             // From where the host streams now (an earlier request may have failed)
-            m_NetworkAdapt.reset(chosen, m_Panel->appliedBitrateKbps(), networkPolicy(), m_LiveFec);
+            m_NetworkAdapt.reset(chosen, m_Panel->appliedBitrateKbps(), networkPolicy(), liveFecReady());
         }
         // The policy follows the mouse mode (Auto) or the setting, both of which can change any time
         m_NetworkAdapt.setPolicy(networkPolicy());
-        m_NetworkAdapt.setFecAvailable(m_LiveFec);
+        m_NetworkAdapt.setFecAvailable(liveFecReady());
 
         const NetworkAdapt::Action action = m_NetworkAdapt.update(window, now, chosen);
         if (action.bitrateKbps > 0) {
@@ -2585,20 +2591,29 @@ void Session::handleNetworkWindow(uint64_t now)
         }
     }
 
-    // FEC follows the controller's step (the host's default while it is off): one request in
+    // FEC follows the controller's step (0, the host's default, while it is off): one request in
     // flight, the newest value goes once it is done; a request that failed on the way is sent
-    // again after 5 seconds (a timeout may still have reached the host, so the reply tells)
-    if (m_LiveFec && m_FecPendingSerial == 0) {
-        const int wanted = m_AutoBitrateRunning ? m_NetworkAdapt.fec() : NetworkAdapt::kFecBase;
-        if (m_FecSentPercent != wanted && (!m_FecUncertain || now - m_FecRetryMs >= 5000)) {
-            sendLiveFec(wanted == NetworkAdapt::kFecBase ? 0 : wanted);
+    // again after 5 seconds (a timeout may still have reached the host, so the reply tells). The
+    // first request of a controller run asks for the default: its reply tells the host's own
+    // value, the ladder's base (never a value below it is sent).
+    if (m_LiveFec && m_FecPendingSerial == 0 && (!m_FecUncertain || now - m_FecRetryMs >= 5000)) {
+        if (m_FecDefaultPercent == 0) {
+            if (m_AutoBitrateRunning || m_FecSentPercent == -1) {
+                sendLiveFec(0);
+            }
+        }
+        else {
+            const int wanted = m_AutoBitrateRunning && m_NetworkAdapt.fec() != m_NetworkAdapt.fecBase() ? m_NetworkAdapt.fec() : 0;
+            if (m_FecSentPercent != wanted) {
+                sendLiveFec(wanted);
+            }
         }
     }
 
     if (m_AutoBitrateRunning) {
         // The panel's "Automatic: now ..." line and the overlay: the host's effective FEC once
-        // known, the controller's step before the first reply; nothing when the host takes no FEC
-        const int fecShown = !m_LiveFec ? 0 : (m_FecEffectivePercent > 0 ? m_FecEffectivePercent : m_NetworkAdapt.fec());
+        // known (-1, shown as "?", before its first reply); nothing when the host takes no FEC
+        const int fecShown = !m_LiveFec ? 0 : (m_FecEffectivePercent > 0 ? m_FecEffectivePercent : -1);
         m_Panel->setAutoBitrate(m_NetworkAdapt.bitrate(), fecShown);
         m_AdaptOverlayState = static_cast<uint64_t>(static_cast<uint32_t>(m_NetworkAdapt.bitrate())) |
                               (static_cast<uint64_t>(fecShown & 0xFF) << 32) |
@@ -2656,9 +2671,14 @@ void Session::handleLiveFecResult(uint32_t serial, int result)
     m_FecPendingSerial = 0;
     const int requested = m_FecPendingPercent;
     if (result > 0) {
-        m_FecSentPercent = requested == 0 ? NetworkAdapt::kFecBase : requested;
+        m_FecSentPercent = requested;
         m_FecEffectivePercent = result;
         m_FecUncertain = false;
+        if (requested == 0) {
+            // The host's own default: the FEC ladder starts there
+            m_FecDefaultPercent = result;
+            m_NetworkAdapt.setFecBase(result);
+        }
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live FEC %d%% (0: the default): the host now uses %d%%", requested, result);
     }
     else if (result < 0) {
