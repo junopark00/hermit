@@ -1155,6 +1155,29 @@ static void testNetworkAdapt()
         CHECK(ceiling.bitrate() <= 15000);
     }
     {
+        // Path delay jitters (100 ms +- 15): the precaution lands on a 113 ms sample, and 2 s later
+        // the round trip reads 95, which is jitter, not a drain (a quarter of the 110 ms rise is
+        // allowed). It falls to 3 ms on its own: fast recovery within 1.0 s of the clean windows
+        NetworkAdapt jitter;
+        jitter.reset(35000, 0, Policy::FramePriority, true);
+        uint64_t t = 0;
+        runWindows(jitter, t, 8, cleanWindow(3), 35000);
+        static const int kOffsets[] = { 0, 12, -9, 6, -15, 10, -4, 15 };
+        QVector<ReplayAction> actions;
+        for (int k = 1; k <= 96; k++) {
+            const int rtt = k == 2 ? 113 : k == 10 ? 95 : 100 + kOffsets[k % 8];
+            actions += runWindows(jitter, t, 1, cleanWindow(rtt), 35000);
+        }
+        CHECK_EQ(sequence(actions), QString("24500"));
+        const double firstCleanS = (t + 250) / 1000.0;
+        actions = runWindows(jitter, t, 8, cleanWindow(3), 35000);
+        CHECK_EQ(sequence(actions), QString("35000"));
+        if (actions.size() == 1) {
+            CHECK_EQ(QString(actions[0].reason), QString("fast-recover"));
+            CHECK(actions[0].atS - firstCleanS <= 1.0);
+        }
+    }
+    {
         // A slow drain: the round trip falls from 300 ms over 2.5 s after our last cut and is
         // still congested (and well below 300) 2 s after it: our queue draining, not a cause that
         // went away. Gradual recovery, no fast jump
@@ -1567,8 +1590,8 @@ static void testNetworkAdapt()
         CHECK(mild.regime() == Regime::Clean);
     }
 
-    // ---- Idle windows (fewer than 3 frames received and lost) decide nothing and keep the clean
-    // streak; lost frames count, so a collapsing stream is judged ----
+    // ---- Idle windows (fewer than 3 frames received, fewer than 2 lost) decide nothing and keep
+    // the clean streak; a collapsing stream (2 lost or more) is judged ----
     {
         NetworkAdapt adapt;
         adapt.reset(30000, 0, Policy::FramePriority, true);
@@ -1625,9 +1648,8 @@ static void testNetworkAdapt()
         CHECK_EQ(QString(a.reason), QString("recover"));
         CHECK_EQ(a.bitrateKbps, 23500);
 
-        // Two frames and one lost make three: judged. At the usual round trip that is a grey
-        // window (33% loss, but one lost frame is not link loss): no decision, the regime stays
-        // clean, and the clean streak towards the next raise starts again
+        // Two frames and a single lost one: still a still picture, idle at any round trip. Two
+        // frames and two lost are judged: at 60 ms a congested window, so the precaution comes
         NetworkAdapt grey;
         grey.reset(30000, 0, Policy::FramePriority, true);
         t = 0;
@@ -1638,18 +1660,21 @@ static void testNetworkAdapt()
         NetworkAdapt::Window twoAndOne;
         twoAndOne.framesReceived = 2;
         twoAndOne.framesDropped = 1;
-        twoAndOne.rttMs = 4;
-        for (int i = 0; i < 8; i++) {
-            t += 250;
-            CHECK(grey.update(twoAndOne, t, 30000).reason == nullptr);
-            CHECK(grey.regime() == Regime::Clean);
+        for (int rtt : { 4, 60 }) {
+            twoAndOne.rttMs = rtt;
+            for (int i = 0; i < 8; i++) {
+                t += 250;
+                CHECK(grey.update(twoAndOne, t, 30000).reason == nullptr);
+                CHECK(grey.regime() == Regime::Clean);
+            }
         }
-        // At a congested round trip it is a congested window: the precaution comes
-        twoAndOne.rttMs = 60;
+        NetworkAdapt::Window twoAndTwo = twoAndOne;
+        twoAndTwo.framesDropped = 2;
+        twoAndTwo.rttMs = 60;
         t += 250;
-        grey.update(twoAndOne, t, 30000);
+        grey.update(twoAndTwo, t, 30000);
         t += 250;
-        CHECK_EQ(grey.update(twoAndOne, t, 30000).bitrateKbps, 21000);
+        CHECK_EQ(grey.update(twoAndTwo, t, 30000).bitrateKbps, 21000);
 
         // A collapse: 2 frames arrive and 6 are lost in every window. With the round trip at
         // 300 ms the congestion rule runs to the floor (and the frame rate halves twice); with a

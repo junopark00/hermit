@@ -46,17 +46,21 @@
 // bitrate change together only in a recovery step (below), a fast recovery and its revert.
 // A decision needs 2 consecutive windows of the same kind (0.5 s); one action per 500 ms at
 // most; a window of the other kind does not switch the regime until it repeats (no flapping);
-// windows with fewer than 3 frames received and lost together (a still picture) decide nothing
-// and neither add to nor clear the clean windows; lost frames count, so a stream that collapses
-// (2 frames arrive, 6 are lost) is judged, not taken for a still picture.
+// windows with fewer than 3 frames received (a still picture) decide nothing and neither add to
+// nor clear the clean windows, unless 2 frames or more were lost in them: a stream that
+// collapses (2 frames arrive, 6 are lost) is judged, a still picture with a single lost frame
+// is not (the first recording's loss runs had many such windows, and judging them only kept the
+// loss regime going for one more cut).
 // The usual round trip is tracked as a minimum that rises only in clean windows (0.5 ms per
 // second), so a congestion that lasts is not mistaken for the new normal.
 // Fast recovery: a congestion regime that ends with 2 clean windows in a row without a dropped
-// frame (not one that turns into link loss or ends after 24 grey windows), when the round trip
-// 2 s after our last cut or halving was still congested and no more than 10 ms below its value
-// at that action (it fell on its own later: the cause outside went away, as when the fourth
-// recording's 100 ms path delay stopped and the gradual recovery then took 15-25 s), brings
-// back the bitrate and frame rate from before the congestion in one action ("fast-recover").
+// frame (not one that turns into link loss or ends after 24 grey windows) brings back the
+// bitrate and frame rate from before the congestion in one action ("fast-recover") when the
+// round trip 2 s after our last cut or halving was still congested and had not fallen by more
+// than a quarter of its rise above usual at that action, 10 ms at least (path delay jitters by
+// 10-20 ms, and the rising round trip rule often cuts on a high sample). It fell on its own
+// later: the cause outside went away, as when the fourth recording's 100 ms path delay stopped
+// and the gradual recovery then took 15-25 s.
 // For 2 s after it, a congested window or one with 2 dropped frames or more reverts to the
 // values before the jump in one action ("probe-failed"; the frame rate only while quality
 // priority can lower it, the bitrate not above the chosen one), and fast recovery stays off for
@@ -323,7 +327,7 @@ public:
             m_BaseRtt = w.rttMs;
         }
 
-        if (w.framesReceived + w.framesDropped < kMinFramesPerWindow) {
+        if (w.framesReceived < kMinFramesPerWindow && w.framesDropped < kMinDroppedForLoss) {
             return action;  // a still picture: too few frames to judge, neither clean nor trouble
         }
 
@@ -358,7 +362,8 @@ public:
             if (wasCongested && m_Regime == Regime::Clean && m_CleanStreak >= kDecisionWindows &&
                     !m_DropCur && !m_DropPrev && episodeOpen() && nowMs >= m_FastOffUntilMs &&
                     m_FirstCleanMs - kWindowMs >= lastCutMs() + kFastRecoveryQuietMs &&
-                    m_QuietRttMs >= 0 && m_QuietRttMs >= m_RttAtLastCut - kRttFallingMs) {
+                    m_QuietRttMs >= 0 &&
+                    m_QuietRttMs >= m_RttAtLastCut - (std::max)((float)kRttFallingMs, (m_RttAtLastCut - m_BaseRtt) / 4)) {
                 m_FastArmed = true;
             }
             if (m_FastArmed && nowMs - m_LastActionMs >= kActionGapMs) {

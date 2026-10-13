@@ -189,17 +189,18 @@ automatically to the network" in the stream panel. It is off by default.
     per 0.5 s. One window of the other kind does not switch the regime until it repeats.
   - The usual round-trip time is the minimum seen; it rises (0.5 ms per second) only in clean
     windows, so a congestion that lasts is never mistaken for the new normal.
-  - Windows with fewer than 3 frames received and lost together (a still picture: Shell sends only
-    10 to 12 frames per second for one) decide nothing and count as neither good nor bad, so
-    desktop work with pauses recovers. Lost frames count: a window where 2 frames arrive and 6 are
-    lost is judged like any other.
+  - Windows with fewer than 3 frames received (a still picture: Shell sends only 10 to 12 frames
+    per second for one) decide nothing and count as neither good nor bad, so desktop work with
+    pauses recovers, unless 2 frames or more were lost in them: a window where 2 frames arrive and
+    6 are lost is judged like any other, a still picture with a single lost frame is not.
   - **Fast recovery**: when a congestion ends with two clean windows in a row without a dropped
-    frame, and the round trip 2 s after Hermit's last cut or halving was still congested and no
-    more than 10 ms below its value at that action, the round trip fell on its own later (the
-    cause outside went away), and the bitrate and frame rate from before the congestion come back
-    in one step. Only a congestion that ends this way counts: not one that turns into link loss or
-    ends after 24 grey windows. For 2 s after that step, a congested window or one with 2 dropped
-    frames or more undoes it in one step (the bitrate not above the chosen one, the frame rate only
+    frame, and the round trip 2 s after Hermit's last cut or halving was still congested and had
+    not fallen by more than a quarter of its rise above usual at that action (10 ms at least: path
+    delay jitters by 10 to 20 ms), the round trip fell on its own later (the cause outside went
+    away), and the bitrate and frame rate from before the congestion come back in one step. Only
+    a congestion that ends this way counts: not one that turns into link loss or ends after 24 grey
+    windows. For 2 s after that step, a congested window or one with 2 dropped frames or more
+    undoes it in one step (the bitrate not above the chosen one, the frame rate only
     while **Keep the quality** can lower it), and fast recovery stays off for 60 s; recovery then
     goes on gradually. When the round trip is back within 2 s of a cut, or already falling 2 s
     after it, the cuts drained Hermit's own queue: gradual recovery. A new chosen bitrate ends the
