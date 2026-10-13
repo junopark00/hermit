@@ -48,9 +48,11 @@
 // over a bandwidth cap stays. Frame priority and link loss never change the frame rate; a
 // switch to frame priority brings the stream's frame rate back at the next window, and a switch
 // back to quality priority (or a host that takes live frame rate changes again) brings the
-// formula's frame rate at the next window ("policy"). A new chosen bitrate brings the stream's
-// rate back, except during a congestion, where the lowered frame rate stays until the recovery.
-// One action per window.
+// formula's frame rate ("policy"; not while a congestion is still ending, where a fast recovery
+// may bring everything back first). A new chosen bitrate brings the stream's rate back; during a
+// congestion the bitrate stays where it is (or goes down to the new chosen one) and the frame
+// rate stays at or below the formula's for the new chosen one, so frames never grow; the
+// recovery lifts both. One action per window.
 // A decision needs 2 consecutive windows of the same kind (0.5 s); one action per 500 ms at
 // most; a window of the other kind does not switch the regime until it repeats (no flapping);
 // windows with fewer than 3 frames received (2 at a frame rate below 12: 10 fps brings 2-3 a
@@ -302,15 +304,19 @@ public:
     }
 
     // One 250 ms window ending at nowMs. chosenKbps: the user's current choice; a new one
-    // restarts the bitrate there (the ceiling moved) and keeps the FEC step.
+    // restarts the bitrate there (the ceiling moved; during a congestion the bitrate only goes
+    // down to it) and keeps the FEC step.
     Action update(const Window& w, uint64_t nowMs, int chosenKbps)
     {
         Action action;
         if (chosenKbps != m_Chosen) {
+            // The stream's rate at the new ceiling. During a congestion a higher ceiling does not
+            // push more bytes into the link: the bitrate stays (or goes down to a lower ceiling)
+            // and the frame rate keeps each frame's bits for the new chosen bitrate
+            const bool congested = m_Regime == Regime::Congested;
             m_Chosen = chosenKbps;
-            m_Bitrate = chosenKbps;
-            // The stream's rate at the new ceiling; during a congestion the lowered rate stays
-            const int fps = m_Regime == Regime::Congested ? (std::min)(m_Fps, fpsFor(m_Bitrate)) : fpsFor(m_Bitrate);
+            m_Bitrate = congested ? (std::min)(m_Bitrate, chosenKbps) : chosenKbps;
+            const int fps = congested ? (std::min)(m_Fps, fpsFor(m_Bitrate)) : fpsFor(m_Bitrate);
             if (fpsFollows() && m_Fps != fps) {
                 m_Fps = fps;
                 action.fps = m_Fps;
@@ -336,18 +342,6 @@ public:
             action.fps = m_Fps;
             action.reason = "policy";
             return action;
-        }
-        if (m_FollowFps) {
-            // Quality priority taken up (or live frame rate changes back) at a lowered bitrate:
-            // the frame rate that keeps each frame's bits
-            m_FollowFps = false;
-            if (fpsFollows() && fpsFor(m_Bitrate) < m_Fps) {
-                m_Fps = fpsFor(m_Bitrate);
-                m_LastActionMs = nowMs;
-                action.fps = m_Fps;
-                action.reason = "policy";
-                return action;
-            }
         }
 
         if (m_ProbeUntilMs != 0 && nowMs > m_ProbeUntilMs) {
@@ -415,6 +409,9 @@ public:
             if (m_FastArmed && nowMs - m_LastActionMs >= kActionGapMs) {
                 return fastRecover(nowMs, action);
             }
+            if (followFps(nowMs, action)) {
+                return action;
+            }
             if (m_RaiseToFloor && nowMs - m_LastActionMs >= kActionGapMs) {
                 // Quality priority taken up below its floor: one step up to the floor
                 m_RaiseToFloor = false;
@@ -475,6 +472,9 @@ public:
             return probeFailed(nowMs, action);
         }
 
+        if (followFps(nowMs, action)) {
+            return action;
+        }
         if (m_Regime == Regime::Clean) {
             return recover(nowMs, action);  // grey windows after a clean run
         }
@@ -530,6 +530,25 @@ private:
     }
 
     uint64_t lastCutMs() const { return m_LastCutMs; }
+
+    // Quality priority taken up (or live frame rate changes back) at a lowered bitrate: the frame
+    // rate that keeps each frame's bits. Not while a congestion is still on or ending (its next
+    // cut sets the frame rate anyway, and a fast recovery may bring everything back first).
+    bool followFps(uint64_t nowMs, Action& action)
+    {
+        if (!m_FollowFps || m_Regime == Regime::Congested) {
+            return false;
+        }
+        m_FollowFps = false;
+        if (!fpsFollows() || fpsFor(m_Bitrate) >= m_Fps) {
+            return false;
+        }
+        m_Fps = fpsFor(m_Bitrate);
+        m_LastActionMs = nowMs;
+        action.fps = m_Fps;
+        action.reason = "policy";
+        return true;
+    }
 
     // A congestion episode that has not come back to the values from before it
     bool episodeOpen() const

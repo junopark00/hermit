@@ -250,9 +250,11 @@ automatically to the network" in the stream panel. It is off by default.
     the frame rate the formula gives, never lower than now); fast recovery brings back both at
     once. The stream's own rate comes back whole at the chosen bitrate (a 144 fps stream returns to
     144, not 140). Switching to **Keep the frame rate** brings the stream's frame rate back at once,
-    and switching back brings the frame rate the formula gives at the current bitrate. A new chosen
-    bitrate brings the stream's rate back, except during a congestion, where the lowered frame rate
-    stays until the recovery. On hosts without live frame rate changes,
+    and switching back brings the frame rate the formula gives at the current bitrate (after a fast
+    recovery, when the congestion is ending). A new chosen bitrate brings the stream's rate back;
+    during a congestion the bitrate stays where it is (or goes down to the new chosen one) and the
+    frame rate stays at or below what the formula gives for the new chosen bitrate, so frames never
+    grow, and the recovery lifts both. On hosts without live frame rate changes,
     congestion cuts by 20% per step down to one third of the chosen bitrate (at least 4 Mbps), and
     the link-loss rule stops there too, keeping FEC at 50%. Playback keeps a jitter buffer: with
     V-Sync the queues stay lenient (up to 3 frames); without V-Sync, frames are paced by a timer at
