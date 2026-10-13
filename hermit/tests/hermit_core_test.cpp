@@ -1115,6 +1115,69 @@ static void testNetworkAdapt()
         for (const ReplayAction& a : actions) {
             CHECK(QString(a.reason) != "fast-recover");
         }
+
+        // A failed probe under frame priority (the mouse mode changed after the jump) keeps the
+        // stream's frame rate: the revert carries the bitrate only
+        NetworkAdapt policy;
+        policy.reset(35000, 0, Policy::QualityPriority, true, 60, true);
+        t = 0;
+        i = 0;
+        runDesktop(policy, t, 8, 3, i);
+        CHECK_EQ(sequence(runDesktop(policy, t, 96, 100, i)), QString("28000, fps 30"));
+        CHECK_EQ(sequence(runDesktop(policy, t, 2, 3, i)), QString("35000 fps 60"));
+        policy.setPolicy(Policy::FramePriority);
+        actions = runDesktop(policy, t, 1, 100, i);
+        CHECK_EQ(sequence(actions), QString("28000"));
+        if (actions.size() == 1) {
+            CHECK_EQ(QString(actions[0].reason), QString("probe-failed"));
+            CHECK_EQ(actions[0].fps, 0);
+        }
+        CHECK_EQ(policy.fps(), 60);
+
+        // A new chosen bitrate during the probe ends the episode: a congested window then is a
+        // new congestion, never a revert above the new ceiling
+        NetworkAdapt ceiling;
+        ceiling.reset(35000, 0, Policy::QualityPriority, true, 60, true);
+        t = 0;
+        i = 0;
+        runDesktop(ceiling, t, 8, 3, i);
+        runDesktop(ceiling, t, 96, 100, i);
+        CHECK_EQ(sequence(runDesktop(ceiling, t, 2, 3, i)), QString("35000 fps 60"));
+        actions = runWindows(ceiling, t, 1, desktopWindow(3, i++), 15000);
+        CHECK_EQ(sequence(actions), QString("15000"));
+        for (int k = 0; k < 8; k++) {
+            actions += runWindows(ceiling, t, 1, desktopWindow(100, i++), 15000);
+        }
+        for (const ReplayAction& a : actions) {
+            CHECK(QString(a.reason) != "probe-failed");
+            CHECK(a.bitrateKbps <= 15000);
+        }
+        CHECK(ceiling.bitrate() <= 15000);
+    }
+    {
+        // A slow drain: the round trip falls from 300 ms over 2.5 s after our last cut and is
+        // still congested (and well below 300) 2 s after it: our queue draining, not a cause that
+        // went away. Gradual recovery, no fast jump
+        NetworkAdapt drain;
+        drain.reset(35000, 0, Policy::FramePriority, true);
+        uint64_t t = 0;
+        runWindows(drain, t, 8, cleanWindow(3), 35000);
+        QVector<ReplayAction> actions = runWindows(drain, t, 6, congestedWindow(300), 35000);
+        CHECK_EQ(sequence(actions), QString("24500, 17000, 11500"));
+        const uint64_t lastCut = t;
+        actions.clear();
+        for (int k = 1; k <= 10; k++) {
+            actions += runWindows(drain, t, 1, cleanWindow(300 - 297 * k / 10), 35000);
+        }
+        actions += runWindows(drain, t, 40, cleanWindow(3), 35000);
+        CHECK(!actions.isEmpty());
+        for (const ReplayAction& a : actions) {
+            CHECK(QString(a.reason) != "fast-recover");
+        }
+        if (!actions.isEmpty()) {
+            CHECK_EQ(QString(actions[0].reason), QString("recover"));
+            CHECK(near(actions[0].atS * 1000 - lastCut, 6000));
+        }
     }
     {
         // A real bottleneck: the round trip follows our bitrate (3 ms + 1 ms per 100 kbps above

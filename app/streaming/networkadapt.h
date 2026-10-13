@@ -50,14 +50,18 @@
 // the clean windows.
 // The usual round trip is tracked as a minimum that rises only in clean windows (0.5 ms per
 // second), so a congestion that lasts is not mistaken for the new normal.
-// Fast recovery: a congestion that ends with 2 clean windows without dropped frames, 2 s or more
-// after our last cut or halving (the round trip fell on its own: the cause outside went away,
-// as when the fourth recording's 100 ms path delay stopped and the gradual recovery then took
-// 15-25 s), brings back the bitrate and frame rate from before the congestion in one action
-// ("fast-recover"). For 2 s after it, a congested window or one with 2 dropped frames or more
-// reverts to the values before the jump in one action ("probe-failed"), and fast recovery stays
-// off for 60 s; the gradual recovery goes on from there. A round trip that falls within 2 s of
-// our cut means the cuts drained our own queue: gradual recovery.
+// Fast recovery: a congestion regime that ends with 2 clean windows in a row without a dropped
+// frame (not one that turns into link loss or ends after 24 grey windows), when the round trip
+// 2 s after our last cut or halving was still congested and no more than 10 ms below its value
+// at that action (it fell on its own later: the cause outside went away, as when the fourth
+// recording's 100 ms path delay stopped and the gradual recovery then took 15-25 s), brings
+// back the bitrate and frame rate from before the congestion in one action ("fast-recover").
+// For 2 s after it, a congested window or one with 2 dropped frames or more reverts to the
+// values before the jump in one action ("probe-failed"; the frame rate only while quality
+// priority can lower it, the bitrate not above the chosen one), and fast recovery stays off for
+// 60 s; the gradual recovery goes on from there. A round trip that is back within 2 s of our
+// cut, or already falling 2 s after it, means the cuts drained our own queue: gradual recovery.
+// A new chosen bitrate ends the episode (and a probe in progress).
 // Recovery: after 12 clean windows (3 s) the bitrate rises by 15% of the chosen value towards
 // it, every 3 s; the first rise after a cut waits 6 s after that cut. A step that brings the
 // bitrate back to the value a halving was made at also brings back that frame rate in the same
@@ -173,6 +177,7 @@ public:
         m_PreKbps = 0;
         m_FastArmed = false;
         m_FirstCleanMs = 0;
+        m_QuietRttMs = -1;
         m_ProbeUntilMs = 0;
         m_FastOffUntilMs = 0;
     }
@@ -279,6 +284,10 @@ public:
             m_RaiseToFloor = false;
             clearStreaks();
             m_LossCuts = m_CongestionCuts = 0;
+            // The user's new value is where things start again: no episode to come back to
+            m_PreKbps = 0;
+            m_FastArmed = false;
+            m_ProbeUntilMs = 0;
             action.bitrateKbps = m_Bitrate;
             action.reason = "ceiling";
             return action;
@@ -347,7 +356,8 @@ public:
             // fell on its own
             if (wasCongested && m_Regime == Regime::Clean && m_CleanStreak >= kDecisionWindows &&
                     !m_DropCur && !m_DropPrev && episodeOpen() && nowMs >= m_FastOffUntilMs &&
-                    m_FirstCleanMs - kWindowMs >= (std::max)(m_LastCutMs, m_LastFpsCutMs) + kFastRecoveryQuietMs) {
+                    m_FirstCleanMs - kWindowMs >= lastCutMs() + kFastRecoveryQuietMs &&
+                    m_QuietRttMs >= 0 && m_QuietRttMs >= m_RttAtLastCut - kRttFallingMs) {
                 m_FastArmed = true;
             }
             if (m_FastArmed && nowMs - m_LastActionMs >= kActionGapMs) {
@@ -368,6 +378,9 @@ public:
         m_CleanStreak = 0;
         m_FastArmed = false;
         m_BadStreak++;
+        if (c == Class::Congested && m_QuietRttMs < 0 && nowMs >= lastCutMs() + kFastRecoveryQuietMs) {
+            m_QuietRttMs = w.rttMs;  // the round trip 2 s after our last cut: still up, or falling?
+        }
         if (c == Class::Grey) {
             // Mild loss, or a somewhat higher round trip: no decision, half a clean window
             m_NonBadStreak++;
@@ -464,6 +477,8 @@ private:
         return Class::Grey;
     }
 
+    uint64_t lastCutMs() const { return (std::max)(m_LastCutMs, m_LastFpsCutMs); }
+
     // A congestion episode that has not come back to the values from before it
     bool episodeOpen() const
     {
@@ -493,22 +508,25 @@ private:
         return action;
     }
 
-    // The jump was too early: back to the values before it, gradual recovery from there
+    // The jump was too early: back to the values before it (the bitrate not above the chosen
+    // one; the frame rate only while quality priority can lower it), gradual recovery from there
     Action& probeFailed(uint64_t nowMs, Action& action)
     {
         m_ProbeUntilMs = 0;
         m_FastOffUntilMs = nowMs + kFastRecoveryOffMs;
-        if (m_Bitrate != m_ProbeKbps) {
-            m_Bitrate = m_ProbeKbps;
+        const int kbps = (std::min)(m_ProbeKbps, m_Chosen);
+        if (m_Bitrate != kbps) {
+            m_Bitrate = kbps;
             action.bitrateKbps = m_Bitrate;
         }
-        if (m_Fps != m_ProbeFps) {
+        if (m_Fps != m_ProbeFps && m_Policy == Policy::QualityPriority && m_FpsAvailable) {
             m_Fps = m_ProbeFps;
             m_FpsSteps = m_ProbeFpsSteps;
             m_LastFpsCutMs = nowMs;
             action.fps = m_Fps;
         }
         m_LastActionMs = m_LastCutMs = nowMs;
+        m_QuietRttMs = -1;
         action.reason = "probe-failed";
         return action;
     }
@@ -560,6 +578,7 @@ private:
             m_FpsFrom[m_FpsSteps++] = m_Fps;
             m_Fps = halved(m_Fps);
             m_LastActionMs = m_LastCutMs = m_LastFpsCutMs = nowMs;
+            m_QuietRttMs = -1;
             if (m_CongestionCuts == 0) {
                 m_RttAtFirstAction = w.rttMs;
             }
@@ -596,6 +615,7 @@ private:
         if (next < m_Bitrate) {
             m_Bitrate = next;
             m_LastActionMs = m_LastCutMs = nowMs;
+            m_QuietRttMs = -1;
             action.bitrateKbps = next;
             action.reason = reason;
         }
@@ -690,6 +710,7 @@ private:
     int m_PreFpsSteps = 0;
     bool m_FastArmed = false;      // fast recovery due at the next window the action gap allows
     uint64_t m_FirstCleanMs = 0;   // the end of the clean streak's first window
+    int m_QuietRttMs = -1;         // the first congested round trip 2 s after our last cut (-1: none)
     uint64_t m_ProbeUntilMs = 0;   // after a fast recovery (0: no probe)
     int m_ProbeKbps = 0;           // the values before the jump
     int m_ProbeFps = 0;

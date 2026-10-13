@@ -191,13 +191,18 @@ automatically to the network" in the stream panel. It is off by default.
     windows, so a congestion that lasts is never mistaken for the new normal.
   - Windows with fewer than 3 frames (a still picture: Shell sends only 10 to 12 frames per second
     for one) decide nothing and count as neither good nor bad, so desktop work with pauses recovers.
-  - **Fast recovery**: when a congestion ends with two clean windows without dropped frames 2 s
-    or more after Hermit's last cut or halving, the round trip fell on its own (the cause outside
-    went away), and the bitrate and frame rate from before the congestion come back in one step.
-    For 2 s after that step, a congested window or one with 2 dropped frames or more undoes it in
-    one step, and fast recovery stays off for 60 s; recovery then goes on gradually. When the round
-    trip falls within 2 s of a cut, the cuts drained Hermit's own queue: gradual recovery. In the
-    fourth recording the gradual recovery took 15 to 25 s after the 100 ms delay stopped.
+  - **Fast recovery**: when a congestion ends with two clean windows in a row without a dropped
+    frame, and the round trip 2 s after Hermit's last cut or halving was still congested and no
+    more than 10 ms below its value at that action, the round trip fell on its own later (the
+    cause outside went away), and the bitrate and frame rate from before the congestion come back
+    in one step. Only a congestion that ends this way counts: not one that turns into link loss or
+    ends after 24 grey windows. For 2 s after that step, a congested window or one with 2 dropped
+    frames or more undoes it in one step (the bitrate not above the chosen one, the frame rate only
+    while **Keep the quality** can lower it), and fast recovery stays off for 60 s; recovery then
+    goes on gradually. When the round trip is back within 2 s of a cut, or already falling 2 s
+    after it, the cuts drained Hermit's own queue: gradual recovery. A new chosen bitrate ends the
+    episode. In the fourth recording the gradual recovery took 15 to 25 s after the 100 ms delay
+    stopped.
   - **Recovery**: after 3 s of clean windows (less than 1% loss, usual round trip) the bitrate rises
     by 15% of the chosen bitrate, every 3 s, up to the chosen bitrate; the first rise after a cut
     waits 6 s after that cut. FEC goes down one step after 30 s of clean windows, and again 30 s
