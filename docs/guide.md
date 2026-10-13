@@ -160,10 +160,16 @@ automatically to the network" in the stream panel. It is off by default.
 - Every 250 ms, Hermit looks at the frames that arrived, the frame numbers the network skipped and
   the round-trip time, and tells two kinds of trouble apart. It never reconnects.
   - **Congestion**: the round-trip time rises well above its usual value (by more than 40 ms and 1.5
-    times), with or without loss. The link cannot carry the bitrate, so the bitrate is cut at once
-    and again every 0.5 s while it lasts, down to the policy's floor (below).
-  - **Link loss**: 5% or more of the frames are lost while the round-trip time stays flat (within
-    20 ms of usual). Lowering the bitrate does not help here (the first recording showed the same
+    times), with or without loss. The bitrate is cut once at once, as a precaution. Further cuts
+    need a delivery symptom in the last two windows (a dropped frame, or a gap between arrivals of
+    2.5 frame intervals): then the cuts go on every 0.5 s down to the policy's floor (below).
+    Without a symptom, one more cut comes only when the round-trip time is still rising (10 ms
+    above the previous cut's), 1.5 s later at the earliest, and that is all. The second recording
+    showed round trips of 50 to 79 ms for 4 to 6 s with every frame delivered on time, which did
+    not react to cuts at all.
+  - **Link loss**: 5% or more of the frames are lost, at least two in a window (a single dropped
+    frame is a blip), while the round-trip time stays flat (within 20 ms of usual). Lowering the
+    bitrate does not help here (the first recording showed the same
     loss at 35 and at 7 Mbps), so Hermit first raises the host's forward error correction (FEC) from
     the host's default (usually 20%) to 35% and then 50%. 50% parity puts 1.5 times the bytes on the
     wire, so when loss goes on for 2 more seconds at 50% the bitrate is cut by 15%, at most twice

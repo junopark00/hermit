@@ -7,19 +7,23 @@
 
 // Hermit: network adaptation for streams to a Shell host (DEV-PLAN 1.4 step 2). Replaces the
 // one-second automatic bitrate: fed every 250 ms with the frames that arrived, the frame numbers
-// the network skipped and the control stream's round trip, it tells two kinds of trouble apart
-// and answers each with the tool that works for it:
+// the network skipped, the longest gap between arrivals and the control stream's round trip, it
+// tells two kinds of trouble apart and answers each with the tool that works for it:
 // - congestion (the round trip rises well above its usual value: by more than 40 ms and 1.5x,
-//   with or without loss) means the link cannot carry the bitrate: the bitrate is cut at once,
-//   by 30% (frame priority) or 20% (quality priority), again every 500 ms while it lasts, down
-//   to the policy's floor;
-// - link loss (5% or more of the frames lost while the round trip stays flat, within 20 ms of
-//   usual) is not caused by the bitrate (the first recording showed the same loss at 35 and at
-//   7 Mbps), so forward error correction is raised first, from the host's default to 35 and 50%
-//   (at least). 50% parity puts 1.5x the bytes on the wire, so when loss goes on for 8 more
-//   windows (2 s) at 50% the bitrate is cut by 15%, at most twice (about 0.72x, which brings the
-//   wire rate back near the original); further cuts come only from congestion. Quality priority
-//   keeps a high floor and stays at 50% FEC there.
+//   with or without loss) means the link may not carry the bitrate: the bitrate is cut once as a
+//   precaution, by 30% (frame priority) or 20% (quality priority). Further cuts need a delivery
+//   symptom (a dropped frame, or an arrival gap of 2.5 frame intervals) in the last two windows,
+//   then every 500 ms down to the floor; without a symptom one more cut comes only when the round
+//   trip is still rising (10 ms above the previous cut's), 1.5 s later at the earliest. The
+//   second recording showed round trips of 50-79 ms for 4-6 s with perfect delivery that did not
+//   react to cuts at all;
+// - link loss (5% or more of the frames lost, at least two, while the round trip stays flat,
+//   within 20 ms of usual) is not caused by the bitrate (the first recording showed the same loss
+//   at 35 and at 7 Mbps), so forward error correction is raised first, from the host's default to
+//   35 and 50% (at least). 50% parity puts 1.5x the bytes on the wire, so when loss goes on for
+//   8 more windows (2 s) at 50% the bitrate is cut by 15%, at most twice (about 0.72x, which
+//   brings the wire rate back near the original); further cuts come only from congestion.
+//   Quality priority keeps a high floor and stays at 50% FEC there.
 // A decision needs 2 consecutive windows of the same kind (0.5 s); one action per 500 ms at
 // most; a window of the other kind does not switch the regime until it repeats (no flapping);
 // windows with fewer than 3 frames (a still picture) decide nothing and neither add to nor clear
@@ -28,9 +32,10 @@
 // second), so a congestion that lasts is not mistaken for the new normal.
 // Recovery: after 12 clean windows (3 s) the bitrate rises by 15% of the chosen value towards
 // it, every 3 s; the first rise after a cut waits 6 s after that cut. FEC goes down one step
-// after 24 clean windows (6 s), every 6 s. A grey window (1-5% loss, or a round trip 16-40 ms
-// above usual) counts half a clean window towards recovery, and 24 grey or clean windows in a
-// row end a trouble regime, so a link with a steady 2% loss still recovers, slowly.
+// after 24 clean windows (6 s), every 6 s. A grey window (1-5% loss or a single dropped frame,
+// or a round trip 16-40 ms above usual) counts half a clean window towards recovery, and 24 grey
+// or clean windows in a row end a trouble regime, so a link with a steady 2% loss still
+// recovers, slowly.
 // Floors: frame priority max(2 Mbps, chosen/8), quality priority max(4 Mbps, chosen/3), rounded
 // down to 500 kbps. A switch to quality priority below its floor raises the bitrate to the floor
 // at the next clean window.
@@ -47,7 +52,9 @@ public:
     struct Window {
         int framesReceived = 0;
         int framesDropped = 0;   // frame numbers skipped on arrival (lost in the network)
+        int maxGapMs = 0;        // longest gap between two arrivals (a stall still going on counts)
         int rttMs = 0;           // 0 when unknown
+        int fps = 60;            // the stream's frame rate: what a gap is measured against
     };
 
     struct Action {
@@ -61,8 +68,13 @@ public:
     static constexpr int kFecMid = 35;
     static constexpr int kFecMax = 50;
     static constexpr int kMinFramesPerWindow = 3;
+    static constexpr int kMinDroppedForLoss = 2;
     static constexpr int kDecisionWindows = 2;
+    static constexpr float kGapSymptomIntervals = 2.5f;
+    static constexpr int kRttRisingMs = 10;
     static constexpr uint64_t kActionGapMs = 500;
+    static constexpr uint64_t kCongestionCutGapMs = 1500;    // between cuts without a symptom
+    static constexpr int kMaxCongestionCutsWithoutSymptom = 2;
     static constexpr int kLossWindowsBeforeCut = 8;
     static constexpr int kMaxLossCuts = 2;
     static constexpr int kRaiseAfterCleanWindows = 12;
@@ -87,7 +99,8 @@ public:
         m_RaiseToFloor = false;
         m_LastActionMs = m_LastCutMs = m_LastRaiseMs = m_LastFecDownMs = 0;
         clearStreaks();
-        m_LossCuts = 0;
+        m_LossCuts = m_CongestionCuts = 0;
+        m_SymptomCur = m_SymptomPrev = false;
     }
 
     int bitrate() const { return m_Bitrate; }
@@ -131,6 +144,18 @@ public:
                                                  : (std::max)(4000, m_Chosen / 3 / 500 * 500);
     }
 
+    // A delivery symptom: frames went missing, or arrivals stalled for 2.5 frame intervals (of
+    // the stream's rate, or of the window's own rate when fewer frames come, as for a still
+    // picture that Shell sends at 10-12 frames a second)
+    static bool hasSymptom(const Window& w)
+    {
+        if (w.framesDropped >= 1) {
+            return true;
+        }
+        const float intervalMs = (std::max)(1000.0f / (std::max)(w.fps, 1), (float)kWindowMs / (std::max)(w.framesReceived, 1));
+        return w.maxGapMs > kGapSymptomIntervals * intervalMs;
+    }
+
     // One 250 ms window ending at nowMs. chosenKbps: the user's current choice; a new one
     // restarts the bitrate there (the ceiling moved) and keeps the FEC step.
     Action update(const Window& w, uint64_t nowMs, int chosenKbps)
@@ -143,7 +168,7 @@ public:
             m_LastCutMs = 0;
             m_RaiseToFloor = false;
             clearStreaks();
-            m_LossCuts = 0;
+            m_LossCuts = m_CongestionCuts = 0;
             action.bitrateKbps = m_Bitrate;
             action.reason = "ceiling";
             return action;
@@ -158,6 +183,9 @@ public:
         if (w.framesReceived < kMinFramesPerWindow) {
             return action;  // too few frames to judge: neither clean nor trouble
         }
+
+        m_SymptomPrev = m_SymptomCur;
+        m_SymptomCur = hasSymptom(w);
 
         const Class c = classify(w);
         if (c == Class::Clean) {
@@ -208,11 +236,13 @@ public:
                 m_LossStreak = 0;
             }
         }
-        if (m_CongestedStreak >= kDecisionWindows) {
+        if (m_CongestedStreak >= kDecisionWindows && m_Regime != Regime::Congested) {
             m_Regime = Regime::Congested;
+            m_CongestionCuts = 0;
         }
-        else if (m_LossStreak >= kDecisionWindows) {
+        else if (m_LossStreak >= kDecisionWindows && m_Regime != Regime::Loss) {
             m_Regime = Regime::Loss;
+            m_LossCuts = 0;
         }
         if (c == Class::Loss && m_Regime == Regime::Loss && (m_Fec >= fecMax() || !m_FecAvailable)) {
             m_LossWindowsAtMaxFec++;  // loss going on at the top of the ladder (grey windows do not count)
@@ -225,7 +255,7 @@ public:
             return action;  // a grey window decides nothing (trouble that is easing is not cut further)
         }
         if (m_Regime == Regime::Congested) {
-            return cut(m_Policy == Policy::FramePriority ? 0.7f : 0.8f, nowMs, "congested", action);
+            return congestionCut(w, nowMs, action);
         }
         if (m_Fec < fecMax() && m_FecAvailable) {
             m_Fec = m_Fec < fecMid() ? fecMid() : fecMax();
@@ -256,7 +286,7 @@ private:
         if (overBase > 40 && w.rttMs > m_BaseRtt * 1.5f) {
             return Class::Congested;
         }
-        if (lossPct >= 5.0f && overBase <= 20) {
+        if (lossPct >= 5.0f && w.framesDropped >= kMinDroppedForLoss && overBase <= 20) {
             return Class::Loss;
         }
         if (lossPct < 1.0f && overBase <= 15) {
@@ -269,7 +299,36 @@ private:
     {
         m_Regime = Regime::Clean;
         m_LossStreak = m_CongestedStreak = m_LossWindowsAtMaxFec = 0;
-        m_LossCuts = 0;
+        m_LossCuts = m_CongestionCuts = 0;
+    }
+
+    // The congestion regime's cuts: the first as a precaution; then only with a delivery symptom
+    // in the last two windows (every 500 ms), or while the round trip is still rising (once more,
+    // 1.5 s later at the earliest). A round trip that rises on its own and delivers every frame
+    // is left alone after that.
+    Action& congestionCut(const Window& w, uint64_t nowMs, Action& action)
+    {
+        const float factor = m_Policy == Policy::FramePriority ? 0.7f : 0.8f;
+        bool allowed;
+        if (m_CongestionCuts == 0) {
+            allowed = true;
+        }
+        else if (m_SymptomCur || m_SymptomPrev) {
+            allowed = true;
+        }
+        else {
+            allowed = m_CongestionCuts < kMaxCongestionCutsWithoutSymptom &&
+                      nowMs - m_LastCutMs >= kCongestionCutGapMs &&
+                      w.rttMs > m_BaseRtt + 40 && w.rttMs >= m_RttAtLastCut + kRttRisingMs;
+        }
+        if (allowed) {
+            cut(factor, nowMs, "congested", action);
+            if (action.reason != nullptr) {
+                m_CongestionCuts++;
+                m_RttAtLastCut = w.rttMs;
+            }
+        }
+        return action;
     }
 
     Action& cut(float factor, uint64_t nowMs, const char* reason, Action& action)
@@ -332,6 +391,10 @@ private:
     int m_CongestedStreak = 0;
     int m_LossWindowsAtMaxFec = 0;
     int m_LossCuts = 0;            // bitrate cuts in the loss regime since it began
+    int m_CongestionCuts = 0;      // bitrate cuts in the congestion regime since it began
+    int m_RttAtLastCut = 0;
+    bool m_SymptomCur = false;     // delivery symptom in this window and the one before
+    bool m_SymptomPrev = false;
     int m_RaiseHalves = 0;         // clean windows (2) and grey windows (1) since the last raise
     int m_FecHalves = 0;           // and since the last FEC step down
     uint64_t m_LastActionMs = 0;

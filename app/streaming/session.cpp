@@ -2506,6 +2506,8 @@ void Session::handleNetworkWindow(uint64_t now)
         window.framesDropped = static_cast<int>(dropped - m_AdaptLastDropped);
         m_AdaptLastReceived = received;
         m_AdaptLastDropped = dropped;
+        window.maxGapMs = NetDiagLog::window().takeArrivalGapMs(LiGetMicroseconds());
+        window.fps = m_StreamConfig.fps;
         uint32_t rtt = 0, rttVariance = 0;
         if (LiGetEstimatedRttInfo(&rtt, &rttVariance)) {
             window.rttMs = static_cast<int>(rtt);

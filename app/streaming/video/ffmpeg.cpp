@@ -2145,9 +2145,12 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 
     // Hermit: running totals for network adaptation (session.cpp samples them every 250 ms), and
     // network diagnostics (netdiag.h): one flag check per frame while the recording is off
-    NetDiagLog::window().onFrameArrival(droppedBefore);
-    if (NetDiagLog::isOn()) {
-        NetDiagLog::window().onFrameReceived(LiGetMicroseconds(), droppedBefore, du->frameHostProcessingLatency);
+    {
+        const uint64_t arrivalUs = LiGetMicroseconds();
+        NetDiagLog::window().onFrameArrival(arrivalUs, droppedBefore);
+        if (NetDiagLog::isOn()) {
+            NetDiagLog::window().onFrameReceived(arrivalUs, droppedBefore, du->frameHostProcessingLatency);
+        }
     }
 
     m_BwTracker.AddBytes(du->fullLength);

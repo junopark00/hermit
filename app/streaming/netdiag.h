@@ -124,14 +124,20 @@ public:
         m_RenderQueueMax.store(0, std::memory_order_relaxed);
     }
 
-    // Decoder thread, once per decode unit, recording or not: running totals for the network
-    // adaptation controller (session.cpp reads them every 250 ms and takes the difference).
-    // Two relaxed increments; never reset.
-    void onFrameArrival(uint32_t droppedBefore)
+    // Decoder thread, once per decode unit, recording or not: running totals and the longest
+    // arrival gap for the network adaptation controller (session.cpp reads them every 250 ms:
+    // the difference of the totals, and the gap, which it takes and clears). A few relaxed
+    // atomic operations; the totals are never reset.
+    void onFrameArrival(uint64_t nowUs, uint32_t droppedBefore)
     {
         m_TotalReceived.fetch_add(1, std::memory_order_relaxed);
         if (droppedBefore != 0) {
             m_TotalNetworkDropped.fetch_add(droppedBefore, std::memory_order_relaxed);
+        }
+        const uint64_t last = m_AdaptLastArrivalUs.load(std::memory_order_relaxed);
+        m_AdaptLastArrivalUs.store(nowUs, std::memory_order_relaxed);
+        if (last != 0 && nowUs > last && nowUs - last > m_AdaptMaxGapUs.load(std::memory_order_relaxed)) {
+            m_AdaptMaxGapUs.store(nowUs - last, std::memory_order_relaxed);
         }
     }
 
@@ -139,6 +145,19 @@ public:
     {
         received = m_TotalReceived.load(std::memory_order_relaxed);
         networkDropped = m_TotalNetworkDropped.load(std::memory_order_relaxed);
+    }
+
+    // Main thread, at the end of a controller window: the longest gap between two arrivals since
+    // the last call, or the time since the last arrival when that is longer (a stall still going
+    // on counts), in ms; starts the next window.
+    int takeArrivalGapMs(uint64_t nowUs)
+    {
+        uint64_t gapUs = m_AdaptMaxGapUs.exchange(0, std::memory_order_relaxed);
+        const uint64_t last = m_AdaptLastArrivalUs.load(std::memory_order_relaxed);
+        if (last != 0 && nowUs > last) {
+            gapUs = (std::max)(gapUs, nowUs - last);
+        }
+        return static_cast<int>(gapUs / 1000);
     }
 
     // Decoder thread, once per decode unit while recording. droppedBefore: frame numbers skipped
@@ -243,6 +262,8 @@ private:
     std::atomic<int> m_RenderQueueMax {0};
     std::atomic<uint32_t> m_TotalReceived {0};
     std::atomic<uint32_t> m_TotalNetworkDropped {0};
+    std::atomic<uint64_t> m_AdaptLastArrivalUs {0};
+    std::atomic<uint64_t> m_AdaptMaxGapUs {0};
 };
 
 // The recorder. One per stream, owned by Session; created when the stream loop starts (or when
