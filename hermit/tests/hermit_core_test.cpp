@@ -833,15 +833,16 @@ static void testNetworkAdapt()
         CHECK_EQ(adapt.fps(), 60);
         CHECK_EQ(adapt.bitrate(), 30000);
 
-        // A gap is measured against the lowered frame rate: 65 ms is 2.5 intervals at 60 fps but
-        // not at 30
+        // A gap is measured against the frame rate the host streams at (the window's, which
+        // session.cpp takes from the host's reply): 65 ms is 2.5 intervals at 60 fps but not at 30
         NetworkAdapt::Window gap = stallWindow(5);
         gap.maxGapMs = 65;
-        CHECK(adapt.hasSymptom(gap));
+        CHECK_EQ(gap.framesReceived, 14);
+        CHECK(NetworkAdapt::hasSymptom(gap));
+        gap.fps = 30;
+        CHECK(!NetworkAdapt::hasSymptom(gap));
         actions = runWindows(adapt, t, 4, congestedWindow(65), 30000);
         CHECK_EQ(sequence(actions), QString("24000, fps 30"));
-        gap.framesReceived = 7;
-        CHECK(!adapt.hasSymptom(gap));
 
         // A new chosen bitrate (the ceiling) keeps the frame rate
         t += 250;
@@ -869,6 +870,80 @@ static void testNetworkAdapt()
         refused.setFpsAvailable(false);
         CHECK_EQ(refused.fps(), 60);
         CHECK(sequence(runWindows(refused, t, 40, congestedWindow(65), 30000)).indexOf("fps") < 0);
+
+        // A congestion that ends and comes back does not halve again above the floor: the step
+        // follows from the frame rate, not from the regime
+        NetworkAdapt again;
+        again.reset(30000, 0, Policy::QualityPriority, true, 60, true);
+        t = 0;
+        runWindows(again, t, 20, cleanWindow(5), 30000);
+        actions = runWindows(again, t, 4, congestedWindow(65), 30000);
+        actions += runWindows(again, t, 8, cleanWindow(5), 30000);
+        CHECK(again.regime() == Regime::Clean);
+        actions += runWindows(again, t, 6, congestedWindow(65), 30000);
+        CHECK_EQ(sequence(actions), QString("24000, fps 30, 19000, 15000, 12000"));
+        CHECK_EQ(again.fps(), 30);
+
+        // Spacing: at the floor the second halving waits 1.5 s after the first, and needs a
+        // symptom in its own window (the ones before the first halving do not count)
+        NetworkAdapt spaced;
+        spaced.reset(30000, 11000, Policy::QualityPriority, true, 60, true);
+        CHECK_EQ(spaced.floorKbps(), 10000);
+        t = 0;
+        runWindows(spaced, t, 8, cleanWindow(5), 30000);
+        actions = runWindows(spaced, t, 16, congestedWindow(65), 30000);
+        CHECK_EQ(sequence(actions), QString("10000, fps 30, fps 15"));
+        if (actions.size() == 3) {
+            CHECK(near(actions[2].atS - actions[1].atS, 1.5));
+        }
+        NetworkAdapt fresh;
+        fresh.reset(30000, 11000, Policy::QualityPriority, true, 60, true);
+        t = 0;
+        runWindows(fresh, t, 8, cleanWindow(5), 30000);
+        CHECK_EQ(sequence(runWindows(fresh, t, 4, congestedWindow(65), 30000)), QString("10000, fps 30"));
+        NetworkAdapt::Window quietCongested = cleanWindow(65);   // congested, every frame on time
+        CHECK(runWindows(fresh, t, 12, quietCongested, 30000).isEmpty());
+        CHECK_EQ(fresh.fps(), 30);
+        t += 250;
+        NetworkAdapt::Action floorHalving = fresh.update(congestedWindow(65), t, 30000);
+        CHECK_EQ(floorHalving.fps, 15);                           // the first fresh symptom
+        CHECK_EQ(QString(floorHalving.reason), QString("congested"));
+
+        // The way back retraces the halvings: 144 -> 70 -> 35 and back 70, 144; 165 -> 80 -> 40
+        // and back 80, 165
+        for (int streamFps : { 144, 165 }) {
+            NetworkAdapt odd;
+            odd.reset(30000, 0, Policy::QualityPriority, true, streamFps, true);
+            t = 0;
+            NetworkAdapt::Window clean = cleanWindow(5);
+            clean.fps = streamFps;
+            NetworkAdapt::Window congested = congestedWindow(65);
+            congested.fps = streamFps;
+            runWindows(odd, t, 20, clean, 30000);
+            const int first = streamFps == 144 ? 70 : 80;
+            CHECK_EQ(sequence(runWindows(odd, t, 60, congested, 30000)),
+                     QString("24000, fps %1, 19000, 15000, 12000, 10000, fps %2").arg(first).arg(first / 2));
+            CHECK_EQ(sequence(runWindows(odd, t, 240, clean, 30000)),
+                     QString("14500, 19000, 23500, 28000, 30000, fps %1, fps %2").arg(first).arg(streamFps));
+            CHECK_EQ(odd.fps(), streamFps);
+        }
+
+        // The frame rate climbs back 6 s after its halving at the earliest, also when a new
+        // ceiling brought the bitrate back at once
+        NetworkAdapt held;
+        held.reset(30000, 0, Policy::QualityPriority, true, 60, true);
+        t = 0;
+        runWindows(held, t, 20, cleanWindow(5), 30000);
+        actions = runWindows(held, t, 4, congestedWindow(65), 30000);
+        CHECK_EQ(sequence(actions), QString("24000, fps 30"));
+        const double halvedAtS = actions.isEmpty() ? 0 : actions.last().atS;
+        t += 250;
+        CHECK_EQ(QString(held.update(cleanWindow(5), t, 24000).reason), QString("ceiling"));
+        actions = runWindows(held, t, 40, cleanWindow(5), 24000);
+        CHECK_EQ(sequence(actions), QString("fps 60"));
+        if (actions.size() == 1) {
+            CHECK(near(actions[0].atS - halvedAtS, 6.0));
+        }
 
         // 120 fps halves to 60, then 30 at the floor
         NetworkAdapt fast;
@@ -1063,6 +1138,81 @@ static void testNetworkAdapt()
         CHECK(most <= 2);
         std::printf("  network adaptation FEC backoff (3rd recording pattern): %d FEC requests in 400 s, holds %.2f / %.2f / %.2f / %.2f s\n",
                     (int)fecActions.size(), holds[0], holds[1], holds[2], holds[3]);
+
+        // The host applies a FEC change 2 windows late (windows keep the old value until then):
+        // loss right after a raise still raises again, so the ladder overshoots to 50. A step
+        // down from 50 to 35 that holds must not bring the hold back to 30 s; only one to the
+        // base does, so relapses at the base still double it up to 120 s
+        NetworkAdapt late;
+        late.reset(35000, 0, Policy::QualityPriority, true);
+        t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            late.update(cleanWindow(5), t, 35000);
+        }
+        QVector<int> appliedAfter;                                // FEC after each update
+        QVector<ReplayAction> lateActions;
+        uint64_t mostHold = 0;
+        for (int i = 0; i < 3200; i++) {                          // 800 s
+            t += 250;
+            const int applied = appliedAfter.size() >= 3 ? appliedAfter[appliedAfter.size() - 3] : late.fecBase();
+            const NetworkAdapt::Action a = late.update(applied == late.fecBase() ? lossWindow(6, 6) : cleanWindow(5), t, 35000);
+            appliedAfter.append(late.fec());
+            if (a.fecPercent > 0) {
+                lateActions.append({ t / 1000.0, a.bitrateKbps, a.fecPercent, a.reason, a.fps });
+            }
+            mostHold = qMax(mostHold, late.fecHoldMs());
+        }
+        bool reached50 = false;
+        int lateMost = 0;
+        for (int i = 0; i < lateActions.size(); i++) {
+            reached50 = reached50 || lateActions[i].fecPercent == 50;
+            int inWindow = 0;
+            for (int j = i; j < lateActions.size() && lateActions[j].atS - lateActions[i].atS < 30.0; j++) {
+                inWindow++;
+            }
+            lateMost = qMax(lateMost, inWindow);
+        }
+        CHECK(reached50);
+        CHECK_EQ(mostHold, 120000u);
+        CHECK(lateMost <= 2);
+        std::printf("  network adaptation FEC backoff, host 2 windows late: %d FEC requests in 800 s, at most %d in 30 s, hold up to %d s\n",
+                    (int)lateActions.size(), lateMost, (int)(mostHold / 1000));
+
+        // The same rule step by step: a doubled hold survives a 50 -> 35 step down that holds,
+        // and goes back to 30 s only after the step down to the base held
+        NetworkAdapt ladder;
+        ladder.reset(35000, 0, Policy::QualityPriority, true);
+        t = 0;
+        auto feedUntil = [&](bool lossy, int fec) {
+            for (int i = 0; i < 1000 && ladder.fec() != fec; i++) {
+                t += 250;
+                ladder.update(lossy ? lossWindow(6, 6) : cleanWindow(5), t, 35000);
+            }
+            return t;
+        };
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            ladder.update(cleanWindow(5), t, 35000);
+        }
+        feedUntil(true, 35);
+        const uint64_t downTo20 = feedUntil(false, 20);
+        const uint64_t upTo50 = feedUntil(true, 50);               // a relapse: 35, then 50 after 1 s
+        CHECK(upTo50 - downTo20 >= 1500 && upTo50 - downTo20 <= 2000);
+        CHECK_EQ(ladder.fecHoldMs(), 60000u);
+        const uint64_t downTo35 = feedUntil(false, 35);
+        CHECK_EQ(downTo35 - upTo50, 60000u);
+        for (int i = 0; i < 41; i++) {
+            t += 250;
+            ladder.update(cleanWindow(5), t, 35000);
+        }
+        CHECK_EQ(ladder.fecHoldMs(), 60000u);                     // 50 -> 35 held: still doubled
+        CHECK_EQ(feedUntil(false, 20) - downTo35, 60000u);
+        for (int i = 0; i < 41; i++) {
+            t += 250;
+            ladder.update(cleanWindow(5), t, 35000);
+        }
+        CHECK_EQ(ladder.fecHoldMs(), 30000u);                     // the step to the base held
 
         // A step down that holds for 10 s brings the wait back to 30 s
         NetworkAdapt calm;

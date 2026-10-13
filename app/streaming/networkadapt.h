@@ -26,12 +26,16 @@
 //   Quality priority keeps a high floor and stays at 50% FEC there.
 // Frame rate (quality priority on a host that takes live frame rate changes, /actions/fps): after
 // the precautionary cut, the next cut a delivery symptom asks for halves the frame rate instead
-// (rounded down to a multiple of 5, 15 at least: 120 -> 60, 60 -> 30), so each frame gets twice
-// the bits and text stays sharp; further cuts lower the bitrate down to the floor, and when the
-// symptoms go on at the floor the frame rate is halved once more (15 at least). Frame priority
-// and link loss never change the frame rate; a switch to frame priority brings the stream's frame
-// rate back at the next window. One action per window: the frame rate and the bitrate never
-// change together.
+// (rounded down to a multiple of 5, 15 at least: 120 -> 60, 60 -> 30, 144 -> 70), so each frame
+// gets twice the bits and text stays sharp; further cuts lower the bitrate down to the floor, and
+// when the symptoms go on at the floor the frame rate is halved once more (60 -> 30 -> 15). In a
+// fresh congestion regime at the floor (the precaution has nothing to cut) the halving is the
+// first action. The first halving happens only at the stream's frame rate and the second only at
+// the floor one halving below it, whatever regimes came between. A halving needs a symptom in
+// its own window and 1.5 s since the last one, and clears the symptoms seen before it. Frame
+// priority and link loss never change the frame rate; a switch to frame priority brings the
+// stream's frame rate back at the next window. One action per window: the frame rate and the
+// bitrate never change together.
 // A decision needs 2 consecutive windows of the same kind (0.5 s); one action per 500 ms at
 // most; a window of the other kind does not switch the regime until it repeats (no flapping);
 // windows with fewer than 3 frames (a still picture) decide nothing and neither add to nor clear
@@ -40,12 +44,17 @@
 // second), so a congestion that lasts is not mistaken for the new normal.
 // Recovery: after 12 clean windows (3 s) the bitrate rises by 15% of the chosen value towards
 // it, every 3 s; the first rise after a cut waits 6 s after that cut. Once the bitrate is back
-// at the chosen value, the frame rate doubles back towards the stream's by the same rule.
+// at the chosen value, the frame rate climbs back by the same rule (and 6 s after the last
+// halving at the earliest), retracing the values it was halved from (35 -> 70 -> 144).
 // FEC goes down one step after 120 clean windows (30 s), 30 s after the last step down at the
 // earliest: the third recording showed 4% loss that FEC 35 hid completely and FEC 20 turned into
 // dropped frames within 0.5 s, so a step down after 6 s only found the loss again every 6.5 s.
-// When loss raises FEC again within 10 s of a step down, the next step down waits twice as long
-// (60 s, then 120 s at most); a step down that holds for 10 s brings the wait back to 30 s.
+// Only windows with frames count, so a still desktop keeps FEC up longer. When loss raises FEC
+// again within 10 s of a step down, the next step down waits twice as long (60 s, then 120 s at
+// most); a step down to the base that holds for 10 s brings the wait back to 30 s (one from 50
+// to 35 that holds does not). After such a relapse the step that held before gets 1 s to take
+// effect on the host before loss raises FEC further (loss in the meantime may still come from
+// before the change), so a relapse costs two requests, not three.
 // A grey window (1-5% loss or a single dropped frame, or a round trip 16-40 ms above usual)
 // counts half a clean window towards recovery, and 24 grey or clean windows in a row end a
 // trouble regime, so a link with a steady 2% loss still recovers, slowly.
@@ -67,7 +76,7 @@ public:
         int framesDropped = 0;   // frame numbers skipped on arrival (lost in the network)
         int maxGapMs = 0;        // longest gap between two arrivals (a stall still going on counts)
         int rttMs = 0;           // 0 when unknown
-        int fps = 60;            // the stream's frame rate: what a gap is measured against
+        int fps = 60;            // the frame rate the host streams at: what a gap is measured against
     };
 
     struct Action {
@@ -98,7 +107,9 @@ public:
     static constexpr uint64_t kFecDownHoldMs = 30000;       // clean time (and gap) before a FEC step down
     static constexpr uint64_t kFecDownHoldMaxMs = 120000;   // after relapses
     static constexpr uint64_t kFecRelapseMs = 10000;        // loss this soon after a step down doubles the hold
+    static constexpr uint64_t kFecRelapseSettleMs = 1000;   // after a relapse raise, before the next raise
     static constexpr int kMinFps = 15;
+    static constexpr int kMaxFpsSteps = 2;
 
     // chosenKbps: the user's bitrate, the ceiling; startKbps: where the host streams now (0: at
     // the ceiling); fecAvailable: the host takes live FEC changes and its default is known
@@ -113,7 +124,8 @@ public:
         m_Fps = streamFps;
         m_FpsAvailable = fpsAvailable;
         m_RestoreFps = false;
-        m_RegimeFpsCuts = 0;
+        m_FpsSteps = 0;
+        m_LastFpsCutMs = 0;
         m_Bitrate = startKbps > 0 ? (std::clamp)(startKbps, (std::min)(floorKbps(), chosenKbps), chosenKbps) : chosenKbps;
         m_Fec = m_FecBase;
         m_BaseRtt = -1;
@@ -122,6 +134,7 @@ public:
         m_LastActionMs = m_LastCutMs = m_LastRaiseMs = m_LastFecDownMs = 0;
         m_FecHoldMs = kFecDownHoldMs;
         m_FecDownWatch = false;
+        m_FecSettleUntilMs = 0;
         clearStreaks();
         m_LossCuts = m_CongestionCuts = 0;
         m_SymptomCur = m_SymptomPrev = false;
@@ -150,6 +163,9 @@ public:
         m_Policy = policy;
         m_RaiseToFloor = m_Bitrate < floorKbps();
         m_RestoreFps = policy == Policy::FramePriority && m_Fps < m_StreamFps;
+        if (m_RestoreFps) {
+            m_FpsSteps = 0;
+        }
     }
 
     void setFecAvailable(bool available) { m_FecAvailable = available; }
@@ -160,6 +176,7 @@ public:
         m_FpsAvailable = available;
         if (!available) {
             m_Fps = m_StreamFps;
+            m_FpsSteps = 0;
             m_RestoreFps = false;
         }
     }
@@ -185,15 +202,14 @@ public:
     }
 
     // A delivery symptom: frames went missing, or arrivals stalled for 2.5 frame intervals (of
-    // the stream's rate or the lowered one, or of the window's own rate when fewer frames come,
-    // as for a still picture that Shell sends at 10-12 frames a second)
-    bool hasSymptom(const Window& w) const
+    // the rate the host streams at, or of the window's own rate when fewer frames come, as for a
+    // still picture that Shell sends at 10-12 frames a second)
+    static bool hasSymptom(const Window& w)
     {
         if (w.framesDropped >= 1) {
             return true;
         }
-        const int fps = (std::min)(w.fps, m_Fps);
-        const float intervalMs = (std::max)(1000.0f / (std::max)(fps, 1), (float)kWindowMs / (std::max)(w.framesReceived, 1));
+        const float intervalMs = (std::max)(1000.0f / (std::max)(w.fps, 1), (float)kWindowMs / (std::max)(w.framesReceived, 1));
         return w.maxGapMs > kGapSymptomIntervals * intervalMs;
     }
 
@@ -225,8 +241,10 @@ public:
         }
 
         if (m_FecDownWatch && nowMs - m_LastFecDownMs >= kFecRelapseMs) {
-            m_FecDownWatch = false;  // the step down held: the next one waits the usual time
-            m_FecHoldMs = kFecDownHoldMs;
+            m_FecDownWatch = false;
+            if (m_Fec == m_FecBase) {
+                m_FecHoldMs = kFecDownHoldMs;  // the step down to the base held: the usual wait again
+            }
         }
 
         // Usual round trip: follows drops at once; rises (0.5 ms per second) only in clean
@@ -293,7 +311,7 @@ public:
         }
         if (m_CongestedStreak >= kDecisionWindows && m_Regime != Regime::Congested) {
             m_Regime = Regime::Congested;
-            m_CongestionCuts = m_RegimeFpsCuts = 0;
+            m_CongestionCuts = 0;
         }
         else if (m_LossStreak >= kDecisionWindows && m_Regime != Regime::Loss) {
             m_Regime = Regime::Loss;
@@ -312,11 +330,13 @@ public:
         if (m_Regime == Regime::Congested) {
             return congestionCut(w, nowMs, action);
         }
-        if (m_Fec < fecMax() && m_FecAvailable) {
+        if (m_Fec < fecMax() && m_FecAvailable && nowMs >= m_FecSettleUntilMs) {
             if (m_FecDownWatch) {
-                // Loss again soon after a step down: that step was too early
+                // Loss again soon after a step down: that step was too early. The step it goes
+                // back to held before: give it time to reach the host before going higher.
                 m_FecDownWatch = false;
                 m_FecHoldMs = (std::min)(kFecDownHoldMaxMs, m_FecHoldMs * 2);
+                m_FecSettleUntilMs = nowMs + kFecRelapseSettleMs;
             }
             m_Fec = m_Fec < fecMid() ? fecMid() : fecMax();
             m_LastActionMs = nowMs;
@@ -359,14 +379,15 @@ private:
     {
         m_Regime = Regime::Clean;
         m_LossStreak = m_CongestedStreak = m_LossWindowsAtMaxFec = 0;
-        m_LossCuts = m_CongestionCuts = m_RegimeFpsCuts = 0;
+        m_LossCuts = m_CongestionCuts = 0;
     }
 
     // The congestion regime's cuts: the first as a precaution; then only with a delivery symptom
     // in the last two windows (every 500 ms), or while the round trip is still rising (once more,
     // 1.5 s later at the earliest). A round trip that rises on its own and delivers every frame
     // is left alone after that. Quality priority on a live frame rate host halves the frame rate
-    // at the first cut a symptom asks for after the precaution, and once more at the floor.
+    // at the first cut a symptom asks for after the precaution (from the stream's rate), and once
+    // more at the floor (from one halving below it).
     Action& congestionCut(const Window& w, uint64_t nowMs, Action& action)
     {
         const float factor = m_Policy == Policy::FramePriority ? 0.7f : 0.8f;
@@ -387,15 +408,18 @@ private:
             return action;
         }
         // After the precaution (or at the floor, where it cuts nothing): the frame rate first,
-        // then the bitrate down to the floor, then the frame rate once more
+        // then the bitrate down to the floor, then the frame rate once more. The step follows
+        // from the state, so a regime that ends and starts again does not repeat a halving.
         const bool atFloor = m_Bitrate <= floorKbps();
-        if (symptom && canLowerFps() && (m_CongestionCuts > 0 || atFloor) &&
-                (m_RegimeFpsCuts == 0 || (m_RegimeFpsCuts == 1 && atFloor))) {
-            m_Fps = (std::max)(kMinFps, m_Fps / 2 / 5 * 5);
-            m_LastActionMs = m_LastCutMs = nowMs;
+        const bool fpsStepDue = m_FpsSteps == 0 ? (m_CongestionCuts > 0 || atFloor) : (m_FpsSteps == 1 && atFloor);
+        if (fpsStepDue && m_SymptomCur && canLowerFps() && nowMs - m_LastFpsCutMs >= kCongestionCutGapMs) {
+            m_FpsFrom[m_FpsSteps++] = m_Fps;
+            m_Fps = halved(m_Fps);
+            m_LastActionMs = m_LastCutMs = m_LastFpsCutMs = nowMs;
             m_CongestionCuts++;
-            m_RegimeFpsCuts++;
             m_RttAtLastCut = w.rttMs;
+            // What came before the halving says nothing about the lower rate
+            m_SymptomCur = m_SymptomPrev = false;
             action.fps = m_Fps;
             action.reason = "congested";
             return action;
@@ -408,9 +432,12 @@ private:
         return action;
     }
 
+    static int halved(int fps) { return (std::max)(kMinFps, fps / 2 / 5 * 5); }
+
     bool canLowerFps() const
     {
-        return m_Policy == Policy::QualityPriority && m_FpsAvailable && m_Fps > kMinFps;
+        return m_Policy == Policy::QualityPriority && m_FpsAvailable && m_FpsSteps < kMaxFpsSteps &&
+               halved(m_Fps) < m_Fps;
     }
 
     Action& cut(float factor, uint64_t nowMs, const char* reason, Action& action)
@@ -440,10 +467,10 @@ private:
             action.reason = "recover";
             return action;
         }
-        if (m_Fps < m_StreamFps && m_Bitrate >= m_Chosen && m_RaiseHalves >= 2 * kRaiseAfterCleanWindows &&
-                nowMs - m_LastRaiseMs >= kRaiseGapMs && nowMs - m_LastCutMs >= kRaiseHoldAfterCutMs) {
-            // The bitrate is back: then the frame rate, one doubling at a time
-            m_Fps = (std::min)(m_StreamFps, m_Fps * 2);
+        if (m_FpsSteps > 0 && m_Bitrate >= m_Chosen && m_RaiseHalves >= 2 * kRaiseAfterCleanWindows &&
+                nowMs - m_LastRaiseMs >= kRaiseGapMs && nowMs - m_LastFpsCutMs >= kRaiseHoldAfterCutMs) {
+            // The bitrate is back: then the frame rate, back up the values it was halved from
+            m_Fps = m_FpsFrom[--m_FpsSteps];
             m_LastActionMs = m_LastRaiseMs = nowMs;
             m_RaiseHalves = 0;
             action.fps = m_Fps;
@@ -479,7 +506,9 @@ private:
     int m_Fps = 60;                // the frame rate asked of the host (the stream's when not lowered)
     bool m_FpsAvailable = false;
     bool m_RestoreFps = false;     // frame priority taken up at a lowered frame rate
-    int m_RegimeFpsCuts = 0;       // frame rate halvings in the congestion regime since it began
+    int m_FpsSteps = 0;            // halvings in effect (0: the stream's rate)
+    int m_FpsFrom[kMaxFpsSteps] = {};  // the frame rate before each halving, for the way back
+    uint64_t m_LastFpsCutMs = 0;   // the last halving (a new ceiling does not clear it)
     float m_BaseRtt = -1;
     Regime m_Regime = Regime::Clean;
     int m_CleanStreak = 0;
@@ -501,4 +530,5 @@ private:
     uint64_t m_LastFecDownMs = 0;
     uint64_t m_FecHoldMs = kFecDownHoldMs;  // clean time a FEC step down needs (doubles after a relapse)
     bool m_FecDownWatch = false;   // a step down in the last 10 s: loss now doubles the hold
+    uint64_t m_FecSettleUntilMs = 0;  // no FEC raise before this (after a relapse raise)
 };

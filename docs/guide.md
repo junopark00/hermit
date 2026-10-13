@@ -187,8 +187,11 @@ automatically to the network" in the stream panel. It is off by default.
     waits 6 s after that cut. FEC goes down one step after 30 s of clean windows, and again 30 s
     later at the earliest. The third recording showed 4% loss that FEC 35% hid completely while 20%
     turned it into dropped frames within 0.5 s, so a quicker step down only found the loss again.
-    When loss raises FEC again within 10 s of a step down, the next step down waits twice as long
-    (60 s, then 120 s at most); a step down that holds for 10 s brings the wait back to 30 s.
+    Only windows with frames count, so a still desktop keeps FEC up longer. When loss raises FEC
+    again within 10 s of a step down, the next step down waits twice as long (60 s, then 120 s at
+    most), and the step it goes back to gets 1 s to reach the host before loss raises FEC further.
+    A step down to the host's default that holds for 10 s brings the wait back to 30 s; one from
+    50% to 35% that holds does not.
     A grey window (1 to 5% loss, or a round trip 16 to 40 ms above usual) counts as half a clean
     window, and 24 grey or clean windows in a row end a trouble regime, so a link with a steady 2%
     loss still recovers, at half speed.
@@ -199,19 +202,26 @@ automatically to the network" in the stream panel. It is off by default.
   to protect:
   - **Keep the frame rate** (game): congestion cuts the bitrate by 30% per step, down to one eighth
     of the chosen bitrate (at least 2 Mbps). The picture gets blurry for a moment but keeps moving;
-    the frame rate never changes. Playback shows the newest frame: frames that arrive bunched up after a stall do not wait for
-    each other (with V-Sync one frame waits for the next refresh; without it, a new frame replaces
-    one that is not drawn yet). The dropped frames count as jitter drops.
+    the frame rate never changes. Playback shows the newest frame: frames that arrive bunched up
+    after a stall do not wait for each other (with V-Sync one frame waits for the next refresh;
+    without it, a new frame replaces one that is not drawn yet). The dropped frames count as jitter
+    drops.
   - **Keep the quality** (remote desktop): congestion cuts by 20% per step, down to one third of the
     chosen bitrate (at least 4 Mbps), and the link-loss rule stops there too, keeping FEC at 50%.
     Sharp text and UI come first. On a Shell host that changes the frame rate live (serverinfo
     `LiveFps`, `/actions/fps`), the cut after the precautionary one, when frames stall or go
-    missing, halves the frame rate instead (60 to 30, 120 to 60; a multiple of 5, at least 15), so
-    each frame gets twice the bits and text stays sharp; further cuts lower the bitrate to the
-    floor, and when frames still stall there the frame rate halves once more (30 to 15). Link loss
-    never changes the frame rate. On recovery the bitrate comes back first, then the frame rate
-    doubles by the same 3 s rule. Switching to **Keep the frame rate** brings the stream's frame
-    rate back at once; a new chosen bitrate keeps the lowered frame rate.
+    missing, halves the frame rate instead (60 to 30, 120 to 60, 144 to 70; a multiple of 5, at
+    least 15), so each frame gets twice the bits and text stays sharp; further cuts lower the
+    bitrate to the floor, and when frames still stall there the frame rate halves once more (30 to
+    15). In a fresh congestion at the floor, where the precaution has nothing to cut, the halving
+    is the first action. A halving needs a stall or a missing frame in its own 250 ms window and
+    1.5 s since the previous halving. The first halving happens only at the stream's frame rate and
+    the second only at the floor, so congestion that ends and comes back does not halve again
+    above the floor. Gaps between arrivals are measured against the frame rate the host confirmed.
+    Link loss never changes the frame rate. On recovery the bitrate comes back first, then the
+    frame rate climbs back by the same 3 s rule (6 s after its last halving at the earliest),
+    through the values it was halved from (35, 70, 144). Switching to **Keep the frame rate**
+    brings the stream's frame rate back at once; a new chosen bitrate keeps the lowered frame rate.
     Playback keeps a jitter buffer: with V-Sync the queues stay lenient (up to 3 frames); without
     V-Sync, frames are paced by a timer at the stream's frame rate, which evens out uneven arrivals
     at the cost of up to 3 frames of delay. The timer is chosen when the stream starts (by the

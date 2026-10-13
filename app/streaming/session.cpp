@@ -2542,7 +2542,8 @@ void Session::handleNetworkWindow(uint64_t now)
         m_AdaptLastReceived = received;
         m_AdaptLastDropped = dropped;
         window.maxGapMs = NetDiagLog::window().takeArrivalGapMs(LiGetMicroseconds());
-        window.fps = m_StreamConfig.fps;
+        // What a gap is measured against: the frame rate the host confirmed it streams at
+        window.fps = m_FpsEffective > 0 && m_FpsEffective < m_StreamConfig.fps ? m_FpsEffective : m_StreamConfig.fps;
         uint32_t rtt = 0, rttVariance = 0;
         if (LiGetEstimatedRttInfo(&rtt, &rttVariance)) {
             window.rttMs = static_cast<int>(rtt);
