@@ -42,15 +42,14 @@ LRESULT CALLBACK streamWindowSubclass(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
     if (msg == WM_WINDOWPOSCHANGED) {
         auto* pos = reinterpret_cast<WINDOWPOS*>(lParam);
         if (pos->flags & SWP_HIDEWINDOW) {
+            // SDL hides the window before it destroys or recreates it, and DestroyWindow() destroys
+            // owned windows before the owner gets WM_DESTROY: the handle is released here, while
+            // it still exists
             reinterpret_cast<StreamPanel*>(panel)->streamWindowHidden();
         }
         else if (!(pos->flags & SWP_NOMOVE) || !(pos->flags & SWP_NOSIZE)) {
             reinterpret_cast<StreamPanel*>(panel)->followStreamWindow();
         }
-    }
-    else if (msg == WM_DESTROY) {
-        // DestroyWindow() hides a shown window first (above); this also covers a hidden one
-        reinterpret_cast<StreamPanel*>(panel)->streamWindowHidden();
     }
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
