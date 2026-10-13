@@ -172,8 +172,9 @@ automatically to the network" in the stream panel. It is off by default.
     windows are known, a gap counts only when it is also longer than 1.5 times the 90th percentile
     of the longest gaps in the last 40 clean windows. After two cuts in a congestion (the
     precaution included), a symptom counts only with proof that cutting helps: dropped frames in
-    the last two windows, a severe stall in them (an arrival gap of 250 ms or more, and at least
-    twice that 90th percentile), or a round-trip time at least 10 ms below the one at the first cut
+    the last two windows, a severe stall in them (an arrival gap of 250 ms or more, at least twice
+    that 90th percentile and at least 4 frame intervals: at 10 fps a plain symptom is already 250
+    ms), or a round-trip time at least 10 ms below the one at the first cut
     (the cuts are draining a queue). In the fourth recording frame priority went from 35 to 4 Mbps
     in 4.3 s on gap symptoms alone while the round trip stayed at 95 to 110 ms: a path delay that
     no cut could change. In the fifth, 28 Mbps stayed for 4.2 s over a 20 Mbps cap while arrivals
@@ -192,10 +193,11 @@ automatically to the network" in the stream panel. It is off by default.
     per 0.5 s. One window of the other kind does not switch the regime until it repeats.
   - The usual round-trip time is the minimum seen; it rises (0.5 ms per second) only in clean
     windows, so a congestion that lasts is never mistaken for the new normal.
-  - Windows with fewer than 3 frames received (a still picture: Shell sends only 10 to 12 frames
-    per second for one) decide nothing and count as neither good nor bad, so desktop work with
-    pauses recovers, unless 2 frames or more were lost in them: a window where 2 frames arrive and
-    6 are lost is judged like any other, a still picture with a single lost frame is not.
+  - Windows with fewer than 3 frames received (fewer than 2 at a frame rate below 12, where 10 fps
+    brings 2 or 3 a window; a still picture: Shell sends only 10 to 12 frames per second for one)
+    decide nothing and count as neither good nor bad, so desktop work with pauses recovers, unless
+    2 frames or more were lost in them: a window where 2 frames arrive and 6 are lost is judged
+    like any other, a still picture with a single lost frame is not.
   - **Fast recovery**: when a congestion ends with two clean windows in a row without a dropped
     frame, and the round trip 2 s after Hermit's last cut was still congested and had
     not fallen by more than a quarter of its rise above usual at that action (10 ms at least: path
@@ -246,8 +248,11 @@ automatically to the network" in the stream panel. It is off by default.
     queue stayed. Gaps between arrivals are measured against the frame rate the host confirmed.
     Link loss never changes the frame rate. Recovery raises both together (each 15% step brings
     the frame rate the formula gives, never lower than now); fast recovery brings back both at
-    once. Switching to **Keep the frame rate** brings the stream's frame rate back at once; a new
-    chosen bitrate starts again at the stream's rate. On hosts without live frame rate changes,
+    once. The stream's own rate comes back whole at the chosen bitrate (a 144 fps stream returns to
+    144, not 140). Switching to **Keep the frame rate** brings the stream's frame rate back at once,
+    and switching back brings the frame rate the formula gives at the current bitrate. A new chosen
+    bitrate brings the stream's rate back, except during a congestion, where the lowered frame rate
+    stays until the recovery. On hosts without live frame rate changes,
     congestion cuts by 20% per step down to one third of the chosen bitrate (at least 4 Mbps), and
     the link-loss rule stops there too, keeping FEC at 50%. Playback keeps a jitter buffer: with
     V-Sync the queues stay lenient (up to 3 frames); without V-Sync, frames are paced by a timer at

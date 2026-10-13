@@ -20,8 +20,9 @@
 //   floor; without a symptom one more cut comes only when the round trip is still rising (10 ms
 //   above the previous cut's), 1.5 s later at the earliest. After two cuts in a congestion (the
 //   precaution included) a symptom counts only with proof that cutting helps: dropped frames in
-//   the last two windows, a severe stall in them (an arrival gap of 250 ms and twice the 90th
-//   percentile of the clean gaps or more), or a round trip at least 10 ms below the one at the
+//   the last two windows, a severe stall in them (an arrival gap of 250 ms, twice the 90th
+//   percentile of the clean gaps and 4 frame intervals or more: at 10 fps a plain symptom is
+//   already 250 ms), or a round trip at least 10 ms below the one at the
 //   first cut (the cuts are draining a queue). The fourth recording cut from 35 to 4 Mbps on gap
 //   symptoms alone while the round trip stayed at 95-110 ms, a path delay that no cut could
 //   change; the fifth held 28 Mbps for 4.2 s over a 20 Mbps cap while arrivals stalled for
@@ -38,18 +39,23 @@
 // Frame rate (quality priority on a host that takes live frame rate changes, /actions/fps): the
 // frame rate follows the bitrate, so each frame keeps about the bits it had at the chosen
 // bitrate: fps = the stream's x bitrate / chosen, rounded down to a multiple of 5, between 10
-// (Shell's minimum) and the stream's. Every congestion cut carries both in one action (35000 at
-// 60 fps: 24500 at 40, 17000 at 25, 11500 at 15, 8000 at 10, then the bitrate alone down to the
-// floor), so bytes per second drop at once and the picture stays sharp until the frame rate is
-// at 10; only then does a cut cost quality. The fifth recording showed why the frame rate alone
-// does not help: at the same bitrate the frames only grow, and the queue over a bandwidth cap
-// stays. A frame rate change is sent only when it moves by 5 or more, or reaches 10 or the
-// stream's rate. Frame priority and link loss never change the frame rate; a switch to frame
-// priority brings the stream's frame rate back at the next window. One action per window.
+// (Shell's minimum) and the stream's (the stream's itself at the chosen bitrate or within 5 of
+// it, so 144 and 24 fps streams come back whole). Every congestion cut carries both in one
+// action (35000 at 60 fps: 24500 at 40, 17000 at 25, 11500 at 15, 8000 at 10, then the bitrate
+// alone down to the floor), so bytes per second drop at once and the picture stays sharp until
+// the frame rate is at 10; only then does a cut cost quality. The fifth recording showed why
+// the frame rate alone does not help: at the same bitrate the frames only grow, and the queue
+// over a bandwidth cap stays. Frame priority and link loss never change the frame rate; a
+// switch to frame priority brings the stream's frame rate back at the next window, and a switch
+// back to quality priority (or a host that takes live frame rate changes again) brings the
+// formula's frame rate at the next window ("policy"). A new chosen bitrate brings the stream's
+// rate back, except during a congestion, where the lowered frame rate stays until the recovery.
+// One action per window.
 // A decision needs 2 consecutive windows of the same kind (0.5 s); one action per 500 ms at
 // most; a window of the other kind does not switch the regime until it repeats (no flapping);
-// windows with fewer than 3 frames received (a still picture) decide nothing and neither add to
-// nor clear the clean windows, unless 2 frames or more were lost in them: a stream that
+// windows with fewer than 3 frames received (2 at a frame rate below 12: 10 fps brings 2-3 a
+// window) decide nothing and neither add to nor clear the clean windows (a still picture),
+// unless 2 frames or more were lost in them: a stream that
 // collapses (2 frames arrive, 6 are lost) is judged, a still picture with a single lost frame
 // is not (the first recording's loss runs had many such windows, and judging them only kept the
 // loss regime going for one more cut).
@@ -143,7 +149,7 @@ public:
     static constexpr int kGapMinSamples = 12;
     static constexpr float kGapSymptomOverP90 = 1.5f;
     static constexpr int kActionsBeforeProof = 2;           // then a symptom needs proof
-    static constexpr int kSevereStallMs = 250;              // a stall that is proof (and 2x the usual gap)
+    static constexpr int kSevereStallMs = 250;              // a stall that is proof (also 2x usual, 4 intervals)
     static constexpr int kRttFallingMs = 10;
     static constexpr uint64_t kFastRecoveryQuietMs = 2000;  // our last cut before the round trip fell
     static constexpr uint64_t kProbeMs = 2000;
@@ -161,7 +167,7 @@ public:
         m_StreamFps = streamFps;
         m_Fps = streamFps;
         m_FpsAvailable = fpsAvailable;
-        m_RestoreFps = false;
+        m_RestoreFps = m_FollowFps = false;
         m_Bitrate = startKbps > 0 ? (std::clamp)(startKbps, (std::min)(floorKbps(), chosenKbps), chosenKbps) : chosenKbps;
         m_Fec = m_FecBase;
         m_BaseRtt = -1;
@@ -209,6 +215,7 @@ public:
         m_Policy = policy;
         m_RaiseToFloor = m_Bitrate < floorKbps();
         m_RestoreFps = policy == Policy::FramePriority && m_Fps < m_StreamFps;
+        m_FollowFps = fpsFollows() && fpsFor(m_Bitrate) < m_Fps;
     }
 
     void setFecAvailable(bool available) { m_FecAvailable = available; }
@@ -223,8 +230,11 @@ public:
         m_FpsAvailable = available;
         if (!available) {
             m_Fps = m_StreamFps;
-            m_RestoreFps = false;
+            m_RestoreFps = m_FollowFps = false;
             m_RaiseToFloor = m_Bitrate < floorKbps();
+        }
+        else {
+            m_FollowFps = fpsFollows() && fpsFor(m_Bitrate) < m_Fps;
         }
     }
 
@@ -232,10 +242,13 @@ public:
     // rate (quality priority on a live frame rate host); the stream's otherwise
     int fpsFor(int kbps) const
     {
-        if (!fpsFollows() || m_Chosen <= 0) {
+        if (!fpsFollows() || m_Chosen <= 0 || kbps >= m_Chosen) {
             return m_StreamFps;
         }
         const int fps = (int)((int64_t)m_StreamFps * kbps / m_Chosen) / 5 * 5;
+        if (m_StreamFps - fps < 5) {
+            return m_StreamFps;   // 140 of 144: the stream's
+        }
         return (std::clamp)(fps, (std::min)(kMinFps, m_StreamFps), m_StreamFps);
     }
 
@@ -296,8 +309,10 @@ public:
         if (chosenKbps != m_Chosen) {
             m_Chosen = chosenKbps;
             m_Bitrate = chosenKbps;
-            if (fpsFollows() && m_Fps != fpsFor(m_Bitrate)) {
-                m_Fps = fpsFor(m_Bitrate);   // the stream's rate at the new ceiling
+            // The stream's rate at the new ceiling; during a congestion the lowered rate stays
+            const int fps = m_Regime == Regime::Congested ? (std::min)(m_Fps, fpsFor(m_Bitrate)) : fpsFor(m_Bitrate);
+            if (fpsFollows() && m_Fps != fps) {
+                m_Fps = fps;
                 action.fps = m_Fps;
             }
             m_LastActionMs = nowMs;
@@ -322,6 +337,18 @@ public:
             action.reason = "policy";
             return action;
         }
+        if (m_FollowFps) {
+            // Quality priority taken up (or live frame rate changes back) at a lowered bitrate:
+            // the frame rate that keeps each frame's bits
+            m_FollowFps = false;
+            if (fpsFollows() && fpsFor(m_Bitrate) < m_Fps) {
+                m_Fps = fpsFor(m_Bitrate);
+                m_LastActionMs = nowMs;
+                action.fps = m_Fps;
+                action.reason = "policy";
+                return action;
+            }
+        }
 
         if (m_ProbeUntilMs != 0 && nowMs > m_ProbeUntilMs) {
             // The fast recovery held: the congestion episode is over
@@ -342,7 +369,8 @@ public:
             m_BaseRtt = w.rttMs;
         }
 
-        if (w.framesReceived < kMinFramesPerWindow && w.framesDropped < kMinDroppedForLoss) {
+        const int minFrames = (std::min)(kMinFramesPerWindow, (std::max)(2, w.fps / 4));
+        if (w.framesReceived < minFrames && w.framesDropped < kMinDroppedForLoss) {
             return action;  // a still picture: too few frames to judge, neither clean nor trouble
         }
 
@@ -351,7 +379,8 @@ public:
         m_DropPrev = m_DropCur;
         m_DropCur = w.framesDropped >= 1;
         m_StallPrev = m_StallCur;
-        m_StallCur = w.maxGapMs >= (std::max)(kSevereStallMs, 2 * usualGapMs());
+        m_StallCur = w.maxGapMs >= (std::max)((std::max)(kSevereStallMs, 2 * usualGapMs()),
+                                              4 * 1000 / (std::max)(w.fps, 1));
 
         const Class c = classify(w);
         if (c == Class::Clean) {
@@ -589,7 +618,7 @@ private:
         if (action.reason != nullptr) {
             // The frame rate follows the bitrate down: bytes per second drop, frames keep their bits
             const int fps = fpsFor(m_Bitrate);
-            if (fps < m_Fps && (m_Fps - fps >= 5 || fps == (std::min)(kMinFps, m_StreamFps))) {
+            if (fps < m_Fps) {
                 m_Fps = fps;
                 action.fps = fps;
             }
@@ -610,7 +639,7 @@ private:
     void raiseFps(Action& action)
     {
         const int fps = fpsFor(m_Bitrate);
-        if (fpsFollows() && fps > m_Fps && (fps - m_Fps >= 5 || fps == m_StreamFps)) {
+        if (fpsFollows() && fps > m_Fps) {
             m_Fps = fps;
             action.fps = fps;
         }
@@ -647,7 +676,8 @@ private:
         }
         if (fpsFollows() && m_Fps < fpsFor(m_Bitrate) && m_RaiseHalves >= 2 * kRaiseAfterCleanWindows &&
                 nowMs - m_LastRaiseMs >= kRaiseGapMs && nowMs - m_LastCutMs >= kRaiseHoldAfterCutMs) {
-            // A frame rate below what the bitrate gives (after a loss cut kept it): up by itself
+            // A frame rate below what the bitrate gives (a ceiling during a congestion, or a
+            // switch back to quality priority before frame priority's restore ran): up by itself
             m_Fps = fpsFor(m_Bitrate);
             m_LastActionMs = m_LastRaiseMs = nowMs;
             m_RaiseHalves = 0;
@@ -684,6 +714,7 @@ private:
     int m_Fps = 60;                // the frame rate asked of the host (the stream's when not lowered)
     bool m_FpsAvailable = false;
     bool m_RestoreFps = false;     // frame priority taken up at a lowered frame rate
+    bool m_FollowFps = false;      // quality priority taken up at a lowered bitrate
     float m_BaseRtt = -1;
     Regime m_Regime = Regime::Clean;
     int m_CleanStreak = 0;
