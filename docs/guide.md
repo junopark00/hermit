@@ -97,19 +97,23 @@ The window title is `<host> - Hermit`, and `Hermit.exe --help` lists the command
 A side panel over the stream changes options without ending the stream, similar to the stream menu
 of other remote desktop clients.
 
-- **Open it** with **Ctrl+Alt+Shift+P**, or click the arrow handle on the edge of the stream window:
+- **Open it** with **Ctrl+Alt+Shift+P**, or click the arrow handle on the edge of the stream window.
+  On Windows the handle is shown whenever the panel is closed and the stream window is not
+  minimized, in both mouse modes. It stays with the stream window: when another app is in front of
+  the stream, the handle is behind that app too.
   - With the remote desktop mouse ("Optimize mouse for remote desktop instead of games"), the
-    pointer moves freely, so the handle is always shown while the stream window is active. The
-    pointer is visible over the handle, and hovering or clicking it sends nothing to the host.
-  - With the game mouse, the handle is shown only while the mouse is not captured (windowed mode
-    before you click into the stream, or after releasing the mouse with Ctrl+Alt+Shift+Z). When a
-    stream starts in this mode, a notice under the stream shows both shortcuts for 5 seconds
-    (not when reconnecting).
+    pointer moves freely and reaches the handle. The pointer is visible over the handle, and
+    hovering or clicking it sends nothing to the host.
+  - With the game mouse, the captured mouse cannot reach the handle. Release the mouse with
+    Ctrl+Alt+Shift+Z to click it, or press Ctrl+Alt+Shift+P. When a stream starts in this mode, a
+    notice under the stream shows both shortcuts for 5 seconds (not when reconnecting).
+  - On other systems the handle is shown only while the stream window is active and the pointer
+    can reach it.
 
   While the panel is open, the mouse and keyboard go to the panel; closing it (the close button,
   Esc, or the same shortcut) restores the previous capture state. Switching to another app or
-  minimizing the stream closes the panel and hides the handle. The handle never takes keyboard
-  focus from the stream, also in full screen.
+  minimizing the stream closes the panel; minimizing also hides the handle. The handle never takes
+  keyboard focus from the stream, also in full screen.
 - **Handle position**: choose the right or left edge in the panel; the panel opens on that side.
   Press and drag the handle to move it up or down. Position and side are saved.
 - When the panel opens, the bitrate field has keyboard focus. Tabbing through the panel scrolls the
