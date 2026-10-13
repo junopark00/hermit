@@ -213,22 +213,21 @@ automatically to the network" in the stream panel. It is off by default.
     missing, halves the frame rate instead (60 to 30, 120 to 60, 144 to 70; a multiple of 5, at
     least 15), so each frame gets twice the bits and text stays sharp; further cuts lower the
     bitrate to the floor, and when frames still stall there the frame rate halves once more (30 to
-    15). In a fresh congestion at the floor, where the precaution has nothing to cut, the halving
-    is the first action. A halving needs a stall or a missing frame in the last 0.5 s and 1.5 s
-    since the previous halving; the second halving counts only stalls after the first. The first
-    halving happens only at the stream's frame rate and
-    the second only at the floor, so congestion that ends and comes back does not halve again
-    above the floor. Gaps between arrivals are measured against the frame rate the host confirmed.
-    Link loss never changes the frame rate. On recovery the bitrate comes back first, then the
-    frame rate climbs back by the same 3 s rule (6 s after its last halving at the earliest),
-    through the values it was halved from (35, 70, 144). Switching to **Keep the frame rate**
-    brings the stream's frame rate back at once; a new chosen bitrate keeps the lowered frame rate.
-    Playback keeps a jitter buffer: with V-Sync the queues stay lenient (up to 3 frames); without
-    V-Sync, frames are paced by a timer at the frame rate the host streams at (it follows a
-    lowered frame rate), which evens out uneven arrivals at the cost of up to 3 frames of delay.
-    Without V-Sync the timer is there in every stream; frame priority bypasses it at once.
-    Floors are rounded down to 0.5 Mbps. Switching to this policy while the bitrate is below its
-    floor raises it to the floor at the next clean window (one request).
+    15). In a fresh congestion at the floor, where the precaution has nothing to cut, the halving is
+    the first action. A halving needs a stall or a missing frame in the last 0.5 s and 1.5 s since
+    the previous halving; the second halving counts only stalls after the first. The first halving
+    happens only at the stream's frame rate and the second only at the floor, so congestion that
+    ends and comes back does not halve again above the floor. Gaps between arrivals are measured
+    against the frame rate the host confirmed. Link loss never changes the frame rate. On recovery
+    the bitrate comes back first, then the frame rate climbs back by the same 3 s rule (6 s after
+    its last halving at the earliest), through the values it was halved from (35, 70, 144).
+    Switching to **Keep the frame rate** brings the stream's frame rate back at once; a new chosen
+    bitrate keeps the lowered frame rate. Playback keeps a jitter buffer: with V-Sync the queues
+    stay lenient (up to 3 frames); without V-Sync, frames are paced by a timer at the frame rate the
+    host streams at (it follows a lowered frame rate), which evens out uneven arrivals at the cost
+    of up to 3 frames of delay. Without V-Sync the timer is there in every stream; frame priority
+    bypasses it at once. Floors are rounded down to 0.5 Mbps. Switching to this policy while the
+    bitrate is below its floor raises it to the floor at the next clean window (one request).
   - **Auto** (default) follows the mouse mode: the game (relative) mouse keeps the frame rate, the
     remote desktop (absolute) mouse keeps the quality. Switching the mouse mode switches the policy
     at once.

@@ -103,7 +103,6 @@ Pacer::~Pacer()
     // Stop V-sync callbacks
     delete m_VsyncSource;
     m_VsyncSource = nullptr;
-    m_TimerSource = nullptr;
 
     // Stop the render thread
     if (m_RenderThread != nullptr) {
@@ -115,6 +114,8 @@ Pacer::~Pacer()
         // NB: This must happen on the same thread that calls renderFrame().
         m_VsyncRenderer->cleanupRenderContext();
     }
+    // Hermit: renderFrame() on the render thread looks at this pointer, so it is cleared after the join
+    m_TimerSource = nullptr;
 
     // Delete any remaining unconsumed frames
     while (!m_RenderQueue.isEmpty()) {
