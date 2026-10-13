@@ -280,7 +280,8 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
         }
 
         // Keep a rolling 500 ms window of pacing queue history
-        if (m_PacingQueueHistory.count() == m_DisplayFps / 2) {
+        // Hermit: the length follows a live pacing rate change (setPacingFps())
+        while (!m_PacingQueueHistory.isEmpty() && m_PacingQueueHistory.count() >= SDL_max(1, m_DisplayFps / 2)) {
             m_PacingQueueHistory.dequeue();
         }
 
@@ -314,7 +315,9 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
             return;
         }
 
-        if (m_Stopping) {
+        // Hermit: frame priority's bypass (submitFrame()) may have emptied the queue before this
+        // thread got the lock back
+        if (m_Stopping || m_PacingQueue.isEmpty()) {
             m_FrameQueueLock.unlock();
             return;
         }
@@ -405,7 +408,7 @@ void Pacer::setPacingFps(int fps)
     if (m_TimerSource == nullptr || fps <= 0) {
         return;
     }
-    fps = SDL_min(fps, m_MaxVideoFps);
+    fps = SDL_max(2, SDL_min(fps, m_MaxVideoFps));
     m_FrameQueueLock.lock();
     m_DisplayFps = fps;
     // The history covers 500 ms at the new rate
@@ -473,7 +476,10 @@ void Pacer::renderFrame(AVFrame* frame)
         }
 
         // Keep a rolling 500 ms window of render queue history
-        if (m_RenderQueueHistory.count() == m_MaxVideoFps / 2) {
+        // Hermit: 500 ms of frames at the rate they come: the timer's (a lowered frame rate) when
+        // it paces them
+        const int historyLength = SDL_max(1, (m_TimerSource != nullptr ? m_DisplayFps.load() : m_MaxVideoFps) / 2);
+        while (!m_RenderQueueHistory.isEmpty() && m_RenderQueueHistory.count() >= historyLength) {
             m_RenderQueueHistory.dequeue();
         }
 
