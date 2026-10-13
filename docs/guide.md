@@ -170,12 +170,15 @@ automatically to the network" in the stream panel. It is off by default.
   - A desktop sends frames only when the screen changes, so its gaps are uneven: the fourth
     recording showed the plain gap rule firing in 11 to 30% of normal windows. Once 12 clean
     windows are known, a gap counts only when it is also longer than 1.5 times the 90th percentile
-    of the longest gaps in the last 40 clean windows. After two actions in a congestion (cuts or
-    frame rate halvings, the precaution included), a symptom counts only with dropped frames in
-    the last two windows or a round-trip time at least 10 ms below the one at the first action
+    of the longest gaps in the last 40 clean windows. After two cuts in a congestion (the
+    precaution included), a symptom counts only with proof that cutting helps: dropped frames in
+    the last two windows, a severe stall in them (an arrival gap of 250 ms or more, and at least
+    twice that 90th percentile), or a round-trip time at least 10 ms below the one at the first cut
     (the cuts are draining a queue). In the fourth recording frame priority went from 35 to 4 Mbps
     in 4.3 s on gap symptoms alone while the round trip stayed at 95 to 110 ms: a path delay that
-    no cut could change.
+    no cut could change. In the fifth, 28 Mbps stayed for 4.2 s over a 20 Mbps cap while arrivals
+    stalled for 339 to 433 ms, because a 40 ms path delay hid the queue from the round trip; the
+    severe-stall proof cuts there.
   - **Link loss**: 5% or more of the frames are lost, at least two in a window (a single dropped
     frame is a blip), while the round-trip time stays flat (within 20 ms of usual). Lowering the
     bitrate does not help here (the first recording showed the same
@@ -194,7 +197,7 @@ automatically to the network" in the stream panel. It is off by default.
     pauses recovers, unless 2 frames or more were lost in them: a window where 2 frames arrive and
     6 are lost is judged like any other, a still picture with a single lost frame is not.
   - **Fast recovery**: when a congestion ends with two clean windows in a row without a dropped
-    frame, and the round trip 2 s after Hermit's last cut or halving was still congested and had
+    frame, and the round trip 2 s after Hermit's last cut was still congested and had
     not fallen by more than a quarter of its rise above usual at that action (10 ms at least: path
     delay jitters by 10 to 20 ms), the round trip fell on its own later (the cause outside went
     away), and the bitrate and frame rate from before the congestion come back in one step. Only
@@ -230,32 +233,29 @@ automatically to the network" in the stream panel. It is off by default.
     after a stall do not wait for each other (with frame pacing one frame waits for the next
     refresh; otherwise a new frame replaces any that is not drawn yet, and the jitter buffer's
     timer is bypassed). The dropped frames count as jitter drops.
-  - **Keep the quality** (remote desktop): congestion cuts by 20% per step, down to one third of the
-    chosen bitrate (at least 4 Mbps), and the link-loss rule stops there too, keeping FEC at 50%.
-    Sharp text and UI come first. On a Shell host that changes the frame rate live (serverinfo
-    `LiveFps`, `/actions/fps`), the cut after the precautionary one, when frames stall or go
-    missing, halves the frame rate instead (60 to 30, 120 to 60, 144 to 70; a multiple of 5, at
-    least 15), so each frame gets twice the bits and text stays sharp; further cuts lower the
-    bitrate to the floor, and when frames still stall there the frame rate halves once more (30 to
-    15). In a fresh congestion at the floor, where the precaution has nothing to cut, the halving is
-    the first action. A halving needs a stall or a missing frame in the last 0.5 s and 1.5 s since
-    the previous halving; the second halving counts only stalls after the first. The first halving
-    happens only at the stream's frame rate and the second only at the floor, so congestion that
-    ends and comes back does not halve again above the floor. Gaps between arrivals are measured
-    against the frame rate the host confirmed. Link loss never changes the frame rate. On gradual
-    recovery the step that brings the bitrate back to the value a halving was made at also brings
-    that frame rate back, so a frame stays about as large as before the halving (in the fourth
-    recording 35 Mbps at 15 fps made 290 KB frames, and 10 frames were dropped when 30 fps came
-    back); halvings still left at the chosen bitrate come back by the same 3 s rule (6 s after the
-    last halving at the earliest), through the values the frame rate was halved from (35, 70,
-    144).
-    Switching to **Keep the frame rate** brings the stream's frame rate back at once; a new chosen
-    bitrate keeps the lowered frame rate. Playback keeps a jitter buffer: with V-Sync the queues
-    stay lenient (up to 3 frames); without V-Sync, frames are paced by a timer at the frame rate the
-    host streams at (it follows a lowered frame rate), which evens out uneven arrivals at the cost
-    of up to 3 frames of delay. Without V-Sync the timer is there in every stream; frame priority
-    bypasses it at once. Floors are rounded down to 0.5 Mbps. Switching to this policy while the
-    bitrate is below its floor raises it to the floor at the next clean window (one request).
+  - **Keep the quality** (remote desktop): sharp text and UI and a short delay come first; the
+    frame rate gives way. On a Shell host that changes the frame rate live (serverinfo `LiveFps`,
+    `/actions/fps`), each frame keeps the bits it has at the chosen bitrate: every congestion cut,
+    the precaution included, lowers the bitrate by 30% and the frame rate in the same step to the
+    stream's rate x bitrate / chosen (a multiple of 5, between 10 and the stream's rate). From 35
+    Mbps at 60 fps: 24.5 Mbps at 40 fps, 17 at 25, 11.5 at 15, 8 at 10, then the bitrate alone
+    (5.5, 4). Bytes per second drop at once, so the queue over a bandwidth cap empties and the
+    delay drops; only once the frame rate is at 10 does a cut cost picture quality. The floor is
+    one eighth of the chosen bitrate (at least 2 Mbps), as for frame priority. The fifth recording
+    showed why the frame rate alone did not help: at the same bitrate the frames only grew, and the
+    queue stayed. Gaps between arrivals are measured against the frame rate the host confirmed.
+    Link loss never changes the frame rate. Recovery raises both together (each 15% step brings
+    the frame rate the formula gives, never lower than now); fast recovery brings back both at
+    once. Switching to **Keep the frame rate** brings the stream's frame rate back at once; a new
+    chosen bitrate starts again at the stream's rate. On hosts without live frame rate changes,
+    congestion cuts by 20% per step down to one third of the chosen bitrate (at least 4 Mbps), and
+    the link-loss rule stops there too, keeping FEC at 50%. Playback keeps a jitter buffer: with
+    V-Sync the queues stay lenient (up to 3 frames); without V-Sync, frames are paced by a timer at
+    the frame rate the host streams at (it follows a lowered frame rate), which evens out uneven
+    arrivals at the cost of up to 3 frames of delay. Without V-Sync the timer is there in every
+    stream; frame priority bypasses it at once. Floors are rounded down to 0.5 Mbps. Switching to
+    this policy while the bitrate is below its floor raises it to the floor at the next clean window
+    (one request).
   - **Auto** (default) follows the mouse mode: the game (relative) mouse keeps the frame rate, the
     remote desktop (absolute) mouse keeps the quality. Switching the mouse mode switches the policy
     at once.
@@ -303,9 +303,9 @@ automatically to the network" in the stream panel. It is off by default.
 - The rules live in `app/streaming/networkadapt.h` (replayed over a real recording in
   `hermit/tests/hermit_core_test.cpp`); Hermit for Android still uses the earlier one-second rules.
 - With network diagnostics recording, every decision goes to the event column ("adapt: congested ->
-  24500 kbps", "adapt: loss -> fec 35", "adapt: congested -> fps 30", "adapt: recover -> 30000
-  kbps", "adapt: fast-recover -> 35000 kbps, fps 60", "adapt: probe-failed -> 28000 kbps, fps
-  30"), and so does each playback policy change ("playback: newest frame").
+  24500 kbps", "adapt: loss -> fec 35", "adapt: congested -> 24500 kbps, fps 40", "adapt: recover
+  -> 30000 kbps", "adapt: fast-recover -> 35000 kbps, fps 60", "adapt: probe-failed -> 17000 kbps,
+  fps 25"), and so does each playback policy change ("playback: newest frame").
 
 When the bitrate changed during a stream (in the panel or automatically), the session summary and
 history report a time-weighted average, for example "Automatic · average 14 Mbps (up to 30)".

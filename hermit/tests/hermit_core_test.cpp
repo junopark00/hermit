@@ -616,7 +616,7 @@ static void testNetworkAdapt()
         CHECK(!congested);
         CHECK_EQ(fpsActions, 0);
         CHECK_EQ(adapt.fps(), 60);
-        CHECK_EQ(adapt.floorKbps(), 11500);                      // 35000/3 rounded down to 500 kbps
+        CHECK_EQ(adapt.floorKbps(), 4000);                       // 35000/8 rounded down: the frame rate carries the cuts
         CHECK(minBitrate >= adapt.floorKbps());
         CHECK_EQ(minBitrate, 25000);
         CHECK(floorAtS < 0);
@@ -793,9 +793,9 @@ static void testNetworkAdapt()
         CHECK(quality.regime() == Regime::Clean);
     }
 
-    // ---- Quality priority on a live frame rate host (1.4 step 4): the round trip jumps from 5 to
-    // 65 ms and every window drops a frame. One precautionary cut, then the frame rate halves,
-    // the bitrate goes down to the floor, and at the floor the frame rate halves once more ----
+    // ---- Quality priority on a live frame rate host (1.4 step 4, 5th recording): every cut
+    // carries the frame rate down with the bitrate, so bytes per second drop at once and each
+    // frame keeps its bits ----
     auto congestedWindow = [](int rtt) {
         NetworkAdapt::Window w;
         w.framesReceived = 14;
@@ -826,32 +826,36 @@ static void testNetworkAdapt()
         return steps.join(", ");
     };
     {
+        // 35000 at 60 fps, a frame missing in every window: each cut is x0.7 and the frame rate
+        // follows (60 x bitrate / 35000, a multiple of 5, 10 at least), so each frame keeps its
+        // bits; at 10 fps the bitrate goes on alone to the floor max(2000, 35000/8) = 4000
         NetworkAdapt adapt;
-        adapt.reset(30000, 0, Policy::QualityPriority, true, 60, true);
+        adapt.reset(35000, 0, Policy::QualityPriority, true, 60, true);
         CHECK_EQ(adapt.fps(), 60);
         CHECK_EQ(adapt.streamFps(), 60);
+        CHECK_EQ(adapt.floorKbps(), 4000);
         uint64_t t = 0;
-        CHECK_EQ(runWindows(adapt, t, 20, cleanWindow(5), 30000).size(), 0);
-        QVector<ReplayAction> actions = runWindows(adapt, t, 16, congestedWindow(65), 30000);
-        CHECK_EQ(sequence(actions), QString("24000, fps 30, 19000, 15000, 12000, 10000, fps 15"));
+        CHECK_EQ(runWindows(adapt, t, 20, cleanWindow(5), 35000).size(), 0);
+        QVector<ReplayAction> actions = runWindows(adapt, t, 14, congestedWindow(65), 35000);
+        CHECK_EQ(sequence(actions), QString("24500 fps 40, 17000 fps 25, 11500 fps 15, 8000 fps 10, 5500, 4000"));
         for (const ReplayAction& a : actions) {
             CHECK_EQ(QString(a.reason), QString("congested"));
         }
-        CHECK_EQ(adapt.bitrate(), 10000);
-        CHECK_EQ(adapt.fps(), 15);
+        CHECK_EQ(adapt.bitrate(), 4000);
+        CHECK_EQ(adapt.fps(), 10);
         CHECK_EQ(adapt.fec(), 20);
 
-        // Recovery (the round trip fell within 2 s of the last halving: gradual): +15% every
-        // 3 s, and a step that reaches the bitrate a halving was made at (10000, 24000) brings
-        // its frame rate back in the same action
-        actions = runWindows(adapt, t, 240, cleanWindow(5), 30000);
-        CHECK_EQ(sequence(actions), QString("14500 fps 30, 19000, 23500, 28000 fps 60, 30000"));
+        // Recovery (the round trip fell within 2 s of the last cut: gradual): +15% of 35000
+        // every 3 s, the frame rate up with each step by the same rule
+        actions = runWindows(adapt, t, 240, cleanWindow(5), 35000);
+        CHECK_EQ(sequence(actions), QString("9000 fps 15, 14000 fps 20, 19000 fps 30, 24000 fps 40, 29000 fps 45, "
+                                            "34000 fps 55, 35000 fps 60"));
         for (int i = 1; i < actions.size(); i++) {
             CHECK(actions[i].atS - actions[i - 1].atS >= 3.0);
             CHECK_EQ(QString(actions[i].reason), QString("recover"));
         }
         CHECK_EQ(adapt.fps(), 60);
-        CHECK_EQ(adapt.bitrate(), 30000);
+        CHECK_EQ(adapt.bitrate(), 35000);
 
         // A gap is measured against the frame rate the host streams at (the window's, which
         // session.cpp takes from the host's reply): 65 ms is 2.5 intervals at 60 fps but not at 30
@@ -861,17 +865,22 @@ static void testNetworkAdapt()
         CHECK(adapt.hasSymptom(gap));
         gap.fps = 30;
         CHECK(!adapt.hasSymptom(gap));
-        actions = runWindows(adapt, t, 4, congestedWindow(65), 30000);
-        CHECK_EQ(sequence(actions), QString("24000, fps 30"));
 
-        // A new chosen bitrate (the ceiling) keeps the frame rate
+        // A new chosen bitrate (the ceiling) sets the frame rate the formula gives there: the
+        // stream's
+        actions = runWindows(adapt, t, 2, congestedWindow(65), 35000);
+        CHECK_EQ(sequence(actions), QString("24500 fps 40"));
         t += 250;
         NetworkAdapt::Action a = adapt.update(cleanWindow(5), t, 20000);
         CHECK_EQ(QString(a.reason), QString("ceiling"));
-        CHECK_EQ(a.fps, 0);
-        CHECK_EQ(adapt.fps(), 30);
+        CHECK_EQ(a.bitrateKbps, 20000);
+        CHECK_EQ(a.fps, 60);
+        CHECK_EQ(adapt.fps(), 60);
 
-        // Frame priority taken up at 30 fps: the stream's frame rate comes back at the next window
+        // Frame priority taken up at a lowered frame rate: the stream's frame rate comes back at
+        // the next window
+        runWindows(adapt, t, 2, congestedWindow(65), 20000);
+        CHECK_EQ(adapt.fps(), 40);                                  // 14000 at 20000 chosen
         adapt.setPolicy(Policy::FramePriority);
         t += 250;
         a = adapt.update(congestedWindow(65), t, 20000);
@@ -880,126 +889,86 @@ static void testNetworkAdapt()
         CHECK_EQ(a.bitrateKbps, 0);
         CHECK_EQ(adapt.fps(), 60);
 
-        // A host that refused the change streams at the stream's frame rate
+        // A host that refused the change streams at the stream's frame rate, and the cuts go back
+        // to bitrate only (x0.8 down to max(4000, chosen/3))
         NetworkAdapt refused;
-        refused.reset(30000, 0, Policy::QualityPriority, true, 60, true);
+        refused.reset(35000, 0, Policy::QualityPriority, true, 60, true);
         t = 0;
-        runWindows(refused, t, 20, cleanWindow(5), 30000);
-        runWindows(refused, t, 4, congestedWindow(65), 30000);
-        CHECK_EQ(refused.fps(), 30);
+        runWindows(refused, t, 20, cleanWindow(5), 35000);
+        CHECK_EQ(sequence(runWindows(refused, t, 2, congestedWindow(65), 35000)), QString("24500 fps 40"));
         refused.setFpsAvailable(false);
         CHECK_EQ(refused.fps(), 60);
-        CHECK(sequence(runWindows(refused, t, 40, congestedWindow(65), 30000)).indexOf("fps") < 0);
+        CHECK_EQ(refused.floorKbps(), 11500);
+        CHECK_EQ(sequence(runWindows(refused, t, 12, congestedWindow(65), 35000)), QString("19500, 15500, 12000, 11500"));
 
-        // A congestion that ends and comes back does not halve again above the floor: the step
-        // follows from the frame rate, not from the regime
+        // Without live frame rate changes at all: the old quality rule (x0.8, floor 11500)
+        NetworkAdapt noFps;
+        noFps.reset(35000, 0, Policy::QualityPriority, true, 60, false);
+        t = 0;
+        runWindows(noFps, t, 20, cleanWindow(5), 35000);
+        CHECK_EQ(sequence(runWindows(noFps, t, 14, congestedWindow(65), 35000)), QString("28000, 22000, 17500, 14000, 11500"));
+
+        // Frame priority: the same cuts without the frame rate
+        NetworkAdapt frame;
+        frame.reset(35000, 0, Policy::FramePriority, true, 60, true);
+        t = 0;
+        runWindows(frame, t, 20, cleanWindow(5), 35000);
+        CHECK_EQ(sequence(runWindows(frame, t, 14, congestedWindow(65), 35000)), QString("24500, 17000, 11500, 8000, 5500, 4000"));
+
+        // A congestion that ends and comes back goes on from where it was
         NetworkAdapt again;
-        again.reset(30000, 0, Policy::QualityPriority, true, 60, true);
+        again.reset(35000, 0, Policy::QualityPriority, true, 60, true);
         t = 0;
-        runWindows(again, t, 20, cleanWindow(5), 30000);
-        actions = runWindows(again, t, 4, congestedWindow(65), 30000);
-        actions += runWindows(again, t, 8, cleanWindow(5), 30000);
+        runWindows(again, t, 20, cleanWindow(5), 35000);
+        actions = runWindows(again, t, 2, congestedWindow(65), 35000);
+        actions += runWindows(again, t, 8, cleanWindow(5), 35000);
         CHECK(again.regime() == Regime::Clean);
-        actions += runWindows(again, t, 6, congestedWindow(65), 30000);
-        CHECK_EQ(sequence(actions), QString("24000, fps 30, 19000, 15000, 12000"));
-        CHECK_EQ(again.fps(), 30);
-
-        // Spacing: at the floor the second halving waits 1.5 s after the first, and needs a
-        // symptom after the first halving: 3 s of congestion without one change nothing, the
-        // next symptom halves
-        NetworkAdapt spaced;
-        spaced.reset(30000, 11000, Policy::QualityPriority, true, 60, true);
-        CHECK_EQ(spaced.floorKbps(), 10000);
-        t = 0;
-        runWindows(spaced, t, 8, cleanWindow(5), 30000);
-        actions = runWindows(spaced, t, 16, congestedWindow(65), 30000);
-        CHECK_EQ(sequence(actions), QString("10000, fps 30, fps 15"));
-        if (actions.size() == 3) {
-            CHECK(near(actions[2].atS - actions[1].atS, 1.5));
-        }
-        NetworkAdapt fresh;
-        fresh.reset(30000, 11000, Policy::QualityPriority, true, 60, true);
-        t = 0;
-        runWindows(fresh, t, 8, cleanWindow(5), 30000);
-        CHECK_EQ(sequence(runWindows(fresh, t, 4, congestedWindow(65), 30000)), QString("10000, fps 30"));
-        NetworkAdapt::Window quietCongested = cleanWindow(65);   // congested, every frame on time
-        CHECK(runWindows(fresh, t, 12, quietCongested, 30000).isEmpty());
-        CHECK_EQ(fresh.fps(), 30);
-        t += 250;
-        NetworkAdapt::Action floorHalving = fresh.update(congestedWindow(65), t, 30000);
-        CHECK_EQ(floorHalving.fps, 15);                           // the first fresh symptom
-        CHECK_EQ(QString(floorHalving.reason), QString("congested"));
-
-        // A symptom in every other window (one the action gap blocks, then a quiet one): the
-        // frame rate still goes first, as the cuts see the symptom of the window before
-        NetworkAdapt alternate;
-        alternate.reset(30000, 0, Policy::QualityPriority, true, 60, true);
-        t = 0;
-        runWindows(alternate, t, 20, cleanWindow(5), 30000);
-        actions.clear();
-        for (int i = 0; i < 12; i++) {
-            actions += runWindows(alternate, t, 1, i % 2 == 0 ? congestedWindow(65) : quietCongested, 30000);
-        }
-        CHECK(sequence(actions).startsWith("24000, fps 30, 19000"));
+        actions += runWindows(again, t, 6, congestedWindow(65), 35000);
+        CHECK_EQ(sequence(actions), QString("24500 fps 40, 17000 fps 25, 11500 fps 15, 8000 fps 10"));
 
         // A switch to frame priority and back before the restore ran (a ceiling took that
-        // window): the frame rate stays lowered and still climbs back to the stream's
+        // window): the frame rate stays lowered and climbs back to what the bitrate gives
         NetworkAdapt flip;
-        flip.reset(30000, 0, Policy::QualityPriority, true, 60, true);
+        flip.reset(35000, 0, Policy::QualityPriority, true, 60, true);
         t = 0;
-        runWindows(flip, t, 20, cleanWindow(5), 30000);
-        CHECK_EQ(sequence(runWindows(flip, t, 4, congestedWindow(65), 30000)), QString("24000, fps 30"));
+        runWindows(flip, t, 20, cleanWindow(5), 35000);
+        CHECK_EQ(sequence(runWindows(flip, t, 2, congestedWindow(65), 35000)), QString("24500 fps 40"));
         flip.setPolicy(Policy::FramePriority);
         t += 250;
         CHECK_EQ(QString(flip.update(cleanWindow(5), t, 24000).reason), QString("ceiling"));
         flip.setPolicy(Policy::QualityPriority);
+        CHECK_EQ(flip.fps(), 40);
         CHECK_EQ(sequence(runWindows(flip, t, 40, cleanWindow(5), 24000)), QString("fps 60"));
         CHECK_EQ(flip.fps(), 60);
 
-        // The way back retraces the halvings: 144 -> 70 -> 35 and back 70, 144; 165 -> 80 -> 40
-        // and back 80, 165
-        for (int streamFps : { 144, 165 }) {
-            NetworkAdapt odd;
-            odd.reset(30000, 0, Policy::QualityPriority, true, streamFps, true);
-            t = 0;
-            NetworkAdapt::Window clean = cleanWindow(5);
-            clean.fps = streamFps;
-            NetworkAdapt::Window congested = congestedWindow(65);
-            congested.fps = streamFps;
-            runWindows(odd, t, 20, clean, 30000);
-            const int first = streamFps == 144 ? 70 : 80;
-            CHECK_EQ(sequence(runWindows(odd, t, 16, congested, 30000)),
-                     QString("24000, fps %1, 19000, 15000, 12000, 10000, fps %2").arg(first).arg(first / 2));
-            CHECK_EQ(sequence(runWindows(odd, t, 240, clean, 30000)),
-                     QString("14500 fps %1, 19000, 23500, 28000 fps %2, 30000").arg(first).arg(streamFps));
-            CHECK_EQ(odd.fps(), streamFps);
-        }
-
-        // The frame rate climbs back 6 s after its halving at the earliest, also when a new
-        // ceiling brought the bitrate back at once
-        NetworkAdapt held;
-        held.reset(30000, 0, Policy::QualityPriority, true, 60, true);
-        t = 0;
-        runWindows(held, t, 20, cleanWindow(5), 30000);
-        actions = runWindows(held, t, 4, congestedWindow(65), 30000);
-        CHECK_EQ(sequence(actions), QString("24000, fps 30"));
-        const double halvedAtS = actions.isEmpty() ? 0 : actions.last().atS;
-        t += 250;
-        CHECK_EQ(QString(held.update(cleanWindow(5), t, 24000).reason), QString("ceiling"));
-        actions = runWindows(held, t, 40, cleanWindow(5), 24000);
-        CHECK_EQ(sequence(actions), QString("fps 60"));
-        if (actions.size() == 1) {
-            CHECK(near(actions[0].atS - halvedAtS, 6.0));
-        }
-
-        // 120 fps halves to 60, then 30 at the floor
+        // A 120 fps stream: the same proportion (80, 55, 35, 25, 15, 10)
         NetworkAdapt fast;
-        fast.reset(30000, 0, Policy::QualityPriority, true, 120, true);
+        fast.reset(35000, 0, Policy::QualityPriority, true, 120, true);
         t = 0;
-        runWindows(fast, t, 20, cleanWindow(5), 30000);
+        runWindows(fast, t, 20, cleanWindow(5), 35000);
         NetworkAdapt::Window fastWindow = congestedWindow(65);
         fastWindow.fps = 120;
-        CHECK_EQ(sequence(runWindows(fast, t, 60, fastWindow, 30000)), QString("24000, fps 60, 19000, 15000, 12000, 10000, fps 30"));
+        CHECK_EQ(sequence(runWindows(fast, t, 14, fastWindow, 35000)),
+                 QString("24500 fps 80, 17000 fps 55, 11500 fps 35, 8000 fps 25, 5500 fps 15, 4000 fps 10"));
+
+        // Proof after two cuts: a severe stall (400 ms, 250 ms and twice the usual gap or more)
+        // with the round trip flat at 100 ms and no frame lost lets the cuts go on; 120 ms desktop
+        // gaps stop after two (frame priority shows the bitrate alone)
+        NetworkAdapt severe;
+        severe.reset(35000, 0, Policy::FramePriority, true);
+        t = 0;
+        runWindows(severe, t, 8, cleanWindow(3), 35000);
+        NetworkAdapt::Window stalled;
+        stalled.framesReceived = 6;
+        stalled.maxGapMs = 400;
+        stalled.rttMs = 100;
+        CHECK_EQ(sequence(runWindows(severe, t, 14, stalled, 35000)), QString("24500, 17000, 11500, 8000, 5500, 4000"));
+        NetworkAdapt mild;
+        mild.reset(35000, 0, Policy::FramePriority, true);
+        t = 0;
+        runWindows(mild, t, 8, cleanWindow(3), 35000);
+        stalled.maxGapMs = 120;
+        CHECK_EQ(sequence(runWindows(mild, t, 14, stalled, 35000)), QString("24500, 17000"));
     }
     {
         // Frame priority never changes the frame rate, even on a live frame rate host
@@ -1024,7 +993,7 @@ static void testNetworkAdapt()
         runWindows(noFps, t, 20, cleanWindow(5), 30000);
         CHECK_EQ(sequence(runWindows(noFps, t, 60, congestedWindow(65), 30000)), QString("24000, 19000, 15000, 12000, 10000"));
         CHECK_EQ(noFps.fps(), 60);
-        std::printf("  network adaptation frame rate (quality priority, live fps host): halves to 30 after the first cut, 15 at the floor\n");
+        std::printf("  network adaptation frame rate (quality priority, live fps host): the frame rate follows each cut down to 10\n");
     }
 
     // ---- The fourth recording (notes/data/Hermit-netdiag-1791878594.csv, clumsy lag 40 ms +
@@ -1046,14 +1015,15 @@ static void testNetworkAdapt()
         return actions;
     };
     {
-        // Quality priority: the precaution and one halving, then nothing on gap symptoms alone;
+        // Quality priority: the precaution and one more cut (each with the frame rate), then
+        // nothing on gap symptoms alone;
         // the round trip falls 23 s after our last action: one fast recovery to 35000 and 60 fps
         NetworkAdapt adapt;
         adapt.reset(35000, 0, Policy::QualityPriority, true, 60, true);
         uint64_t t = 0;
         int i = 0;
         CHECK(runDesktop(adapt, t, 8, 3, i).isEmpty());
-        CHECK_EQ(sequence(runDesktop(adapt, t, 96, 100, i)), QString("28000, fps 30"));
+        CHECK_EQ(sequence(runDesktop(adapt, t, 96, 100, i)), QString("24500 fps 40, 17000 fps 25"));
         const double firstCleanS = (t + 250) / 1000.0;
         QVector<ReplayAction> actions = runDesktop(adapt, t, 8, 3, i);
         CHECK_EQ(sequence(actions), QString("35000 fps 60"));
@@ -1081,7 +1051,7 @@ static void testNetworkAdapt()
             CHECK(actions[0].atS - frameCleanS <= 1.0);
         }
         std::printf("  network adaptation 4th recording pattern: quality %s, frame %s, back to 35000 in one step\n",
-                    "28000, fps 30", qPrintable(cuts));
+                    "24500 fps 40, 17000 fps 25", qPrintable(cuts));
 
         // The probe fails: the round trip is back for two windows only. The jump is undone in one
         // action, recovery goes on gradually (the frame rate with the step that reaches 28000),
@@ -1091,17 +1061,17 @@ static void testNetworkAdapt()
         t = 0;
         i = 0;
         runDesktop(probe, t, 8, 3, i);
-        CHECK_EQ(sequence(runDesktop(probe, t, 96, 100, i)), QString("28000, fps 30"));
+        CHECK_EQ(sequence(runDesktop(probe, t, 96, 100, i)), QString("24500 fps 40, 17000 fps 25"));
         actions = runDesktop(probe, t, 2, 3, i);
         CHECK_EQ(sequence(actions), QString("35000 fps 60"));
         actions = runDesktop(probe, t, 2, 100, i);
-        CHECK_EQ(sequence(actions), QString("28000 fps 30"));
+        CHECK_EQ(sequence(actions), QString("17000 fps 25"));
         if (actions.size() == 1) {
             CHECK_EQ(QString(actions[0].reason), QString("probe-failed"));
         }
         const uint64_t revertedAt = t - 250;
         actions = runDesktop(probe, t, 120, 3, i);
-        CHECK_EQ(sequence(actions), QString("33000 fps 60, 35000"));
+        CHECK_EQ(sequence(actions), QString("22000 fps 35, 27000 fps 45, 32000 fps 50, 35000 fps 60"));
         if (!actions.isEmpty()) {
             CHECK_EQ(QString(actions[0].reason), QString("recover"));
             CHECK(near(actions[0].atS * 1000 - revertedAt, 6000));
@@ -1111,7 +1081,7 @@ static void testNetworkAdapt()
         actions = runDesktop(probe, t, 20, 100, i);
         actions += runDesktop(probe, t, 60, 3, i);
         CHECK(t - revertedAt < 60000);
-        CHECK_EQ(sequence(actions), QString("28000, 33000, 35000"));
+        CHECK_EQ(sequence(actions), QString("24500 fps 40, 29500 fps 50, 34500 fps 55, 35000 fps 60"));
         for (const ReplayAction& a : actions) {
             CHECK(QString(a.reason) != "fast-recover");
         }
@@ -1123,11 +1093,11 @@ static void testNetworkAdapt()
         t = 0;
         i = 0;
         runDesktop(policy, t, 8, 3, i);
-        CHECK_EQ(sequence(runDesktop(policy, t, 96, 100, i)), QString("28000, fps 30"));
+        CHECK_EQ(sequence(runDesktop(policy, t, 96, 100, i)), QString("24500 fps 40, 17000 fps 25"));
         CHECK_EQ(sequence(runDesktop(policy, t, 2, 3, i)), QString("35000 fps 60"));
         policy.setPolicy(Policy::FramePriority);
         actions = runDesktop(policy, t, 1, 100, i);
-        CHECK_EQ(sequence(actions), QString("28000"));
+        CHECK_EQ(sequence(actions), QString("17000"));
         if (actions.size() == 1) {
             CHECK_EQ(QString(actions[0].reason), QString("probe-failed"));
             CHECK_EQ(actions[0].fps, 0);
@@ -1261,16 +1231,18 @@ static void testNetworkAdapt()
         CHECK(adapt.hasSymptom(gap));                                // a missing frame always is
     }
     {
-        // Gradual recovery order: halvings at 28000 and 11500; on the way back the step that
-        // reaches 11500 or more brings 30 fps, the one that reaches 28000 or more 60 fps
+        // The same with stalls instead of lost frames: 400 ms gaps (severe: proof after two
+        // cuts) at a flat 65 ms round trip; the frame rate climbs back with each raise
         NetworkAdapt adapt;
         adapt.reset(35000, 0, Policy::QualityPriority, true, 60, true);
         uint64_t t = 0;
         runWindows(adapt, t, 20, cleanWindow(5), 35000);
-        CHECK_EQ(sequence(runWindows(adapt, t, 16, congestedWindow(65), 35000)),
-                 QString("28000, fps 30, 22000, 17500, 14000, 11500, fps 15"));
+        NetworkAdapt::Window stalls = stallWindow(65);
+        stalls.maxGapMs = 400;
+        CHECK_EQ(sequence(runWindows(adapt, t, 14, stalls, 35000)),
+                 QString("24500 fps 40, 17000 fps 25, 11500 fps 15, 8000 fps 10, 5500, 4000"));
         CHECK_EQ(sequence(runWindows(adapt, t, 240, cleanWindow(5), 35000)),
-                 QString("16500 fps 30, 21500, 26500, 31500 fps 60, 35000"));
+                 QString("9000 fps 15, 14000 fps 20, 19000 fps 30, 24000 fps 40, 29000 fps 45, 34000 fps 55, 35000 fps 60"));
     }
 
     // ---- Link loss with a flat round trip: FEC ladder, then 15% cuts; FEC comes down again ----
@@ -1677,7 +1649,7 @@ static void testNetworkAdapt()
         CHECK_EQ(grey.update(twoAndTwo, t, 30000).bitrateKbps, 21000);
 
         // A collapse: 2 frames arrive and 6 are lost in every window. With the round trip at
-        // 300 ms the congestion rule runs to the floor (and the frame rate halves twice); with a
+        // 300 ms the congestion rule runs to the floor (the frame rate down to 10 on the way); with a
         // flat round trip it is link loss: FEC first
         NetworkAdapt collapse;
         collapse.reset(35000, 0, Policy::QualityPriority, true, 60, true);
@@ -1695,10 +1667,10 @@ static void testNetworkAdapt()
             t += 250;
             const NetworkAdapt::Action c = collapse.update(collapsing, t, 35000);
             if (c.reason != nullptr) {
-                steps.append(c.fps > 0 ? QString("fps %1").arg(c.fps) : QString::number(c.bitrateKbps));
+                steps.append(c.fps > 0 ? QString("%1 fps %2").arg(c.bitrateKbps).arg(c.fps) : QString::number(c.bitrateKbps));
             }
         }
-        CHECK_EQ(steps.join(", "), QString("28000, fps 30, 22000, 17500, 14000, 11500, fps 15"));
+        CHECK_EQ(steps.join(", "), QString("24500 fps 40, 17000 fps 25, 11500 fps 15, 8000 fps 10, 5500, 4000"));
         NetworkAdapt lossy;
         lossy.reset(35000, 0, Policy::QualityPriority, true, 60, true);
         t = 0;
@@ -1891,7 +1863,7 @@ static void testNetworkAdapt()
             t = (w + 1) * 250;
             const NetworkAdapt::Action a = adapt.update(window, t, 35000);
             if (a.reason != nullptr) {
-                actions.append({ t / 1000.0, a.bitrateKbps, a.fecPercent, a.reason });
+                actions.append({ t / 1000.0, a.bitrateKbps, a.fecPercent, a.reason, a.fps });
             }
             if (window.rttMs > 40) {
                 spiked = true;
@@ -1905,7 +1877,8 @@ static void testNetworkAdapt()
         for (const ReplayAction& a : actions) {
             if (QString(a.reason) == "congested") {
                 cuts++;
-                CHECK_EQ(a.bitrateKbps, 28000);
+                CHECK_EQ(a.bitrateKbps, 24500);                      // x0.7 with the frame rate (40 fps)
+                CHECK_EQ(a.fps, 40);
             }
             else if (QString(a.reason) == "fast-recover" && firstRecoverS < 0) {
                 firstRecoverS = a.atS;
