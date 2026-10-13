@@ -14,7 +14,7 @@ from Moonlight are still in the source tree, but they are not maintained or test
   workload (MSVC x64 toolset). The build finds it with `vswhere`.
 - Qt 6 for MSVC x64 with Qt Quick Controls and Qt SVG. Hermit is developed with **Qt 6.11.3**
   (`msvc2022_64`); other Qt 6 releases may work but are not tested.
-- Python 3 (the build runs two source checks)
+- Python 3.13 or later (the build runs two source checks; the translation generator uses `typing.TypeIs`)
 - Git, with the submodules checked out
 
 ## One-time setup
