@@ -98,6 +98,7 @@ public:
 };
 
 class ClipboardSync;
+class NetDiagLog;
 
 #include "autobitrate.h"
 
@@ -279,6 +280,12 @@ private:
     void handleStreamPanelAction(int action, intptr_t value);
     void applyLiveSettings();
 
+    // Hermit: network diagnostics (netdiag.h). start/stop follow the setting; publish hands the
+    // recorder the bitrate and renderer state columns (main thread, cheap atomics).
+    void startNetDiag();
+    void stopNetDiag(bool toast);
+    void publishNetDiagState();
+
     enum class DecoderAvailability {
         None,
         Software,
@@ -443,6 +450,7 @@ private:
     bool m_LaunchRetryable;
     SdlInputHandler* m_InputHandler;
     ClipboardSync* m_ClipboardSync;
+    NetDiagLog* m_NetDiag;
     StreamPanel* m_Panel;
     bool m_PanelRestoreCapture;
     bool m_RestartRequested;

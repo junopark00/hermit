@@ -18,6 +18,7 @@ else works with any GameStream host, such as Sunshine or Apollo.
 - [Local cursor (Shell)](#local-cursor-shell)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Performance overlay](#performance-overlay)
+- [Network diagnostics](#network-diagnostics)
 - [Session summary and history](#session-summary-and-history)
 - [Connection profiles](#connection-profiles)
 - [Automatic reconnect](#automatic-reconnect)
@@ -85,6 +86,7 @@ Hermit uses its own names and locations, so it can be installed next to Moonligh
 | Session history | `%APPDATA%\Hermit\Hermit\session-history.csv` |
 | Log of the current run | `%TEMP%\Hermit-<number>.log` |
 | Clipboard files received from a host as an archive | `%TEMP%\HermitClipboard` (the last 5 transfers are kept) |
+| Network diagnostics (when turned on) | `%TEMP%\Hermit-netdiag-<unix time>.csv` (the last 5 files are kept) |
 | Box art and other caches | `%LOCALAPPDATA%\Hermit\Hermit\cache` |
 | Unpacked single-file exe | `%LOCALAPPDATA%\Hermit\app\<hash>` |
 
@@ -467,6 +469,29 @@ overlay.
   so on are not included).
 - Values cover roughly the last 2 seconds and refresh every second. During a stream, the stream panel
   changes the same options.
+
+## Network diagnostics
+
+A measurement mode for stutter on an unstable connection (the picture running in slow motion, then
+catching up). It is off by default and changes nothing about the stream; it only records what
+happened, so the behaviour can be analysed before any control change.
+
+- Turn it on with Settings → Performance overlay → Diagnostics → "Record network diagnostics to a
+  file", or with the same checkbox in the stream panel (starts or stops the recording at once).
+- While a stream runs, Hermit writes one row every 100 ms to `%TEMP%\Hermit-netdiag-<unix time>.csv`.
+  A toast names the file when the recording starts; when the stream ends, the log gets one summary
+  line (rows, longest arrival gap, pacer drops, network loss). The last 5 files are kept.
+- Each row covers the 100 ms before it: frames received, decoded and rendered, frames the network
+  dropped (skipped frame numbers), frames the pacer discarded, the longest pacing and render queue
+  seen, the longest gap between two frame arrivals (a stall still in progress counts), average host
+  latency, decode and render time, round-trip time and its variance, loss, the requested (chosen),
+  applied (host-confirmed) and automatic bitrates, V-Sync and frame pacing, and an event column
+  (bitrate changes, renderer resets).
+- The counters are the ones the performance overlay uses, read with lock-free atomics; a recording
+  costs one wake-up of its own thread every 100 ms and a small file write. When the mode is off, the
+  frame path checks one flag per frame and nothing else.
+- Nothing leaves this PC: the file stays in the temp folder until you copy it (clipboard sync and
+  file transfers work as usual).
 
 ## Session summary and history
 

@@ -1,5 +1,6 @@
 #include "pacer.h"
 #include "streaming/streamutils.h"
+#include "streaming/netdiag.h"
 
 #ifdef Q_OS_WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -92,12 +93,20 @@ void Pacer::renderOnMainThread()
 
     if (!m_RenderQueue.isEmpty()) {
         AVFrame* frame = m_RenderQueue.dequeue();
+        publishQueueLengths();
         m_FrameQueueLock.unlock();
 
         renderFrame(frame);
     }
     else {
         m_FrameQueueLock.unlock();
+    }
+}
+
+void Pacer::publishQueueLengths()
+{
+    if (NetDiagLog::isOn()) {
+        NetDiagLog::window().setQueueLengths(m_PacingQueue.count(), m_RenderQueue.count());
     }
 }
 
@@ -164,6 +173,7 @@ int Pacer::renderThread(void* context)
         }
 
         AVFrame* frame = me->m_RenderQueue.dequeue();
+        me->publishQueueLengths();
         me->m_FrameQueueLock.unlock();
 
         me->renderFrame(frame);
@@ -180,6 +190,7 @@ void Pacer::enqueueFrameForRenderingAndUnlock(AVFrame *frame)
 {
     dropFrameForEnqueue(m_RenderQueue);
     m_RenderQueue.enqueue(frame);
+    publishQueueLengths();
 
     m_FrameQueueLock.unlock();
 
@@ -237,6 +248,9 @@ void Pacer::handleVsync(int timeUntilNextVsyncMillis)
         // Drop the lock while we call av_frame_free()
         m_FrameQueueLock.unlock();
         m_VideoStats->pacerDroppedFrames++;
+        if (NetDiagLog::isOn()) {
+            NetDiagLog::window().onPacerDrop();
+        }
         av_frame_free(&frame);
         m_FrameQueueLock.lock();
     }
@@ -341,6 +355,9 @@ void Pacer::renderFrame(AVFrame* frame)
 
     m_VideoStats->totalRenderTimeUs += (afterRender - beforeRender);
     m_VideoStats->renderedFrames++;
+    if (NetDiagLog::isOn()) {
+        NetDiagLog::window().onFrameRendered(afterRender - beforeRender);
+    }
 
     // Wait until after next frame to free this one to ensure the GPU
     // doesn't stall or read garbage if the backing buffer gets returned
@@ -384,6 +401,9 @@ void Pacer::renderFrame(AVFrame* frame)
         // Drop the lock while we call av_frame_free()
         m_FrameQueueLock.unlock();
         m_VideoStats->pacerDroppedFrames++;
+        if (NetDiagLog::isOn()) {
+            NetDiagLog::window().onPacerDrop();
+        }
         av_frame_free(&frame);
         m_FrameQueueLock.lock();
     }
@@ -396,6 +416,11 @@ void Pacer::dropFrameForEnqueue(QQueue<AVFrame*>& queue)
     SDL_assert(queue.size() <= MAX_QUEUED_FRAMES);
     if (queue.size() == MAX_QUEUED_FRAMES) {
         AVFrame* frame = queue.dequeue();
+        // Not in pacerDroppedFrames (the overlay's jitter drops); the diagnostics count every
+        // decoded frame that was never shown
+        if (NetDiagLog::isOn()) {
+            NetDiagLog::window().onPacerDrop();
+        }
         av_frame_free(&frame);
     }
 }
@@ -410,6 +435,7 @@ void Pacer::submitFrame(AVFrame* frame)
     if (m_VsyncSource != nullptr) {
         dropFrameForEnqueue(m_PacingQueue);
         m_PacingQueue.enqueue(frame);
+        publishQueueLengths();
         m_FrameQueueLock.unlock();
         m_PacingQueueNotEmpty.wakeOne();
     }

@@ -12,6 +12,7 @@
 #include "streaming/video/statsoverlay.h"
 #include "streaming/cursorpacket.h"
 #include "streaming/autobitrate.h"
+#include "streaming/netdiag.h"
 #include "streaming/clipboardchangeorder.h"
 #include "settings/resolutionpresets.h"
 #include "backend/qrpairinglink.h"
@@ -1569,6 +1570,126 @@ static void testProfileProperties(const QString& repo)
         CHECK(exists);
     }
     CHECK(count >= 10);
+}
+
+// Network diagnostics (streaming/netdiag.h): the CSV row and the 100 ms window aggregation
+static void testNetDiag()
+{
+    // ---- CSV formatting and escaping ----
+    CHECK(NetDiagRow::header().startsWith("t_ms,frames_received,"));
+    CHECK(NetDiagRow::header().endsWith(",vsync,frame_pacing,event\n"));
+    CHECK_EQ(NetDiagRow::header().count(','), 20);
+
+    NetDiagRow row;
+    row.tMs = 1200;
+    row.framesReceived = 6;
+    row.framesDecoded = 6;
+    row.framesRendered = 5;
+    row.framesNetworkDropped = 1;
+    row.pacerDropped = 2;
+    row.pacingQueueLen = 3;
+    row.renderQueueLen = 1;
+    row.lastFrameArrivalGapMs = 48;
+    row.hostLatencyMs = 6.75f;
+    row.decodeMsAvg = 1.234f;
+    row.renderMsAvg = 0.5f;
+    row.rttMs = 12;
+    row.rttVarianceMs = 3;
+    row.lossPctWindow = 14.2857f;
+    row.requestedKbps = 20000;
+    row.appliedKbps = 16000;
+    row.autoKbps = 16000;
+    row.vsync = true;
+    row.framePacing = false;
+    CHECK_EQ(QString::fromUtf8(row.toCsv()),
+             QString("1200,6,6,5,1,2,3,1,48,6.8,1.23,0.50,12,3,14.3,20000,16000,16000,1,0,\n"));
+    CHECK_EQ(row.toCsv().count(','), 20);
+
+    // A plain event is written as it is; commas, quotes and line breaks are quoted (RFC 4180)
+    row.event = "start";
+    CHECK(row.toCsv().endsWith(",1,0,start\n"));
+    row.event = "applied 20000->16000; auto 0->16000";
+    CHECK(row.toCsv().endsWith(",applied 20000->16000; auto 0->16000\n"));
+    CHECK_EQ(QString::fromUtf8(NetDiagRow::csvField("a,b")), QString("\"a,b\""));
+    CHECK_EQ(QString::fromUtf8(NetDiagRow::csvField("say \"hi\"")), QString("\"say \"\"hi\"\"\""));
+    CHECK_EQ(QString::fromUtf8(NetDiagRow::csvField("two\nlines")), QString("\"two\nlines\""));
+    CHECK_EQ(QString::fromUtf8(NetDiagRow::csvField(QString::fromUtf8("한글"))), QString::fromUtf8("한글"));
+    CHECK_EQ(QString::fromUtf8(NetDiagRow::csvField("")), QString(""));
+    row.event = "x,y";
+    CHECK(row.toCsv().endsWith(",1,0,\"x,y\"\n"));
+    CHECK_EQ(row.toCsv().count('\n'), 1);
+
+    // ---- Window aggregation ----
+    NetDiagWindow window;
+    const uint64_t t0 = 1000000;
+    window.reset(t0);
+
+    // About 60 fps: six frames 16 ms apart (the last at t0 + 96 ms), one of them after a skipped
+    // frame number, with host latency in 0.1 ms units
+    uint64_t t = t0;
+    for (int i = 0; i < 6; i++) {
+        t += 16000;
+        window.onFrameReceived(t, i == 3 ? 1 : 0, 65);
+        window.onFrameDecoded(1500);
+    }
+    window.onFrameRendered(400);
+    window.onFrameRendered(600);
+    window.setQueueLengths(2, 1);
+    window.setQueueLengths(1, 0);  // the maximum of the window is kept, not the last value
+    window.onPacerDrop();
+    window.onPacerDrop(2);
+
+    NetDiagRow r1;
+    window.sample(t0 + 100000, r1);
+    CHECK_EQ(r1.framesReceived, 6u);
+    CHECK_EQ(r1.framesDecoded, 6u);
+    CHECK_EQ(r1.framesRendered, 2u);
+    CHECK_EQ(r1.framesNetworkDropped, 1u);
+    CHECK_EQ(r1.pacerDropped, 3u);
+    CHECK_EQ(r1.pacingQueueLen, 2);
+    CHECK_EQ(r1.renderQueueLen, 1);
+    CHECK_EQ(r1.lastFrameArrivalGapMs, 16);           // 16 ms between arrivals; 4 ms since the last
+    CHECK(near(r1.hostLatencyMs, 6.5, 0.001));
+    CHECK(near(r1.decodeMsAvg, 1.5, 0.001));
+    CHECK(near(r1.renderMsAvg, 0.5, 0.001));
+    CHECK(near(r1.lossPctWindow, 100.0 / 7, 0.01));   // 1 dropped of 7 numbered frames
+
+    // The sample reset the window: an empty next window reads zero, loss unknown (-1), and the
+    // gap is the time since the last arrival (a stall in progress)
+    NetDiagRow r2;
+    window.sample(t0 + 200000, r2);
+    CHECK_EQ(r2.framesReceived, 0u);
+    CHECK_EQ(r2.framesDecoded, 0u);
+    CHECK_EQ(r2.framesRendered, 0u);
+    CHECK_EQ(r2.framesNetworkDropped, 0u);
+    CHECK_EQ(r2.pacerDropped, 0u);
+    CHECK_EQ(r2.pacingQueueLen, 0);
+    CHECK_EQ(r2.renderQueueLen, 0);
+    CHECK(near(r2.hostLatencyMs, 0.0, 0.001));
+    CHECK(near(r2.decodeMsAvg, 0.0, 0.001));
+    CHECK(near(r2.lossPctWindow, -1.0, 0.001));
+    CHECK_EQ(r2.lastFrameArrivalGapMs, 104);          // t0+200 ms minus the last arrival at t0+96 ms
+
+    // The frame that ends the stall carries the whole gap (measured from the last arrival, not
+    // from the window start), and later frames do not lower it
+    window.onFrameReceived(t0 + 350000, 0, 0);
+    window.onFrameReceived(t0 + 366000, 0, 0);
+    NetDiagRow r3;
+    window.sample(t0 + 400000, r3);
+    CHECK_EQ(r3.framesReceived, 2u);
+    CHECK_EQ(r3.lastFrameArrivalGapMs, 254);          // t0+350 ms minus the last arrival at t0+96 ms
+    CHECK(near(r3.hostLatencyMs, 0.0, 0.001));        // no latency figures: average 0, not NaN
+    CHECK(near(r3.lossPctWindow, 0.0, 0.001));
+
+    // reset() forgets the last arrival as well: the next window measures from the reset time
+    window.reset(t0 + 500000);
+    NetDiagRow r4;
+    window.sample(t0 + 600000, r4);
+    CHECK_EQ(r4.lastFrameArrivalGapMs, 100);
+    window.onFrameReceived(t0 + 610000, 0, 0);
+    NetDiagRow r5;
+    window.sample(t0 + 700000, r5);
+    CHECK_EQ(r5.lastFrameArrivalGapMs, 110);          // 10 ms after the window start, 90 ms since
 }
 
 int main(int argc, char** argv)

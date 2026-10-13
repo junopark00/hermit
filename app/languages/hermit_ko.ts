@@ -304,6 +304,18 @@
       <translation>렌더러</translation>
     </message>
     <message>
+      <source>Diagnostics</source>
+      <translation>진단</translation>
+    </message>
+    <message>
+      <source>Record network diagnostics to a file</source>
+      <translation>네트워크 진단을 파일에 기록</translation>
+    </message>
+    <message>
+      <source>While streaming, writes a row every 100 ms with frame arrivals, queue lengths, dropped frames, host latency, round-trip time, loss and the requested, applied and automatic bitrates to a CSV file in the temp folder (Hermit-netdiag-&lt;time&gt;.csv). For analysing stutter on an unstable connection. The last 5 files are kept; nothing leaves this PC.</source>
+      <translation>스트리밍 중 100 ms마다 프레임 도착, 큐 길이, 드롭된 프레임, 호스트 지연, 왕복 지연, 손실, 요청·적용·자동 비트레이트를 임시 폴더의 CSV 파일(Hermit-netdiag-&lt;시각&gt;.csv)에 한 줄씩 기록합니다. 불안정한 연결의 끊김을 분석하기 위한 기능입니다. 최근 5개 파일을 보관하며, 이 PC 밖으로 나가는 데이터는 없습니다.</translation>
+    </message>
+    <message>
       <source>Local cursor in remote desktop mouse mode</source>
       <translation>원격 데스크톱 마우스 모드에서 로컬 커서 사용</translation>
     </message>
@@ -393,6 +405,18 @@
     <message>
       <source>A different app is now running on %1.</source>
       <translation>%1에서 다른 앱이 실행 중입니다.</translation>
+    </message>
+    <message>
+      <source>Recording network diagnostics: %1</source>
+      <translation>네트워크 진단 기록 중: %1</translation>
+    </message>
+    <message>
+      <source>Network diagnostics saved: %1 (%2 rows)</source>
+      <translation>네트워크 진단을 저장했습니다: %1 (%2줄)</translation>
+    </message>
+    <message>
+      <source>Network diagnostics: the file could not be created</source>
+      <translation>네트워크 진단: 파일을 만들 수 없습니다</translation>
     </message>
     <message>
       <source>Local cursor not available on this host: the host draws the pointer</source>
@@ -968,6 +992,14 @@ Start를 길게 눌러 끄기</translation>
     <message>
       <source>Performance overlay</source>
       <translation>성능 오버레이</translation>
+    </message>
+    <message>
+      <source>Record network diagnostics to a file</source>
+      <translation>네트워크 진단을 파일에 기록</translation>
+    </message>
+    <message>
+      <source>A row every 100 ms (frames, queues, drops, latency, loss, bitrates) to a CSV file in the temp folder, for analysing stutter on an unstable connection. Nothing leaves this PC.</source>
+      <translation>100 ms마다 한 줄(프레임, 큐, 드롭, 지연, 손실, 비트레이트)을 임시 폴더의 CSV 파일에 기록합니다. 불안정한 연결의 끊김을 분석하기 위한 기능입니다. 이 PC 밖으로 나가는 데이터는 없습니다.</translation>
     </message>
     <message>
       <source>Video</source>

@@ -56,6 +56,10 @@ private:
 
     void dropFrameForEnqueue(QQueue<AVFrame*>& queue);
 
+    // Hermit: network diagnostics (netdiag.h). Called with m_FrameQueueLock held after a queue
+    // changed; one atomic flag check while the mode is off.
+    void publishQueueLengths();
+
     QQueue<AVFrame*> m_RenderQueue;
     QQueue<AVFrame*> m_PacingQueue;
     QQueue<int> m_PacingQueueHistory;

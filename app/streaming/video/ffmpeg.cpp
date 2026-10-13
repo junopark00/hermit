@@ -2,6 +2,7 @@
 #include "ffmpeg.h"
 #include "utils.h"
 #include "streaming/session.h"
+#include "streaming/netdiag.h"
 #include "statsoverlay.h"
 
 #include <h264_stream.h>
@@ -2042,6 +2043,7 @@ void FFmpegVideoDecoder::decoderThreadProc()
                     // Capture a frame timestamp to measuring pacing delay
                     frame->pkt_dts = LiGetMicroseconds();
 
+                    uint64_t decodeTimeUs = 0;
                     if (!m_FrameInfoQueue.isEmpty()) {
                         // Data buffers in the DU are not valid here!
                         DECODE_UNIT du = m_FrameInfoQueue.dequeue();
@@ -2049,13 +2051,17 @@ void FFmpegVideoDecoder::decoderThreadProc()
                         // Count time in avcodec_send_packet() and avcodec_receive_frame()
                         // as time spent decoding. Also count time spent in the decode unit
                         // queue because that's directly caused by decoder latency.
-                        m_ActiveWndVideoStats.totalDecodeTimeUs += (LiGetMicroseconds() - du.enqueueTimeUs);
+                        decodeTimeUs = LiGetMicroseconds() - du.enqueueTimeUs;
+                        m_ActiveWndVideoStats.totalDecodeTimeUs += decodeTimeUs;
 
                         // Store the presentation time (90 kHz timebase)
                         frame->pts = (int64_t)du.rtpTimestamp;
                     }
 
                     m_ActiveWndVideoStats.decodedFrames++;
+                    if (NetDiagLog::isOn()) {
+                        NetDiagLog::window().onFrameDecoded(decodeTimeUs);
+                    }
 
                     // Queue the frame for rendering (or render now if pacer is disabled)
                     m_Pacer->submitFrame(frame);
@@ -2124,15 +2130,22 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
         return DR_NEED_IDR;
     }
 
+    uint32_t droppedBefore = 0;
     if (!m_LastFrameNumber) {
         m_ActiveWndVideoStats.measurementStartUs = LiGetMicroseconds();
         m_LastFrameNumber = du->frameNumber;
     }
     else {
         // Any frame number greater than m_LastFrameNumber + 1 represents a dropped frame
-        m_ActiveWndVideoStats.networkDroppedFrames += du->frameNumber - (m_LastFrameNumber + 1);
-        m_ActiveWndVideoStats.totalFrames += du->frameNumber - (m_LastFrameNumber + 1);
+        droppedBefore = du->frameNumber - (m_LastFrameNumber + 1);
+        m_ActiveWndVideoStats.networkDroppedFrames += droppedBefore;
+        m_ActiveWndVideoStats.totalFrames += droppedBefore;
         m_LastFrameNumber = du->frameNumber;
+    }
+
+    // Hermit: network diagnostics (netdiag.h), one flag check per frame while it is off
+    if (NetDiagLog::isOn()) {
+        NetDiagLog::window().onFrameReceived(LiGetMicroseconds(), droppedBefore, du->frameHostProcessingLatency);
     }
 
     m_BwTracker.AddBytes(du->fullLength);

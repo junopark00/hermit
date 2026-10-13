@@ -169,6 +169,18 @@ TRANSLATIONS = {
     ('StreamPanel', 'DISPLAY'): '표시',
     ('StreamPanel', 'Applied at once.'): '바로 적용됩니다.',
     ('StreamPanel', 'Performance overlay'): '성능 오버레이',
+
+    # Network diagnostics (DEV-PLAN 1.4 step 1, streaming/netdiag.h)
+    ('StreamPanel', 'Record network diagnostics to a file'): '네트워크 진단을 파일에 기록',
+    ('StreamPanel', 'A row every 100 ms (frames, queues, drops, latency, loss, bitrates) to a CSV file in the temp folder, for analysing stutter on an unstable connection. Nothing leaves this PC.'):
+        '100 ms마다 한 줄(프레임, 큐, 드롭, 지연, 손실, 비트레이트)을 임시 폴더의 CSV 파일에 기록합니다. 불안정한 연결의 끊김을 분석하기 위한 기능입니다. 이 PC 밖으로 나가는 데이터는 없습니다.',
+    ('SettingsView', 'Diagnostics'): '진단',
+    ('SettingsView', 'Record network diagnostics to a file'): '네트워크 진단을 파일에 기록',
+    ('SettingsView', 'While streaming, writes a row every 100 ms with frame arrivals, queue lengths, dropped frames, host latency, round-trip time, loss and the requested, applied and automatic bitrates to a CSV file in the temp folder (Hermit-netdiag-<time>.csv). For analysing stutter on an unstable connection. The last 5 files are kept; nothing leaves this PC.'):
+        '스트리밍 중 100 ms마다 프레임 도착, 큐 길이, 드롭된 프레임, 호스트 지연, 왕복 지연, 손실, 요청·적용·자동 비트레이트를 임시 폴더의 CSV 파일(Hermit-netdiag-<시각>.csv)에 한 줄씩 기록합니다. 불안정한 연결의 끊김을 분석하기 위한 기능입니다. 최근 5개 파일을 보관하며, 이 PC 밖으로 나가는 데이터는 없습니다.',
+    ('Session', 'Recording network diagnostics: %1'): '네트워크 진단 기록 중: %1',
+    ('Session', 'Network diagnostics saved: %1 (%2 rows)'): '네트워크 진단을 저장했습니다: %1 (%2줄)',
+    ('Session', 'Network diagnostics: the file could not be created'): '네트워크 진단: 파일을 만들 수 없습니다',
     ('StreamPanel', 'Video'): '비디오',
     ('StreamPanel', 'Network loss'): '네트워크 손실',
     ('StreamPanel', 'Round trip'): '왕복 지연',

@@ -2218,6 +2218,32 @@ Flickable {
                         }
                     }
                 }
+
+                // Hermit: network diagnostics (streaming/netdiag.h), a measurement mode for
+                // unstable links. Off by default; nothing leaves the PC.
+                Label {
+                    width: parent.width
+                    topPadding: 10
+                    text: qsTr("Diagnostics")
+                    font.pointSize: 11
+                    wrapMode: Text.Wrap
+                }
+
+                CheckBox {
+                    id: netDiagCheck
+                    width: parent.width
+                    text: qsTr("Record network diagnostics to a file")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.netDiag
+                    onCheckedChanged: {
+                        StreamingPreferences.netDiag = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 15000
+                    ToolTip.visible: hovered || activeFocus
+                    ToolTip.text: qsTr("While streaming, writes a row every 100 ms with frame arrivals, queue lengths, dropped frames, host latency, round-trip time, loss and the requested, applied and automatic bitrates to a CSV file in the temp folder (Hermit-netdiag-<time>.csv). For analysing stutter on an unstable connection. The last 5 files are kept; nothing leaves this PC.")
+                }
             }
         }
     }

@@ -174,6 +174,9 @@ public:
     Q_PROPERTY(int overlayTextSize MEMBER overlayTextSize NOTIFY overlayTextSizeChanged)
     Q_PROPERTY(bool autoReconnect MEMBER autoReconnect NOTIFY autoReconnectChanged)
     Q_PROPERTY(bool adaptiveBitrate MEMBER adaptiveBitrate NOTIFY adaptiveBitrateChanged)
+    // Hermit: network diagnostics, a 100 ms CSV log of the stream's network and playback figures
+    // (streaming/netdiag.h); off by default
+    Q_PROPERTY(bool netDiag MEMBER netDiag NOTIFY netDiagChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
 
@@ -218,6 +221,7 @@ public:
     int overlayTextSize;
     bool autoReconnect;
     bool adaptiveBitrate;
+    bool netDiag;
     int packetSize;
     AudioConfig audioConfig;
     VideoCodecConfig videoCodecConfig;
@@ -273,6 +277,7 @@ signals:
     void overlayTextSizeChanged();
     void autoReconnectChanged();
     void adaptiveBitrateChanged();
+    void netDiagChanged();
     void languageChanged();
     void rendererSelectionChanged();
 

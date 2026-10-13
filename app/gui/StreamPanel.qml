@@ -632,6 +632,22 @@ Window {
                 }
                 Helper { text: qsTr("Changing V-Sync or frame pacing recreates the renderer: the picture blinks once.") }
 
+                CheckBox {
+                    // Hermit: network diagnostics (streaming/netdiag.h); starts or stops the
+                    // recording at once. The toast names the file.
+                    text: qsTr("Record network diagnostics to a file")
+                    font.pointSize: 10
+                    checked: StreamingPreferences.netDiag
+                    onToggled: {
+                        StreamingPreferences.netDiag = checked
+                        panel.applyLive()
+                    }
+                    ToolTip.visible: hovered || activeFocus
+                    ToolTip.delay: 600
+                    ToolTip.timeout: 15000
+                    ToolTip.text: qsTr("A row every 100 ms (frames, queues, drops, latency, loss, bitrates) to a CSV file in the temp folder, for analysing stutter on an unstable connection. Nothing leaves this PC.")
+                }
+
                 Divider {}
 
                 // ---- Input and other ---------------------------------------------------

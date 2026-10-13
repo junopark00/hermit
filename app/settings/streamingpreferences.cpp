@@ -60,6 +60,7 @@
 #define SER_OVERLAYTEXTSIZE "overlaytextsize"
 #define SER_AUTORECONNECT "autoreconnect"
 #define SER_ADAPTIVEBITRATE "adaptivebitrate"
+#define SER_NETDIAG "netdiag"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
 
@@ -168,6 +169,7 @@ void StreamingPreferences::reload()
     overlayTextSize = qBound(12, settings.value(SER_OVERLAYTEXTSIZE, 20).toInt(), 40);
     autoReconnect = settings.value(SER_AUTORECONNECT, true).toBool();
     adaptiveBitrate = settings.value(SER_ADAPTIVEBITRATE, false).toBool();
+    netDiag = settings.value(SER_NETDIAG, false).toBool();
     enableHdr = settings.value(SER_HDR, false).toBool();
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
                                                          static_cast<int>(CaptureSysKeysMode::CSK_OFF)).toInt());
@@ -430,6 +432,7 @@ void StreamingPreferences::save()
     settings.setValue(SER_OVERLAYTEXTSIZE, overlayTextSize);
     settings.setValue(SER_AUTORECONNECT, autoReconnect);
     settings.setValue(SER_ADAPTIVEBITRATE, adaptiveBitrate);
+    settings.setValue(SER_NETDIAG, netDiag);
 }
 
 // Hermit: recommended bitrate from resolution and frame rate, shown under the bitrate setting

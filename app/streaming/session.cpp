@@ -8,6 +8,7 @@
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "streaming/clipboardsync.h"
+#include "streaming/netdiag.h"
 
 #include <Limelight.h>
 #include "SDL_compat.h"
@@ -707,6 +708,7 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_LaunchRetryable(true),
       m_InputHandler(nullptr),
       m_ClipboardSync(nullptr),
+      m_NetDiag(nullptr),
       m_Panel(nullptr),
       m_PanelRestoreCapture(false),
       m_RestartRequested(false),
@@ -2401,7 +2403,59 @@ void Session::applyLiveSettings()
         m_ClipboardSync = nullptr;
     }
 
+    // Hermit: network diagnostics follow the setting while the stream runs
+    if (m_Preferences->netDiag && m_NetDiag == nullptr) {
+        startNetDiag();
+    }
+    else if (!m_Preferences->netDiag && m_NetDiag != nullptr) {
+        stopNetDiag(true);
+    }
+    publishNetDiagState();
+
     updateCursorMode();
+}
+
+void Session::startNetDiag()
+{
+    if (m_NetDiag != nullptr) {
+        return;
+    }
+    m_NetDiag = new NetDiagLog();
+    if (!m_NetDiag->start()) {
+        delete m_NetDiag;
+        m_NetDiag = nullptr;
+        getOverlayManager().showToast(QCoreApplication::translate("Session", "Network diagnostics: the file could not be created"), 4000);
+        return;
+    }
+    publishNetDiagState();
+    // The file name is announced now: at the end of the stream the overlay is gone (the log
+    // line then names the file). Copying the file is a clipboard sync / file transfer job.
+    getOverlayManager().showToast(QCoreApplication::translate("Session", "Recording network diagnostics: %1").arg(m_NetDiag->fileName()), 5000);
+}
+
+void Session::stopNetDiag(bool toast)
+{
+    if (m_NetDiag == nullptr) {
+        return;
+    }
+    m_NetDiag->stop();
+    if (toast) {
+        getOverlayManager().showToast(QCoreApplication::translate("Session", "Network diagnostics saved: %1 (%2 rows)")
+                                      .arg(m_NetDiag->fileName()).arg(m_NetDiag->rows()), 5000);
+    }
+    delete m_NetDiag;
+    m_NetDiag = nullptr;
+}
+
+void Session::publishNetDiagState()
+{
+    if (!NetDiagLog::isOn()) {
+        return;
+    }
+    const int requested = m_Panel != nullptr ? m_Panel->chosenBitrateKbps() : m_StreamConfig.bitrate;
+    const int applied = m_Panel != nullptr ? m_Panel->appliedBitrateKbps() : m_StreamConfig.bitrate;
+    NetDiagLog::setBitrates(requested, applied, m_AutoBitrateRunning ? m_AutoBitrate.current() : 0);
+    NetDiagLog::setRenderMode(m_AppliedVsync, m_AppliedVsync && m_AppliedFramePacing);
 }
 
 void Session::handleStreamPanelAction(int action, intptr_t value)
@@ -2574,6 +2628,7 @@ void Session::handleStreamPanelAction(int action, intptr_t value)
         break;
     }
     }
+    publishNetDiagState();
 }
 
 void Session::setShouldExit(bool quitHostApp)
@@ -2828,6 +2883,11 @@ void Session::exec()
                               m_Window, m_Computer->name, m_App.name);
     m_Panel->setStreamBitrate(m_StreamConfig.bitrate);
 
+    // Hermit: network diagnostics (netdiag.h), when the setting is on
+    if (m_Preferences->netDiag) {
+        startNetDiag();
+    }
+
     // Hermit: local cursor on a Shell host that supports it (the control stream is up, so the
     // host can send shapes as soon as it agrees)
     {
@@ -2984,6 +3044,7 @@ void Session::exec()
                 }
                 break;
             case SDL_CODE_NETWORK_WINDOW: {
+                publishNetDiagState();
                 // Hermit: automatic bitrate (autobitrate.h), through Shell's live bitrate.
                 // Windows from the previous session's decoder can still be queued right after a
                 // reconnect, so the first seconds are skipped.
@@ -3055,6 +3116,7 @@ void Session::exec()
                     m_Panel->applyLiveBitrate(m_AutoBitrate.current());
                 }
                 m_Panel->setAutoBitrate(m_AutoBitrate.current());
+                publishNetDiagState();
                 break;
             }
             case SDL_CODE_STREAM_PANEL_ACTION:
@@ -3238,6 +3300,7 @@ void Session::exec()
             // Fall through
         case SDL_RENDER_DEVICE_RESET:
 
+            NetDiagLog::note(QStringLiteral("renderer reset"));
             if (event.type != SDL_WINDOWEVENT) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "Recreating renderer by internal request: %d",
@@ -3423,6 +3486,10 @@ DispatchDeferredCleanup:
     // This waits briefly only if a request is still in flight.
     delete m_ClipboardSync;
     m_ClipboardSync = nullptr;
+
+    // Hermit: network diagnostics end with the stream; the summary goes to the log (the overlay
+    // is gone, so no toast here)
+    stopNetDiag(false);
 
     // Destroy the decoder, since this must be done on the main thread
     // NB: This must happen before LiStopConnection() for pull-based
