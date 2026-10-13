@@ -17,10 +17,12 @@ class QQuickWindow;
 #define SDL_CODE_NETWORK_WINDOW 109
 
 // Hermit: settings panel shown over the stream (Ctrl+Alt+Shift+P, or the chevron handle at the
-// left or right edge of the stream window, shown in every mouse mode; a captured game mouse does
-// not reach it). It is a Qt Quick window: Qt event processing is suspended during a stream, so
-// Session::exec() pumps Qt events only while the panel or its handle is visible. Settings that only need the client change at once; resolution, frame rate, bitrate,
-// codec and HDR are applied by reconnecting with the new settings (the host app keeps running).
+// left or right edge of the stream window; on Windows the handle is shown in every mouse mode,
+// and a captured game mouse does not reach it). It is a Qt Quick window: Qt event processing is
+// suspended during a stream, so Session::exec() pumps Qt events only while the panel or its
+// handle is visible. Settings that only need the client change at once; resolution, frame rate,
+// bitrate, codec and HDR are applied by reconnecting with the new settings (the host app keeps
+// running).
 //
 // QML calls arrive while Session::exec() pumps Qt events; actions that must run in the SDL loop
 // are posted back to it as SDL_CODE_STREAM_PANEL_ACTION events.
@@ -107,14 +109,28 @@ public:
     void open();
     void close();
 
-    // Called on every pass of the SDL loop: shows the handle while the panel is closed and the
-    // stream window is not minimized, in every mouse mode (mouseCaptured and absoluteMouse no
-    // longer decide it); outside Windows only while the stream window has focus. Keeps the
+    // True at most once every few milliseconds: Session::exec() then calls sync() and processes
+    // Qt events, and otherwise handles SDL events (a fast mouse sends thousands a second) directly.
+    bool syncDue()
+    {
+        const Uint64 now = SDL_GetTicks64();
+        if (now - m_LastSyncMs < kSyncIntervalMs) {
+            return false;
+        }
+        m_LastSyncMs = now;
+        return true;
+    }
+    static constexpr Uint64 kSyncIntervalMs = 4;
+
+    // Called from the SDL loop (see syncDue()): shows the handle while the panel is closed and
+    // the stream window is not minimized. On Windows that is in every mouse mode, also without
+    // focus (mouseCaptured, absoluteMouse and streamFocused do not decide it there); elsewhere
+    // only while the stream window has focus and the pointer can reach the handle. Keeps the
     // windows on the stream window.
     void sync(bool mouseCaptured, bool absoluteMouse, bool streamFocused, bool minimized);
 
-    // Windows: the stream window is being hidden (SDL hides it before it recreates the native
-    // window); hides the handle, which the system would destroy with its owner.
+    // Windows: the stream window is being hidden or destroyed (SDL hides it before it recreates
+    // the native window); hides the handle, which the system would destroy with its owner.
     void streamWindowHidden();
 
     void setMuted(bool muted);
@@ -257,6 +273,8 @@ private:
     QQmlEngine* m_Engine;
     SDL_Window* m_StreamWindow;
     void* m_WatchedWindow = nullptr;  // the stream window's HWND while it is watched (Windows)
+    void* m_StreamHwnd = nullptr;     // the stream window's HWND, refreshed by sync() (Windows)
+    Uint64 m_LastSyncMs = 0;
     QString m_HostName;
     QString m_AppName;
     QQuickWindow* m_Panel = nullptr;

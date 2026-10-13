@@ -48,6 +48,10 @@ LRESULT CALLBACK streamWindowSubclass(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             reinterpret_cast<StreamPanel*>(panel)->followStreamWindow();
         }
     }
+    else if (msg == WM_DESTROY) {
+        // DestroyWindow() hides a shown window first (above); this also covers a hidden one
+        reinterpret_cast<StreamPanel*>(panel)->streamWindowHidden();
+    }
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
@@ -76,7 +80,7 @@ HWND aboveStreamWindow(HWND stream, HWND handle)
         // First into the band of the stream window (topmost or not): a window cannot be put
         // among the windows of the other band. The owner keeps both bands in step afterwards.
         SetWindowPos(handle, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     }
     HWND above = GetWindow(stream, GW_HWNDPREV);
     if (above == handle) {
@@ -110,6 +114,10 @@ StreamPanel::StreamPanel(QQmlEngine* engine, SDL_Window* streamWindow,
     m_StreamStartBitrateKbps = prefs->bitrateKbps;
     m_RevertBitrateKbps = prefs->bitrateKbps;
     m_RevertAutoAdjustBitrate = prefs->autoAdjustBitrate;
+
+#ifdef Q_OS_WIN32
+    m_StreamHwnd = nativeWindow(streamWindow);
+#endif
 
     QSettings settings;
     m_HandleSide = settings.value(kHandleSideKey, 0).toInt() == 1 ? 1 : 0;
@@ -187,7 +195,7 @@ StreamPanel::~StreamPanel()
 void StreamPanel::watchStreamWindow(bool on)
 {
 #ifdef Q_OS_WIN32
-    HWND hwnd = on ? nativeWindow(m_StreamWindow) : nullptr;
+    HWND hwnd = on ? static_cast<HWND>(m_StreamHwnd) : nullptr;
     auto* watched = static_cast<HWND>(m_WatchedWindow);
     if (hwnd == watched) {
         return;
@@ -219,7 +227,7 @@ void StreamPanel::ownHandle(bool own)
         return;
     }
     auto handle = reinterpret_cast<HWND>(m_Handle->winId());
-    HWND owner = own ? nativeWindow(m_StreamWindow) : nullptr;
+    HWND owner = own ? static_cast<HWND>(m_StreamHwnd) : nullptr;
     if (GetWindow(handle, GW_OWNER) != owner) {
         SetWindowLongPtrW(handle, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(owner));
         m_LastStreamRect = QRect();  // and right above the owner in the z-order (placeWindows)
@@ -500,32 +508,37 @@ QVariantList StreamPanel::aspectResolutions(int display, const QStringList& exis
 
 void StreamPanel::sync(bool mouseCaptured, bool absoluteMouse, bool streamFocused, bool minimized)
 {
+#ifdef Q_OS_WIN32
+    // Once per pass (SDL can recreate the native window)
+    m_StreamHwnd = nativeWindow(m_StreamWindow);
+#endif
     const int display = SDL_GetWindowDisplayIndex(m_StreamWindow);
     if (display >= 0 && display != m_StreamDisplay) {
         m_StreamDisplay = display;
         emit streamDisplayChanged();
     }
 
-    // The handle is shown in every mouse mode while the panel is closed. In remote desktop mouse
-    // mode, and in game mouse mode once the mouse is released (Ctrl+Alt+Shift+Z), the pointer
-    // reaches it: the handle is a separate window that takes the pointer from the stream window,
-    // so hovering or clicking it sends nothing to the host, and Qt shows its cursor over it. A
-    // click opens the panel, which frees the mouse. A captured game mouse is held in the middle
-    // of the stream window and never reaches it.
+    // On Windows the handle is shown in every mouse mode while the panel is closed. In remote
+    // desktop mouse mode, and in game mouse mode once the mouse is released (Ctrl+Alt+Shift+Z),
+    // the pointer reaches it: the handle is a separate window that takes the pointer from the
+    // stream window, so hovering or clicking it sends nothing to the host, and Qt shows its
+    // cursor over it. A click opens the panel, which frees the mouse. A captured game mouse is
+    // held in the middle of the stream window and never reaches it.
     //
     // It must not float over other apps when the stream window is in the background. On Windows
     // it is an owned window of the stream window (ownHandle()), which goes behind other apps
     // with its owner, so it stays shown also while the stream window has no focus (a
     // notification or another window that took focus for a moment no longer hides it until the
-    // next click into the stream). Elsewhere it is a stays-on-top window shown only while the
-    // stream window has focus.
-    Q_UNUSED(mouseCaptured);
-    Q_UNUSED(absoluteMouse);
+    // next click into the stream). Elsewhere it is a stays-on-top window, shown as before only
+    // while the stream window has focus and the pointer can reach it (a stays-on-top window over
+    // a captured full screen game can keep the compositor from handing the screen to the game).
     bool wantHandle = !m_Open && !minimized && !(SDL_GetWindowFlags(m_StreamWindow) & SDL_WINDOW_HIDDEN);
 #ifdef Q_OS_WIN32
+    Q_UNUSED(mouseCaptured);
+    Q_UNUSED(absoluteMouse);
     Q_UNUSED(streamFocused);
 #else
-    wantHandle = wantHandle && streamFocused;
+    wantHandle = wantHandle && (!mouseCaptured || absoluteMouse) && streamFocused;
 #endif
     if (wantHandle != m_HandleShown && !m_HandleFailed) {
         if (wantHandle && m_Handle == nullptr) {
@@ -559,10 +572,8 @@ void StreamPanel::sync(bool mouseCaptured, bool absoluteMouse, bool streamFocuse
 QRect StreamPanel::streamClientRect() const
 {
 #ifdef Q_OS_WIN32
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    if (SDL_GetWindowWMInfo(m_StreamWindow, &info) && info.subsystem == SDL_SYSWM_WINDOWS) {
-        HWND hwnd = info.info.win.window;
+    auto hwnd = static_cast<HWND>(m_StreamHwnd);
+    if (hwnd != nullptr) {
         RECT client;
         POINT topLeft = {0, 0};
         if (GetClientRect(hwnd, &client) && ClientToScreen(hwnd, &topLeft)) {
@@ -580,10 +591,8 @@ QRect StreamPanel::streamClientRect() const
 qreal StreamPanel::streamDpr() const
 {
 #ifdef Q_OS_WIN32
-    SDL_SysWMinfo info;
-    SDL_VERSION(&info.version);
-    if (SDL_GetWindowWMInfo(m_StreamWindow, &info) && info.subsystem == SDL_SYSWM_WINDOWS) {
-        UINT dpi = GetDpiForWindow(info.info.win.window);
+    if (m_StreamHwnd != nullptr) {
+        UINT dpi = GetDpiForWindow(static_cast<HWND>(m_StreamHwnd));
         if (dpi != 0) {
             return dpi / 96.0;
         }
@@ -601,13 +610,15 @@ void StreamPanel::placeWindow(QQuickWindow* window, int x, int y, int width, int
     auto hwnd = reinterpret_cast<HWND>(window->winId());
     HWND insertAfter = HWND_TOPMOST;
     if (window == m_Handle) {
-        HWND stream = nativeWindow(m_StreamWindow);
+        auto stream = static_cast<HWND>(m_StreamHwnd);
         if (stream == nullptr) {
             return;
         }
         insertAfter = aboveStreamWindow(stream, hwnd);
     }
-    SetWindowPos(hwnd, insertAfter, x, y, width, height, SWP_NOACTIVATE);
+    // The handle alone: SWP_NOOWNERZORDER keeps its owner, the stream window, where it is
+    SetWindowPos(hwnd, insertAfter, x, y, width, height,
+                 SWP_NOACTIVATE | (window == m_Handle ? SWP_NOOWNERZORDER : 0));
 #else
     window->setGeometry(x, y, width, height);
 #endif

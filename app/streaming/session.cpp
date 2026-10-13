@@ -3300,8 +3300,8 @@ void Session::exec()
     }
     s_LastSessionBitrateUncertain = false;
     for (;;) {
-        // Hermit: a stream started in game mouse mode has no handle to click while the mouse is
-        // captured: point out the shortcuts once, a moment after the picture appears (not on
+        // Hermit: in a stream started in game mouse mode the captured mouse cannot reach the
+        // handle: point out the shortcuts once, a moment after the picture appears (not on
         // reconnects, and not when the mouse mode was switched meanwhile)
         if (m_StartHintPending && SDL_GetTicks64() - m_LoopStartMs >= 1000) {
             m_StartHintPending = false;
@@ -3310,24 +3310,32 @@ void Session::exec()
             }
         }
 
-        // Hermit: the stream panel and its handle are Qt windows. Show the handle while the mouse
-        // can reach it, and process Qt events (with a short wait) only while one of them is shown.
+        // Hermit: the stream panel and its handle are Qt windows. Show or hide the handle
+        // (StreamPanel::sync(); on Windows it is shown for the whole stream unless minimized),
+        // and process Qt events (with a short wait) only while one of them is shown. Both run at
+        // most once every few milliseconds: SDL events in between (a fast mouse sends thousands a
+        // second) are handled directly, with a wait no longer than the time to the next run.
         if (m_Panel != nullptr) {
-            Uint32 windowFlags = SDL_GetWindowFlags(m_Window);
-            bool streamFocused = (windowFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
-            m_Panel->sync(m_InputHandler->isCaptureActive(), m_InputHandler->isAbsoluteMouseMode(),
-                          streamFocused, (windowFlags & SDL_WINDOW_MINIMIZED) != 0);
-            if (m_Panel->lostFocus(streamFocused)) {
-                // The user switched to another app: do not leave the panel floating over it
-                closeStreamPanel(false);
+            const bool syncDue = m_Panel->syncDue();
+            if (syncDue) {
+                Uint32 windowFlags = SDL_GetWindowFlags(m_Window);
+                bool streamFocused = (windowFlags & SDL_WINDOW_INPUT_FOCUS) != 0;
+                m_Panel->sync(m_InputHandler->isCaptureActive(), m_InputHandler->isAbsoluteMouseMode(),
+                              streamFocused, (windowFlags & SDL_WINDOW_MINIMIZED) != 0);
+                if (m_Panel->lostFocus(streamFocused)) {
+                    // The user switched to another app: do not leave the panel floating over it
+                    closeStreamPanel(false);
+                }
+                else if (m_Panel->streamClickedBack(streamFocused)) {
+                    // The user clicked into the stream: back to it, as if the panel was closed
+                    closeStreamPanel(true);
+                }
+                if (m_Panel->needsQtEvents()) {
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 4);
+                }
             }
-            else if (m_Panel->streamClickedBack(streamFocused)) {
-                // The user clicked into the stream: back to it, as if the panel was closed
-                closeStreamPanel(true);
-            }
-            if (m_Panel->needsQtEvents()) {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 4);
-                if (!SDL_WaitEventTimeout(&event, 10)) {
+            if (!syncDue || m_Panel->needsQtEvents()) {
+                if (!SDL_WaitEventTimeout(&event, syncDue ? 10 : static_cast<int>(StreamPanel::kSyncIntervalMs))) {
                     continue;
                 }
                 goto HandleEvent;
