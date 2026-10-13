@@ -825,7 +825,36 @@ Flickable {
                     ToolTip.delay: 1000
                     ToolTip.timeout: 15000
                     ToolTip.visible: hovered || activeFocus
-                    ToolTip.text: qsTr("While streaming, lowers the bitrate when frames are lost or the round trip rises, and raises it again up to the bitrate above when the network is calm, without reconnecting.")
+                    ToolTip.text: qsTr("While streaming, tells congestion (the round trip rises) from link loss (frames lost while the round trip stays flat) every 250 ms, without reconnecting. Congestion lowers the bitrate at once; loss raises the forward error correction first (Shell 1.4). Both recover step by step, up to the bitrate above, when the network is calm.")
+                }
+
+                // Hermit: what network adaptation protects when the network is unstable
+                // (StreamingPreferences.networkPolicy)
+                Row {
+                    width: parent.width
+                    spacing: 10
+                    visible: StreamingPreferences.adaptiveBitrate
+                    Label {
+                        text: qsTr("When the network is unstable")
+                        font.pointSize: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    AutoResizingComboBox {
+                        anchors.verticalCenter: parent.verticalCenter
+                        property var values: [StreamingPreferences.NP_AUTO, StreamingPreferences.NP_FRAME_PRIORITY, StreamingPreferences.NP_QUALITY_PRIORITY]
+                        textRole: "text"
+                        model: ListModel {
+                            ListElement { text: qsTr("Auto (follows the mouse mode)") }
+                            ListElement { text: qsTr("Keep the frame rate (lower quality)") }
+                            ListElement { text: qsTr("Keep the quality (prefers sharpness)") }
+                        }
+                        Component.onCompleted: currentIndex = Math.max(0, values.indexOf(StreamingPreferences.networkPolicy))
+                        onActivated: StreamingPreferences.networkPolicy = values[currentIndex]
+                        ToolTip.delay: 1000
+                        ToolTip.timeout: 15000
+                        ToolTip.visible: hovered || activeFocus
+                        ToolTip.text: qsTr("Keep the frame rate: cuts the bitrate deeper when the network is congested, so the picture gets blurry for a moment but keeps moving. Keep the quality: keeps a higher bitrate floor and prefers sharp text and UI. Auto: the game (relative) mouse mode keeps the frame rate, the remote desktop (absolute) mouse mode keeps the quality.")
+                    }
                 }
 
                 // Hermit: recommendation from the formula in StreamingPreferences::getRecommendedBitrate()

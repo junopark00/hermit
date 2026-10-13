@@ -100,7 +100,7 @@ public:
 class ClipboardSync;
 class NetDiagLog;
 
-#include "autobitrate.h"
+#include "networkadapt.h"
 
 class StreamPanel;
 
@@ -136,9 +136,6 @@ public:
         return m_OverlayManager;
     }
 
-    // Hermit: network figures of the last stats window (decoder thread), for automatic bitrate.
-    void reportNetworkWindow(float lossPct, int rttMs);
-
     // Hermit: shows the keyboard shortcut list over the stream, or hides it (Ctrl+Alt+Shift+H)
     void toggleHotkeyHelp();
 
@@ -159,6 +156,16 @@ public:
     int cursorOverlayState() const
     {
         return m_CursorOverlayState.load();
+    }
+
+    // Network adaptation for the performance overlay (StatsOverlay::Inputs adapt fields); read by
+    // the decoder thread. bitrateKbps is 0 while the controller is off.
+    void adaptOverlayState(int& bitrateKbps, int& fecPercent, int& regime) const
+    {
+        const uint64_t packed = m_AdaptOverlayState.load();
+        bitrateKbps = static_cast<int>(packed & 0xFFFFFFFFu);
+        fecPercent = static_cast<int>((packed >> 32) & 0xFF);
+        regime = static_cast<int>((packed >> 40) & 0xFF);
     }
 
     // Hermit: performance overlay on or off (Ctrl+Alt+Shift+S, gamepad combo). The setting
@@ -285,6 +292,16 @@ private:
     void startNetDiag();
     void stopNetDiag(bool toast);
     void publishNetDiagState();
+
+    // Hermit: network adaptation (networkadapt.h). The 250 ms timer (SDL timer thread) posts
+    // SDL_CODE_NETWORK_WINDOW; the main loop reads the frame totals and the round trip, runs the
+    // controller and sends its bitrate (stream panel path) and FEC (/actions/fec) decisions.
+    static
+    Uint32 adaptTimerCallback(Uint32 interval, void* param);
+    void handleNetworkWindow(uint64_t now);
+    NetworkAdapt::Policy networkPolicy() const;
+    void sendLiveFec(int percent);
+    void handleLiveFecResult(uint32_t serial, int result);
 
     enum class DecoderAvailability {
         None,
@@ -458,9 +475,23 @@ private:
     bool m_AppliedVsync;
     bool m_AppliedFramePacing;
     bool m_SavePreferences;
-    AutoBitrate m_AutoBitrate;
+    NetworkAdapt m_NetworkAdapt;
     // Read on the connection-status callback thread too
     std::atomic<bool> m_AutoBitrateRunning;
+    SDL_TimerID m_AdaptTimer;
+    uint32_t m_AdaptLastReceived;      // frame totals at the last window (netdiag.h)
+    uint32_t m_AdaptLastDropped;
+    std::atomic<uint64_t> m_AdaptOverlayState;  // bitrate | fec << 32 | regime << 40
+    // Live FEC (/actions/fec): one request in flight, the newest value waits; serials are unique
+    // across sessions so a late result of the previous stream is ignored
+    bool m_LiveFec;                    // the host advertises LiveFec and has not refused it
+    uint32_t m_FecPendingSerial;       // 0: nothing in flight
+    int m_FecPendingPercent;
+    int m_FecSentPercent;              // the last value the host confirmed (NetworkAdapt::kFecBase: the
+                                       // default); -1: unknown, the default is sent once
+    int m_FecEffectivePercent;         // the host's effective value from its last reply (0: unknown)
+    bool m_FecUncertain;               // the last request failed on the way: sent again every 5 s
+    uint64_t m_FecRetryMs;
     int m_MouseEmulationRefCount;
     int m_FlushingWindowEventsRef;
     QStringList m_LaunchWarnings;

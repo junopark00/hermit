@@ -317,11 +317,35 @@ Window {
                     ToolTip.visible: hovered || activeFocus
                     ToolTip.delay: 600
                     ToolTip.timeout: 15000
-                    ToolTip.text: qsTr("Lowers the bitrate when frames are lost or the round trip rises, and raises it again up to the chosen bitrate when the network is calm. Needs a Shell host.")
+                    ToolTip.text: qsTr("Tells congestion (the round trip rises) from link loss (frames lost while the round trip stays flat) every 250 ms. Congestion lowers the bitrate at once; loss raises the forward error correction first (Shell 1.4). Both recover step by step when the network is calm. Needs a Shell host.")
+                }
+                RowLayout {
+                    // Hermit: what network adaptation protects when the network is unstable
+                    // (StreamingPreferences.networkPolicy); the controller reads it every window
+                    Layout.fillWidth: true
+                    visible: StreamingPreferences.adaptiveBitrate
+                    FieldLabel { text: qsTr("When unstable") }
+                    ComboBox {
+                        Layout.fillWidth: true
+                        font.pointSize: 10
+                        property var values: [StreamingPreferences.NP_AUTO, StreamingPreferences.NP_FRAME_PRIORITY, StreamingPreferences.NP_QUALITY_PRIORITY]
+                        model: [qsTr("Auto (follows the mouse mode)"), qsTr("Keep the frame rate"), qsTr("Keep the quality")]
+                        currentIndex: Math.max(0, values.indexOf(StreamingPreferences.networkPolicy))
+                        onActivated: (index) => {
+                            StreamingPreferences.networkPolicy = values[index]
+                            panel.savePreferences()
+                        }
+                        ToolTip.visible: hovered || activeFocus
+                        ToolTip.delay: 600
+                        ToolTip.timeout: 15000
+                        ToolTip.text: qsTr("Keep the frame rate: cuts the bitrate deeper (quality drops for a moment). Keep the quality: keeps a higher bitrate floor and prefers quality. Auto: the game mouse mode keeps the frame rate, the remote desktop mouse mode keeps the quality.")
+                    }
                 }
                 Helper {
                     visible: StreamingPreferences.adaptiveBitrate && panel.autoBitrateKbps > 0
-                    text: qsTr("Automatic: now %1 Mbps (up to %2 Mbps)").arg(Math.round(panel.autoBitrateKbps / 100) / 10).arg(Math.round(panel.chosenBitrateFor(StreamingPreferences.bitrateKbps) / 100) / 10)
+                    text: panel.autoFecPercent > 0 ?
+                              qsTr("Automatic: now %1 Mbps, FEC %2% (up to %3 Mbps)").arg(Math.round(panel.autoBitrateKbps / 100) / 10).arg(panel.autoFecPercent).arg(Math.round(panel.chosenBitrateFor(StreamingPreferences.bitrateKbps) / 100) / 10) :
+                              qsTr("Automatic: now %1 Mbps (up to %2 Mbps)").arg(Math.round(panel.autoBitrateKbps / 100) / 10).arg(Math.round(panel.chosenBitrateFor(StreamingPreferences.bitrateKbps) / 100) / 10)
                 }
                 Helper {
                     visible: text.length > 0

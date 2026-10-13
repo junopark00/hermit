@@ -1,6 +1,6 @@
 // Tests for Hermit's own logic that does not need a stream: the layered translator, the session
 // summary (maths and history file), the performance overlay text, the local cursor messages
-// (parsing, chunk assembly, shape ids), automatic bitrate, which clipboard change wins and when
+// (parsing, chunk assembly, shape ids), network adaptation, which clipboard change wins and when
 // the host clipboard is polled, resolution presets for the display's aspect ratio and the
 // connection profile property list and the QR pairing link parser. Built and run by
 // hermit/tests/run-tests.ps1.
@@ -11,7 +11,7 @@
 #include "streaming/sessionsummary.h"
 #include "streaming/video/statsoverlay.h"
 #include "streaming/cursorpacket.h"
-#include "streaming/autobitrate.h"
+#include "streaming/networkadapt.h"
 #include "streaming/netdiag.h"
 #include "streaming/clipboardchangeorder.h"
 #include "settings/resolutionpresets.h"
@@ -22,6 +22,7 @@
 #include <QFile>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QVector>
 
 #include <cstdio>
 
@@ -419,83 +420,503 @@ static void testCursorPacket()
     CHECK_EQ((uint32_t)(cursorKey(7, 1.0) >> 32), 7u);
 }
 
-// Automatic bitrate rules (autobitrate.h)
-static void testAutoBitrate()
+// Network adaptation (streaming/networkadapt.h): the classifier, the FEC ladder, the policy
+// floors, recovery, hysteresis and the idle rule, replayed over the first recording
+// (notes/data/Hermit-netdiag-1791863139.csv: 60 fps at 35 Mbps, company -> home, link loss
+// 80-186 s with a flat round trip) and over a synthetic congestion.
+namespace {
+
+struct ReplayAction {
+    double atS;
+    int bitrateKbps;
+    int fecPercent;
+    const char* reason;
+};
+
+// The recording's first 200 s in 500 ms steps: frames received, frame numbers skipped, round
+// trip (ms, the step's maximum). Each step is replayed as two 250 ms windows.
+struct Replay500 { int rx, dropped, rtt; };
+const Replay500 kRecording[] = {
+    {5,0,1}, {6,0,6}, {5,0,5}, {15,0,7}, {8,0,3}, {6,0,2}, {5,0,3}, {5,0,1}, {19,0,3}, {24,0,3},
+    {27,0,2}, {29,0,1}, {30,0,3}, {30,0,2}, {30,0,4}, {30,0,2}, {28,0,1}, {27,0,1}, {30,0,2},
+    {30,0,3}, {26,0,2}, {27,0,3}, {30,0,1}, {28,0,3}, {30,0,2}, {20,0,2}, {30,0,6}, {30,0,10},
+    {30,0,9}, {30,0,4}, {30,0,2}, {27,0,11}, {24,0,9}, {27,0,6}, {28,0,2}, {30,0,3}, {30,0,2},
+    {29,0,1}, {7,0,2}, {17,0,2}, {30,0,2}, {30,0,2}, {28,0,3}, {26,0,1}, {21,0,3}, {30,0,3},
+    {26,0,2}, {28,0,2}, {30,0,2}, {29,0,2}, {30,0,2}, {29,0,3}, {29,0,2}, {30,0,3}, {30,0,1},
+    {30,0,2}, {30,0,2}, {29,0,2}, {30,0,2}, {30,0,2}, {29,0,2}, {27,0,1}, {29,0,3}, {30,0,3},
+    {29,0,4}, {28,0,2}, {30,0,2}, {30,0,3}, {30,0,3}, {30,0,5}, {30,0,3}, {30,0,4}, {30,0,2},
+    {29,0,2}, {30,0,2}, {29,0,1}, {28,0,4}, {29,0,3}, {30,0,2}, {30,0,3}, {29,0,8}, {28,0,7},
+    {30,0,4}, {29,0,4}, {30,0,4}, {30,0,1}, {30,0,1}, {30,0,2}, {30,0,2}, {30,0,2}, {30,0,4},
+    {30,0,4}, {28,0,3}, {30,0,4}, {30,0,3}, {29,0,2}, {29,0,2}, {30,0,2}, {27,0,9}, {29,0,6},
+    {29,0,5}, {8,0,7}, {12,0,10}, {29,0,8}, {30,0,3}, {26,0,2}, {29,0,2}, {29,0,2}, {27,0,5},
+    {27,0,3}, {30,0,4}, {29,0,1}, {29,0,3}, {29,0,5}, {29,0,6}, {30,0,1}, {30,0,2}, {30,0,2},
+    {29,0,2}, {30,0,1}, {29,0,1}, {30,0,2}, {30,0,9}, {30,0,7}, {29,0,7}, {28,0,7}, {29,0,8},
+    {30,0,3}, {29,0,2}, {30,0,2}, {28,0,2}, {30,0,2}, {29,0,2}, {30,0,2}, {29,0,2}, {30,0,2},
+    {30,0,2}, {30,0,3}, {30,0,1}, {30,0,3}, {28,0,7}, {29,0,7}, {30,0,5}, {29,0,4}, {30,0,3},
+    {27,0,1}, {30,0,2}, {29,0,2}, {7,0,9}, {22,0,9}, {28,0,8}, {24,0,3}, {30,0,2}, {28,0,5},
+    {23,0,3}, {25,4,8}, {28,0,9}, {25,3,14}, {22,7,14}, {26,3,15}, {16,14,16}, {26,4,16},
+    {22,7,11}, {26,4,16}, {19,11,17}, {17,12,16}, {18,11,17}, {18,13,19}, {25,3,17}, {10,12,22},
+    {9,28,18}, {19,8,24}, {14,20,20}, {9,20,24}, {27,3,21}, {11,16,20}, {13,15,18}, {6,27,20},
+    {24,4,19}, {18,15,18}, {15,10,16}, {18,15,17}, {15,16,20}, {16,11,19}, {16,15,18}, {11,19,20},
+    {18,12,17}, {13,16,18}, {18,12,18}, {22,4,22}, {6,16,18}, {10,32,22}, {23,8,18}, {9,20,21},
+    {14,16,24}, {25,4,22}, {6,24,23}, {8,16,20}, {5,20,21}, {3,12,16}, {18,15,22}, {9,23,19},
+    {10,6,21}, {9,21,18}, {14,11,17}, {13,19,21}, {11,12,17}, {9,28,19}, {14,15,23}, {18,12,16},
+    {9,19,16}, {21,4,19}, {4,31,20}, {23,8,22}, {25,4,18}, {29,0,17}, {29,0,16}, {31,0,16},
+    {28,0,23}, {29,0,18}, {31,0,25}, {21,7,20}, {26,0,19}, {27,3,16}, {25,3,15}, {29,0,22},
+    {21,0,22}, {6,0,23}, {22,0,24}, {30,0,24}, {30,0,19}, {27,0,13}, {31,0,18}, {24,0,16},
+    {28,0,15}, {29,0,9}, {29,0,10}, {30,0,8}, {30,0,9}, {30,0,10}, {30,0,11}, {21,7,15}, {30,0,16},
+    {29,0,18}, {27,4,18}, {17,12,16}, {19,12,18}, {16,12,18}, {28,4,19}, {20,10,16}, {11,12,16},
+    {14,16,18}, {17,15,16}, {11,19,21}, {25,4,19}, {18,8,22}, {23,4,20}, {6,28,24}, {9,24,16},
+    {9,19,19}, {22,8,20}, {17,15,19}, {18,12,18}, {22,8,16}, {20,8,18}, {22,8,16}, {7,20,30},
+    {12,20,20}, {10,16,27}, {16,12,19}, {15,19,20}, {23,7,18}, {10,11,18}, {5,28,21}, {21,12,17},
+    {17,12,18}, {7,24,20}, {22,7,17}, {4,27,20}, {13,16,20}, {7,20,17}, {11,16,19}, {11,20,21},
+    {7,20,20}, {4,18,16}, {12,23,24}, {15,12,18}, {9,24,18}, {15,12,19}, {12,20,16}, {10,20,20},
+    {11,20,18}, {14,11,16}, {10,21,16}, {6,20,16}, {22,12,24}, {10,20,18}, {8,3,22}, {4,24,23},
+    {16,16,19}, {14,16,19}, {6,24,19}, {4,16,20}, {19,20,25}, {5,20,17}, {2,16,17}, {9,33,18},
+    {15,20,18}, {14,12,19}, {10,24,16}, {8,20,24}, {26,4,18}, {24,4,24}, {16,16,17}, {25,4,19},
+    {23,8,20}, {16,12,25}, {16,12,23}, {23,8,18}, {10,20,17}, {7,20,23}, {12,20,17}, {20,8,24},
+    {20,12,28}, {15,12,25}, {20,12,23}, {25,4,24}, {29,0,18}, {30,0,16}, {22,8,21}, {13,16,21},
+    {15,16,21}, {27,4,16}, {29,0,10}, {26,4,26}, {18,12,25}, {18,8,28}, {22,12,23}, {27,4,22},
+    {30,0,15}, {30,0,15}, {30,0,12}, {26,4,20}, {30,0,14}, {30,0,10}, {29,0,1}, {29,0,4}, {30,0,4},
+    {30,0,6}, {29,0,5}, {28,0,5}, {30,0,2}, {30,0,1}, {30,0,6}, {22,4,16}, {21,8,16}, {22,13,16},
+    {27,3,16}, {13,12,17}, {30,3,16}, {30,0,16}, {25,4,16}, {30,0,13}, {30,0,6}, {29,0,12},
+    {30,0,13}, {28,0,10}, {30,0,6}, {30,0,6}, {27,0,16}, {30,0,16}, {29,0,15}, {30,0,12},
+    {30,0,13}, {30,0,12}, {30,0,12}, {29,0,10}, {30,0,13}, {25,0,14}, {6,0,13}, {12,0,16},
+    {30,0,15}, {29,0,12}, {30,0,13}, {30,0,12}, {30,0,12}, {30,0,11}, {30,0,9}, {30,0,8},
+    {30,0,10}, {30,0,8}, {30,0,10}, {18,0,9}, {28,0,8}, {30,0,10}, {30,0,10}, {30,0,9}, {30,0,8},
+    {30,0,8}, {30,0,7}
+};
+constexpr int kRecordingSteps = sizeof(kRecording) / sizeof(kRecording[0]);
+
+QVector<ReplayAction> replayRecording(NetworkAdapt& adapt, int fromStep, int toStep, uint64_t& t)
 {
-    AutoBitrate ab;
-    ab.reset(50000);
-    uint64_t t = 1000;
-
-    // Calm network at the ceiling: nothing to do
-    CHECK_EQ(ab.update(0.0f, 20, t, 50000), 0);
-
-    // Heavy loss: down to 80%, then not again within 2 s
-    t += 1000;
-    CHECK_EQ(ab.update(5.0f, 20, t, 50000), 40000);
-    t += 1000;
-    CHECK_EQ(ab.update(5.0f, 20, t, 50000), 0);
-    t += 1000;
-    CHECK_EQ(ab.update(5.0f, 20, t, 50000), 32000);
-
-    // Never below a fifth of the ceiling
-    for (int i = 0; i < 20; i++) {
-        t += 2000;
-        ab.update(10.0f, 20, t, 50000);
+    QVector<ReplayAction> actions;
+    for (int i = fromStep; i < toStep; i++) {
+        for (int half = 0; half < 2; half++) {
+            NetworkAdapt::Window w;
+            w.framesReceived = half == 0 ? (kRecording[i].rx + 1) / 2 : kRecording[i].rx / 2;
+            w.framesDropped = half == 0 ? (kRecording[i].dropped + 1) / 2 : kRecording[i].dropped / 2;
+            w.rttMs = kRecording[i].rtt;
+            t += NetworkAdapt::kWindowMs;
+            const NetworkAdapt::Action a = adapt.update(w, t, 35000);
+            if (a.reason != nullptr) {
+                actions.append({ t / 1000.0, a.bitrateKbps, a.fecPercent, a.reason });
+            }
+        }
     }
-    CHECK_EQ(ab.current(), 10000);
+    return actions;
+}
 
-    // 10 calm windows: up by a tenth of the ceiling, and again only after more calm
-    for (int i = 0; i < 9; i++) {
-        t += 1000;
-        CHECK_EQ(ab.update(0.0f, 20, t, 50000), 0);
+// The first of two consecutive 250 ms windows with 5% loss or more (what a decision needs), and
+// the last lossy window, as seconds of the recording
+void lossyRange(double& firstLossyS, double& lastLossyS)
+{
+    firstLossyS = lastLossyS = -1;
+    bool previousLossy = false;
+    for (int i = 0; i < kRecordingSteps; i++) {
+        for (int half = 0; half < 2; half++) {
+            const int rx = half == 0 ? (kRecording[i].rx + 1) / 2 : kRecording[i].rx / 2;
+            const int dropped = half == 0 ? (kRecording[i].dropped + 1) / 2 : kRecording[i].dropped / 2;
+            const double endS = i * 0.5 + (half + 1) * 0.25;
+            const bool lossy = rx >= 3 && dropped * 100 >= (rx + dropped) * 5;
+            if (lossy && previousLossy && firstLossyS < 0) {
+                firstLossyS = endS - 0.25;
+            }
+            if (lossy) {
+                lastLossyS = endS;
+            }
+            previousLossy = lossy;
+        }
     }
-    t += 1000;
-    CHECK_EQ(ab.update(0.0f, 20, t, 50000), 15000);
-    t += 1000;
-    CHECK_EQ(ab.update(0.0f, 20, t, 50000), 0);
+}
 
-    // A round trip far above usual counts as congestion
-    t += 5000;
-    CHECK_EQ(ab.update(0.0f, 120, t, 50000), 12000);
+}
 
-    // A new ceiling chosen by the user restarts there
-    t += 1000;
-    CHECK_EQ(ab.update(0.0f, 20, t, 30000), 30000);
-    CHECK_EQ(ab.current(), 30000);
+static void testNetworkAdapt()
+{
+    using Policy = NetworkAdapt::Policy;
+    using Regime = NetworkAdapt::Regime;
+    double firstLossyS, lastLossyS;
+    lossyRange(firstLossyS, lastLossyS);
+    CHECK(firstLossyS > 70 && firstLossyS < 80);
+    CHECK(lastLossyS > 180 && lastLossyS < 190);
 
-    // Windows with too few frames (lossPct < 0) never raise, but a high round trip still lowers
-    t += 3000;
-    CHECK_EQ(ab.update(5.0f, 20, t, 30000), 24000);
-    for (int i = 0; i < 15; i++) {
-        t += 1000;
-        CHECK_EQ(ab.update(-1.0f, 20, t, 30000), 0);
+    // ---- Replay, quality priority (the remote desktop mouse): FEC first, a high floor ----
+    {
+        NetworkAdapt adapt;
+        adapt.reset(35000, 0, Policy::QualityPriority, true);
+        uint64_t t = 0;
+        // The clean first 70 s: nothing happens (no request when nothing is wrong)
+        QVector<ReplayAction> actions = replayRecording(adapt, 0, 140, t);
+        CHECK_EQ(actions.size(), 0);
+        CHECK_EQ(adapt.bitrate(), 35000);
+        CHECK_EQ(adapt.fec(), 20);
+        CHECK(adapt.regime() == Regime::Clean);
+
+        // The lossy 70-190 s and the clean tail
+        actions = replayRecording(adapt, 140, kRecordingSteps, t);
+        CHECK(actions.size() > 0);
+        double fec50AtS = -1, firstRecoverS = -1, floorAtS = -1, lastCutS = -1;
+        int minBitrate = 35000;
+        bool congested = false;
+        for (const ReplayAction& a : actions) {
+            if (a.fecPercent == 50 && fec50AtS < 0) {
+                fec50AtS = a.atS;
+            }
+            if (a.bitrateKbps > 0) {
+                minBitrate = qMin(minBitrate, a.bitrateKbps);
+                if (a.bitrateKbps == adapt.floorKbps() && floorAtS < 0) {
+                    floorAtS = a.atS;
+                }
+                if (QString(a.reason) == "loss" && a.atS <= lastLossyS) {
+                    lastCutS = a.atS;
+                }
+            }
+            if (QString(a.reason) == "recover" && a.bitrateKbps > 0 && a.atS > lastLossyS && firstRecoverS < 0) {
+                firstRecoverS = a.atS;
+            }
+            if (QString(a.reason) == "congested") {
+                congested = true;
+            }
+        }
+        // FEC reaches 50% within 1.5 s of the first lossy window (35% after the second window,
+        // 50% one action gap later)
+        CHECK(fec50AtS > 0 && fec50AtS <= firstLossyS + 1.5);
+        // The round trip stayed flat: never congestion, and the bitrate never below chosen/3
+        CHECK(!congested);
+        CHECK_EQ(adapt.floorKbps(), 35000 / 3);
+        CHECK(minBitrate >= 35000 / 3);
+        CHECK(floorAtS > 0);
+        // The bitrate rises within 4 s of the link becoming clean (12 clean windows and the
+        // action gap), unless the last cut is younger than 6 s by then: the first rise after a
+        // cut waits that long (in this recording the last cut came 1.75 s before the link cleared)
+        CHECK(lastCutS > 0 && firstRecoverS > 0);
+        CHECK(firstRecoverS <= qMax(lastLossyS + 4.0, lastCutS + 6.0));
+        CHECK(firstRecoverS <= lastLossyS + 4.25);
+        std::printf("  network adaptation replay (quality): %d actions, FEC 50%% at %.2f s (first loss %.2f s), floor %d kbps at %.2f s, "
+                    "recovery at %.2f s (last loss %.2f s, last cut %.2f s), end %d kbps FEC %d%%\n",
+                    (int)actions.size(), fec50AtS, firstLossyS, adapt.floorKbps(), floorAtS, firstRecoverS, lastLossyS, lastCutS,
+                    adapt.bitrate(), adapt.fec());
     }
-    t += 3000;
-    CHECK_EQ(ab.update(-1.0f, 200, t, 30000), 19000);
 
-    // ...and they neither add to nor clear the calm windows (desktop work with pauses)
-    for (int i = 0; i < 5; i++) {
-        t += 1000;
-        CHECK_EQ(ab.update(0.0f, 20, t, 30000), 0);
+    // ---- Replay, frame priority (the game mouse): the lower floor is respected ----
+    {
+        NetworkAdapt adapt;
+        adapt.reset(35000, 0, Policy::FramePriority, true);
+        uint64_t t = 0;
+        CHECK_EQ(replayRecording(adapt, 0, 140, t).size(), 0);
+        const QVector<ReplayAction> actions = replayRecording(adapt, 140, kRecordingSteps, t);
+        int minBitrate = 35000;
+        double floorAtS = -1, firstRecoverS = -1, lastCutS = -1;
+        for (const ReplayAction& a : actions) {
+            if (a.bitrateKbps > 0) {
+                minBitrate = qMin(minBitrate, a.bitrateKbps);
+                if (a.bitrateKbps == adapt.floorKbps() && floorAtS < 0) {
+                    floorAtS = a.atS;
+                }
+                if (QString(a.reason) == "recover" && a.atS > lastLossyS && firstRecoverS < 0) {
+                    firstRecoverS = a.atS;
+                }
+                if (QString(a.reason) == "loss" && a.atS <= lastLossyS) {
+                    lastCutS = a.atS;
+                }
+            }
+        }
+        CHECK_EQ(adapt.floorKbps(), 35000 / 8);
+        CHECK(minBitrate >= 35000 / 8);
+        CHECK(floorAtS > 0);
+        CHECK(lastCutS > 0 && firstRecoverS > 0);
+        CHECK(firstRecoverS <= qMax(lastLossyS + 4.0, lastCutS + 6.0));
+        std::printf("  network adaptation replay (frame): %d actions, floor %d kbps at %.2f s, recovery at %.2f s (last cut %.2f s), end %d kbps FEC %d%%\n",
+                    (int)actions.size(), adapt.floorKbps(), floorAtS, firstRecoverS, lastCutS, adapt.bitrate(), adapt.fec());
     }
-    for (int i = 0; i < 3; i++) {
-        t += 1000;
-        CHECK_EQ(ab.update(-1.0f, 20, t, 30000), 0);
-    }
-    for (int i = 0; i < 4; i++) {
-        t += 1000;
-        CHECK_EQ(ab.update(0.0f, 20, t, 30000), 0);
-    }
-    t += 1000;
-    CHECK_EQ(ab.update(0.0f, 20, t, 30000), 22000);
 
-    // Turned on while the host streams below the ceiling: starts there, within the floor
-    ab.reset(50000, 20000);
-    CHECK_EQ(ab.current(), 20000);
-    ab.reset(50000, 1000);
-    CHECK_EQ(ab.current(), 10000);
-    ab.reset(50000);
-    CHECK_EQ(ab.current(), 50000);
+    // ---- Synthetic congestion: the round trip jumps from 4 to 60 ms, no loss ----
+    auto cleanWindow = [](int rtt) {
+        NetworkAdapt::Window w;
+        w.framesReceived = 15;
+        w.rttMs = rtt;
+        return w;
+    };
+    {
+        NetworkAdapt adapt;
+        adapt.reset(30000, 0, Policy::FramePriority, true);
+        uint64_t t = 0;
+        for (int i = 0; i < 20; i++) {
+            t += 250;
+            CHECK(adapt.update(cleanWindow(4), t, 30000).reason == nullptr);
+        }
+        const uint64_t congestionStart = t;
+        t += 250;
+        CHECK(adapt.update(cleanWindow(60), t, 30000).reason == nullptr);  // one window: not yet
+        t += 250;
+        NetworkAdapt::Action a = adapt.update(cleanWindow(60), t, 30000);
+        CHECK_EQ(QString(a.reason), QString("congested"));
+        CHECK_EQ(a.bitrateKbps, 21000);                         // 30000 x 0.7
+        CHECK(t - congestionStart <= 750);
+        CHECK(adapt.regime() == Regime::Congested);
+        // Again every 500 ms while it lasts, down to the floor max(2 Mbps, chosen/8)
+        t += 250;
+        CHECK(adapt.update(cleanWindow(60), t, 30000).reason == nullptr);
+        t += 250;
+        CHECK_EQ(adapt.update(cleanWindow(60), t, 30000).bitrateKbps, 14500);
+        for (int i = 0; i < 20; i++) {
+            t += 250;
+            adapt.update(cleanWindow(60), t, 30000);
+        }
+        CHECK_EQ(adapt.bitrate(), 3750);
+        CHECK_EQ(adapt.fec(), 20);                              // congestion never touches FEC
+
+        // Quality priority cuts by 20% and stops at max(4 Mbps, chosen/3)
+        NetworkAdapt quality;
+        quality.reset(30000, 0, Policy::QualityPriority, true);
+        t = 0;
+        for (int i = 0; i < 20; i++) {
+            t += 250;
+            quality.update(cleanWindow(4), t, 30000);
+        }
+        t += 250;
+        quality.update(cleanWindow(60), t, 30000);
+        t += 250;
+        CHECK_EQ(quality.update(cleanWindow(60), t, 30000).bitrateKbps, 24000);
+        for (int i = 0; i < 20; i++) {
+            t += 250;
+            quality.update(cleanWindow(60), t, 30000);
+        }
+        CHECK_EQ(quality.bitrate(), 10000);
+
+        // Recovery: 12 clean windows (the last cut, 3 s ago at the floor, is 6 s old by then);
+        // then +15% of the chosen bitrate every 3 s, up to the chosen bitrate
+        const uint64_t cleanFrom = t;
+        int raises = 0;
+        uint64_t firstRaise = 0;
+        for (int i = 0; i < 80; i++) {
+            t += 250;
+            const NetworkAdapt::Action r = quality.update(cleanWindow(4), t, 30000);
+            if (r.bitrateKbps > 0) {
+                CHECK_EQ(QString(r.reason), QString("recover"));
+                if (raises == 0) {
+                    firstRaise = t;
+                    CHECK_EQ(r.bitrateKbps, 14500);             // 10000 + 4500
+                }
+                raises++;
+            }
+        }
+        CHECK_EQ(firstRaise - cleanFrom, 3000u);
+        CHECK_EQ(raises, 5);                                    // 14500, 19000, 23500, 28000, 30000
+        CHECK_EQ(quality.bitrate(), 30000);
+        CHECK(quality.regime() == Regime::Clean);
+    }
+
+    // ---- Link loss with a flat round trip: FEC ladder, then 15% cuts; FEC comes down again ----
+    auto lossWindow = [](int dropped, int rtt) {
+        NetworkAdapt::Window w;
+        w.framesReceived = 15 - dropped;
+        w.framesDropped = dropped;
+        w.rttMs = rtt;
+        return w;
+    };
+    {
+        NetworkAdapt adapt;
+        adapt.reset(20000, 0, Policy::FramePriority, true);
+        uint64_t t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            adapt.update(cleanWindow(5), t, 20000);
+        }
+        t += 250;
+        CHECK(adapt.update(lossWindow(3, 6), t, 20000).reason == nullptr);
+        t += 250;
+        NetworkAdapt::Action a = adapt.update(lossWindow(3, 6), t, 20000);
+        CHECK_EQ(a.fecPercent, 35);
+        CHECK_EQ(a.bitrateKbps, 0);
+        CHECK_EQ(QString(a.reason), QString("loss"));
+        t += 250;
+        CHECK(adapt.update(lossWindow(3, 6), t, 20000).reason == nullptr);  // 500 ms between actions
+        t += 250;
+        CHECK_EQ(adapt.update(lossWindow(3, 6), t, 20000).fecPercent, 50);
+        // Loss goes on at 50%: the bitrate is cut by 15% after 4 more windows, then every 4 windows
+        for (int i = 0; i < 3; i++) {
+            t += 250;
+            CHECK(adapt.update(lossWindow(3, 6), t, 20000).reason == nullptr);
+        }
+        t += 250;
+        a = adapt.update(lossWindow(3, 6), t, 20000);
+        CHECK_EQ(a.bitrateKbps, 17000);
+        CHECK_EQ(QString(a.reason), QString("loss"));
+        for (int i = 0; i < 3; i++) {
+            t += 250;
+            CHECK(adapt.update(lossWindow(3, 6), t, 20000).reason == nullptr);
+        }
+        t += 250;
+        CHECK_EQ(adapt.update(lossWindow(3, 6), t, 20000).bitrateKbps, 14000);
+        CHECK(adapt.regime() == Regime::Loss);
+
+        // Clean again: the bitrate rises 6 s after the last cut (the clean streak is long enough
+        // by then), FEC steps down after 6 s and again 6 s later, the bitrate again 3 s later
+        QVector<ReplayAction> recovery;
+        const uint64_t cleanFrom = t;
+        for (int i = 0; i < 60; i++) {
+            t += 250;
+            const NetworkAdapt::Action r = adapt.update(cleanWindow(5), t, 20000);
+            if (r.reason != nullptr) {
+                recovery.append({ (t - cleanFrom) / 1000.0, r.bitrateKbps, r.fecPercent, r.reason });
+            }
+        }
+        CHECK_EQ(recovery.size(), 4);
+        if (recovery.size() >= 4) {
+            CHECK_EQ(recovery[0].bitrateKbps, 17000);
+            CHECK(near(recovery[0].atS, 6.0));            // 6 s after the cut, which ended the loss run
+            CHECK_EQ(recovery[1].fecPercent, 35);
+            CHECK(near(recovery[1].atS, 6.5));            // 24 clean windows, one action gap after the raise
+            CHECK_EQ(recovery[2].bitrateKbps, 20000);
+            CHECK(near(recovery[2].atS, 9.0));            // 3 s after the previous raise
+            CHECK_EQ(recovery[3].fecPercent, 20);
+            CHECK(near(recovery[3].atS, 12.5));           // 6 s after the previous FEC step
+        }
+        CHECK_EQ(adapt.fec(), 20);
+        CHECK_EQ(adapt.bitrate(), 20000);
+
+        // Without live FEC on the host, loss goes straight to the bitrate rule (after 2 + 4 windows)
+        NetworkAdapt noFec;
+        noFec.reset(20000, 0, Policy::QualityPriority, false);
+        t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            noFec.update(cleanWindow(5), t, 20000);
+        }
+        int cutAtWindow = -1;
+        for (int i = 1; i <= 8; i++) {
+            t += 250;
+            const NetworkAdapt::Action r = noFec.update(lossWindow(3, 6), t, 20000);
+            CHECK_EQ(r.fecPercent, 0);
+            if (r.bitrateKbps > 0 && cutAtWindow < 0) {
+                cutAtWindow = i;
+                CHECK_EQ(r.bitrateKbps, 17000);
+            }
+        }
+        CHECK_EQ(cutAtWindow, 5);
+        // Quality priority stops at chosen/3 and keeps FEC where it is
+        for (int i = 0; i < 80; i++) {
+            t += 250;
+            noFec.update(lossWindow(3, 6), t, 20000);
+        }
+        CHECK_EQ(noFec.bitrate(), 6666);
+        CHECK_EQ(noFec.fec(), 20);
+    }
+
+    // ---- Hysteresis: a single window of the other kind does not switch the regime ----
+    {
+        NetworkAdapt adapt;
+        adapt.reset(30000, 0, Policy::FramePriority, true);
+        uint64_t t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            adapt.update(cleanWindow(4), t, 30000);
+        }
+        for (int i = 0; i < 2; i++) {
+            t += 250;
+            adapt.update(lossWindow(3, 5), t, 30000);
+        }
+        CHECK(adapt.regime() == Regime::Loss);
+        CHECK_EQ(adapt.fec(), 35);
+        // Loss, congested, loss, congested: the regime stays loss (FEC goes on to 50) and the
+        // bitrate is not cut
+        const int before = adapt.bitrate();
+        for (int i = 0; i < 4; i++) {
+            t += 250;
+            const NetworkAdapt::Action a = adapt.update(i % 2 == 0 ? lossWindow(3, 5) : cleanWindow(70), t, 30000);
+            CHECK(a.bitrateKbps == 0);
+            CHECK(adapt.regime() == Regime::Loss);
+        }
+        CHECK_EQ(adapt.bitrate(), before);
+        CHECK_EQ(adapt.fec(), 50);
+        // A second congested window in a row switches it, and the bitrate is cut
+        t += 250;
+        const NetworkAdapt::Action a = adapt.update(cleanWindow(70), t, 30000);
+        CHECK(adapt.regime() == Regime::Congested);
+        CHECK_EQ(QString(a.reason), QString("congested"));
+        CHECK_EQ(a.bitrateKbps, 21000);
+        // One clean window does not clear it either; two do
+        t += 250;
+        adapt.update(cleanWindow(4), t, 30000);
+        CHECK(adapt.regime() == Regime::Congested);
+        t += 250;
+        adapt.update(cleanWindow(4), t, 30000);
+        CHECK(adapt.regime() == Regime::Clean);
+        // Mild loss (1-5%) is neither clean nor a decision: it only stops the clean streak
+        NetworkAdapt mild;
+        mild.reset(30000, 0, Policy::FramePriority, true);
+        t = 0;
+        for (int i = 0; i < 40; i++) {
+            t += 250;
+            NetworkAdapt::Window w;
+            w.framesReceived = 97;
+            w.framesDropped = 3;  // 3%
+            w.rttMs = 5;
+            CHECK(mild.update(w, t, 30000).reason == nullptr);
+        }
+        CHECK(mild.regime() == Regime::Clean);
+    }
+
+    // ---- Idle windows (fewer than 3 frames) decide nothing and keep the clean streak ----
+    {
+        NetworkAdapt adapt;
+        adapt.reset(30000, 0, Policy::FramePriority, true);
+        uint64_t t = 0;
+        for (int i = 0; i < 8; i++) {
+            t += 250;
+            adapt.update(cleanWindow(4), t, 30000);
+        }
+        for (int i = 0; i < 2; i++) {
+            t += 250;
+            adapt.update(cleanWindow(60), t, 30000);
+        }
+        CHECK_EQ(adapt.bitrate(), 21000);
+        // A still picture with a lost frame among two: no decision, whatever the ratio
+        for (int i = 0; i < 40; i++) {
+            t += 250;
+            NetworkAdapt::Window w;
+            w.framesReceived = 2;
+            w.framesDropped = 2;
+            w.rttMs = 60;
+            CHECK(adapt.update(w, t, 30000).reason == nullptr);
+        }
+        CHECK_EQ(adapt.bitrate(), 21000);
+        CHECK(adapt.regime() == Regime::Congested);  // unchanged by idle windows
+        // 11 clean windows, 3 idle ones, then the 12th clean window raises (the cut is old by now)
+        for (int i = 0; i < 11; i++) {
+            t += 250;
+            CHECK(adapt.update(cleanWindow(4), t, 30000).reason == nullptr);
+        }
+        for (int i = 0; i < 3; i++) {
+            t += 250;
+            NetworkAdapt::Window w;
+            w.framesReceived = 1;
+            w.rttMs = 4;
+            CHECK(adapt.update(w, t, 30000).reason == nullptr);
+        }
+        t += 250;
+        const NetworkAdapt::Action a = adapt.update(cleanWindow(4), t, 30000);
+        CHECK_EQ(QString(a.reason), QString("recover"));
+        CHECK_EQ(a.bitrateKbps, 25500);                          // 21000 + 15% of 30000
+    }
+
+    // ---- A new chosen bitrate restarts there; the policy can change any time ----
+    {
+        NetworkAdapt adapt;
+        adapt.reset(30000, 12000, Policy::FramePriority, true);
+        CHECK_EQ(adapt.bitrate(), 12000);                         // starts where the host streams
+        uint64_t t = 250;
+        const NetworkAdapt::Action a = adapt.update(cleanWindow(4), t, 20000);
+        CHECK_EQ(a.bitrateKbps, 20000);
+        CHECK_EQ(QString(a.reason), QString("ceiling"));
+        CHECK_EQ(adapt.floorKbps(), 2500);
+        adapt.setPolicy(Policy::QualityPriority);
+        CHECK_EQ(adapt.floorKbps(), 6666);
+        adapt.reset(50000, 1000, Policy::FramePriority, false);
+        CHECK_EQ(adapt.bitrate(), 6250);                          // not below the floor
+    }
 }
 
 // Clipboard sync: when both sides changed, the most recent change wins (clipboardchangeorder.h).
@@ -1703,7 +2124,7 @@ int main(int argc, char** argv)
     testSessionSummary();
     testStatsOverlay();
     testCursorPacket();
-    testAutoBitrate();
+    testNetworkAdapt();
     testClipboardChangeOrder();
     testClipboardChangeInputs();
     testClipboardHostPolling();

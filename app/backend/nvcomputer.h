@@ -103,6 +103,9 @@ public:
     // host supports (cursor shapes sent over the control stream instead of being drawn into the
     // video); 0 when the host has no such support or the feature is off on the host
     int localCursorVersion;
+    // Hermit: serverinfo "LiveFec", a Shell host that changes the forward error correction of a
+    // running stream (/actions/fec); false until the host is paired (HTTPS only)
+    bool liveFec;
 
     // Persisted traits
     NvAddress localAddress;

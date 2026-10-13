@@ -494,6 +494,26 @@ NvHTTP::setLiveBitrate(int kbps, int timeoutMs)
     return -1;
 }
 
+int
+NvHTTP::setLiveFec(int percent, int timeoutMs)
+{
+    QNetworkReply* reply = openConnection(m_BaseUrlHttps,
+                                          "actions/fec",
+                                          "percent=" + (percent > 0 ? QString::number(percent) : QStringLiteral("default")),
+                                          timeoutMs,
+                                          NvLogLevel::NVLL_ERROR);
+    QByteArray body = reply->readAll();
+    delete reply;
+
+    // "percent=<effective>"; a host that answers unknown requests with 200 changed nothing
+    for (const QByteArray& line : body.split('\n')) {
+        if (line.startsWith("percent=")) {
+            return line.mid(8).trimmed().toInt();
+        }
+    }
+    return -1;
+}
+
 QByteArray
 NvHTTP::powerRequest(const QString& action, bool force, int timeoutMs)
 {

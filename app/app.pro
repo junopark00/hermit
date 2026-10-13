@@ -238,6 +238,7 @@ HEADERS += \
     streaming/clipboardvirtualfiles.h \
     streaming/cursorpacket.h \
     streaming/netdiag.h \
+    streaming/networkadapt.h \
     streaming/session.h \
     streaming/sessionsummary.h \
     streaming/streampanel.h \

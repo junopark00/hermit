@@ -224,6 +224,15 @@ public:
     int
     setLiveBitrate(int kbps, int timeoutMs);
 
+    // Shell host extension (serverinfo LiveFec=1): GET /actions/fec?percent=<1..100> sets the
+    // forward error correction of this client's running stream per frame, without a stream reset;
+    // percent 0 sends "default", which clears the override (back to the host's configured value).
+    // Returns the effective percentage from the host's "percent=" line, or -1 without one. Throws
+    // on HTTP or network errors (404: not supported, 400: bad value, 403: the caller has no running
+    // stream).
+    int
+    setLiveFec(int percent, int timeoutMs);
+
     // Shell host extension: GET /actions/power. action "query" answers "allowed=0|1", what the
     // host can do ("sleep=0|1", "hibernate=0|1", "wol=yes|no|unknown": whether Wake-on-LAN wakes
     // it) and the other clients streaming right now ("streaming=<n>", "client=<name>" lines);

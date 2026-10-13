@@ -215,6 +215,10 @@ TRANSLATIONS = {
     ('StatsOverlay', 'local'): '로컬',
     ('StatsOverlay', 'host'): '호스트',
     ('StatsOverlay', 'host (another client connected)'): '호스트 (다른 클라이언트 접속)',
+    # Network adaptation (streaming/networkadapt.h): the controller's line under the bitrate
+    ('StatsOverlay', 'Automatic'): '자동 조절',
+    ('StatsOverlay', 'congested'): '혼잡',
+    ('StatsOverlay', 'loss'): '손실',
     ('StreamPanel', 'Toggle full screen'): '전체 화면 전환',
     ('StreamPanel', 'Disconnect'): '연결 끊기',
     ('StreamPanel', 'Quit app and disconnect'): '앱 종료 후 연결 끊기',
@@ -229,12 +233,25 @@ TRANSLATIONS = {
     ('StreamPanel', 'This host cannot change the bitrate during a stream; it is applied by reconnecting.'):
         '이 호스트는 스트리밍 중에 비트레이트를 바꿀 수 없어 다시 연결해 적용합니다.',
     ('StreamPanel', 'Adjust automatically to the network'): '비트레이트 자동 조절',
-    ('StreamPanel', 'Lowers the bitrate when frames are lost or the round trip rises, and raises it again up to the chosen bitrate when the network is calm. Needs a Shell host.'):
-        '프레임 손실이나 왕복 지연이 늘면 비트레이트를 낮추고, 네트워크가 안정되면 설정한 비트레이트까지 다시 올립니다. Shell 호스트가 필요합니다.',
+    ('StreamPanel', 'Tells congestion (the round trip rises) from link loss (frames lost while the round trip stays flat) every 250 ms. Congestion lowers the bitrate at once; loss raises the forward error correction first (Shell 1.4). Both recover step by step when the network is calm. Needs a Shell host.'):
+        '250 ms마다 혼잡(왕복 지연 상승)과 링크 손실(왕복 지연은 그대로인데 프레임 손실)을 구분합니다. 혼잡이면 비트레이트를 바로 낮추고, 손실이면 먼저 FEC(순방향 오류 정정)를 올립니다(Shell 1.4). 네트워크가 안정되면 둘 다 단계적으로 되돌립니다. Shell 호스트가 필요합니다.',
     ('StreamPanel', 'Automatic: now %1 Mbps (up to %2 Mbps)'): '자동 조절: 지금 %1 Mbps (최대 %2 Mbps)',
+    ('StreamPanel', 'Automatic: now %1 Mbps, FEC %2% (up to %3 Mbps)'): '자동 조절: 지금 %1 Mbps, FEC %2% (최대 %3 Mbps)',
+    ('StreamPanel', 'When unstable'): '불안정할 때',
+    ('StreamPanel', 'Auto (follows the mouse mode)'): '자동 (마우스 모드에 따름)',
+    ('StreamPanel', 'Keep the frame rate'): '프레임 유지',
+    ('StreamPanel', 'Keep the quality'): '화질 유지',
+    ('StreamPanel', 'Keep the frame rate: cuts the bitrate deeper (quality drops for a moment). Keep the quality: keeps a higher bitrate floor and prefers quality. Auto: the game mouse mode keeps the frame rate, the remote desktop mouse mode keeps the quality.'):
+        '프레임 유지: 비트레이트를 더 깊이 낮춥니다(화질이 잠시 떨어짐). 화질 유지: 비트레이트 하한을 높게 두고 화질을 우선합니다. 자동: 게임 마우스 모드는 프레임을, 원격 데스크톱 마우스 모드는 화질을 유지합니다.',
     ('SettingsView', 'Adjust the bitrate automatically to the network (Shell host)'): '비트레이트 자동 조절 (Shell 호스트)',
-    ('SettingsView', 'While streaming, lowers the bitrate when frames are lost or the round trip rises, and raises it again up to the bitrate above when the network is calm, without reconnecting.'):
-        '스트리밍 중 프레임 손실이나 왕복 지연이 늘면 비트레이트를 낮추고, 네트워크가 안정되면 위에서 정한 비트레이트까지 다시 올립니다. 다시 연결하지 않습니다.',
+    ('SettingsView', 'While streaming, tells congestion (the round trip rises) from link loss (frames lost while the round trip stays flat) every 250 ms, without reconnecting. Congestion lowers the bitrate at once; loss raises the forward error correction first (Shell 1.4). Both recover step by step, up to the bitrate above, when the network is calm.'):
+        '스트리밍 중 250 ms마다 혼잡(왕복 지연 상승)과 링크 손실(왕복 지연은 그대로인데 프레임 손실)을 구분합니다. 다시 연결하지 않습니다. 혼잡이면 비트레이트를 바로 낮추고, 손실이면 먼저 FEC(순방향 오류 정정)를 올립니다(Shell 1.4). 네트워크가 안정되면 위에서 정한 비트레이트까지 단계적으로 되돌립니다.',
+    ('SettingsView', 'When the network is unstable'): '네트워크가 불안정할 때',
+    ('SettingsView', 'Auto (follows the mouse mode)'): '자동 (마우스 모드에 따름)',
+    ('SettingsView', 'Keep the frame rate (lower quality)'): '프레임 유지 (화질 낮춤)',
+    ('SettingsView', 'Keep the quality (prefers sharpness)'): '화질 유지 (선명도 우선)',
+    ('SettingsView', 'Keep the frame rate: cuts the bitrate deeper when the network is congested, so the picture gets blurry for a moment but keeps moving. Keep the quality: keeps a higher bitrate floor and prefers sharp text and UI. Auto: the game (relative) mouse mode keeps the frame rate, the remote desktop (absolute) mouse mode keeps the quality.'):
+        '프레임 유지: 혼잡할 때 비트레이트를 더 깊이 낮춥니다. 화면이 잠시 흐려지지만 계속 움직입니다. 화질 유지: 비트레이트 하한을 높게 두고 선명한 글자와 UI를 우선합니다. 자동: 게임(상대) 마우스 모드는 프레임을, 원격 데스크톱(절대) 마우스 모드는 화질을 유지합니다.',
 
     # Files dropped on the stream window
     ('ClipboardSync', '%n item(s) copied to the host clipboard (%1). Paste with Ctrl+V on the host.'):

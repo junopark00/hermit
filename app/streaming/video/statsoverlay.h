@@ -40,6 +40,13 @@ enum CursorState : int {
     CursorHostOtherClient = 3,  // the host draws it because another client streams the desktop
 };
 
+// The network adaptation controller's view of the link (NetworkAdapt::Regime)
+enum AdaptRegime : int {
+    AdaptClean = 0,
+    AdaptLoss = 1,
+    AdaptCongested = 2,
+};
+
 struct Inputs {
     const VIDEO_STATS* stats = nullptr;  // statistics over the last ~2 seconds
     int width = 0;
@@ -49,6 +56,11 @@ struct Inputs {
     double peakMbps = 0.0;
     QString decoder;
     int cursorState = CursorNone;  // local cursor (Shell), see CursorState
+    // Network adaptation (Shell): the controller's bitrate (0 when it is off), its FEC step
+    // (0 when the host takes no live FEC) and regime; shown with the bitrate metric
+    int adaptBitrateKbps = 0;
+    int adaptFecPercent = 0;
+    int adaptRegime = AdaptClean;
 };
 
 // Returns the overlay text for the selected metrics ("label\tvalue" per line).

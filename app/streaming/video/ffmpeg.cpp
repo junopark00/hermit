@@ -2143,7 +2143,9 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
         m_LastFrameNumber = du->frameNumber;
     }
 
-    // Hermit: network diagnostics (netdiag.h), one flag check per frame while it is off
+    // Hermit: running totals for network adaptation (session.cpp samples them every 250 ms), and
+    // network diagnostics (netdiag.h): one flag check per frame while the recording is off
+    NetDiagLog::window().onFrameArrival(droppedBefore);
     if (NetDiagLog::isOn()) {
         NetDiagLog::window().onFrameReceived(LiGetMicroseconds(), droppedBefore, du->frameHostProcessingLatency);
     }
@@ -2173,20 +2175,11 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
                 inputs.decoder = QString::fromUtf8(m_BackendRenderer->getRendererName());
             }
             inputs.cursorState = Session::get()->cursorOverlayState();
+            Session::get()->adaptOverlayState(inputs.adaptBitrateKbps, inputs.adaptFecPercent, inputs.adaptRegime);
             const QByteArray overlayText = StatsOverlay::format(inputs, overlay.statsMetrics()).toUtf8();
             SDL_utf8strlcpy(overlay.getOverlayText(Overlay::OverlayDebug), overlayText.constData(),
                             overlay.getOverlayMaxTextLength());
             overlay.setOverlayTextUpdated(Overlay::OverlayDebug);
-        }
-
-        // Hermit: per-second network figures for automatic bitrate (session.cpp)
-        {
-            uint32_t rtt = 0, rttVariance = 0;
-            LiGetEstimatedRttInfo(&rtt, &rttVariance);
-            const VIDEO_STATS& window = m_ActiveWndVideoStats;
-            // Too few frames (a still desktop) make one lost frame look like heavy loss: -1, no data
-            float lossPct = window.totalFrames >= 20 ? (float)window.networkDroppedFrames * 100 / window.totalFrames : -1;
-            Session::get()->reportNetworkWindow(lossPct, (int)rtt);
         }
 
         // Accumulate these values into the global stats

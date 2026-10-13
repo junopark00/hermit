@@ -59,6 +59,21 @@ QString format(const Inputs& in, int metrics)
         add(MetricBitrate, QCoreApplication::translate("StatsOverlay", "Bitrate"),
             QCoreApplication::translate("StatsOverlay", "%1 Mbps (peak %2)").arg(in.avgMbps, 0, 'f', 1).arg(in.peakMbps, 0, 'f', 1));
     }
+    if (in.adaptBitrateKbps > 0) {
+        // Network adaptation: where the controller holds the bitrate, its FEC step and, while the
+        // link is not clean, which trouble it sees
+        QString value = QStringLiteral("%1 Mbps").arg(in.adaptBitrateKbps / 1000.0, 0, 'f', 1);
+        if (in.adaptFecPercent > 0) {
+            value += QStringLiteral(" · FEC %1%").arg(in.adaptFecPercent);
+        }
+        if (in.adaptRegime == AdaptCongested) {
+            value += QStringLiteral(" · ") + QCoreApplication::translate("StatsOverlay", "congested");
+        }
+        else if (in.adaptRegime == AdaptLoss) {
+            value += QStringLiteral(" · ") + QCoreApplication::translate("StatsOverlay", "loss");
+        }
+        add(MetricBitrate, QCoreApplication::translate("StatsOverlay", "Automatic"), value);
+    }
     if (haveFrames) {
         add(MetricNetworkLoss, QCoreApplication::translate("StatsOverlay", "Network loss"), pct(s.totalFrames ? 100.0 * s.networkDroppedFrames / s.totalFrames : 0.0));
         add(MetricJitterDrops, QCoreApplication::translate("StatsOverlay", "Jitter drops"), pct(s.decodedFrames ? 100.0 * s.pacerDroppedFrames / s.decodedFrames : 0.0));

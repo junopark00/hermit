@@ -39,6 +39,7 @@
 #define SDL_CODE_CURSOR_UPDATE 110       // Hermit: cursor messages wait in the mailbox (107-109: streampanel.h)
 #define SDL_CODE_CURSOR_MODE_RESULT 111  // Hermit: data1 = serial << 1 | requested local, data2 = result
 #define SDL_CODE_CURSOR_RETRY 112        // Hermit: data1 = serial << 34 | shape id << 2 | kind (1 mode, 2 shape)
+#define SDL_CODE_LIVE_FEC_RESULT 113     // Hermit: data1 = request serial, data2 = result (networkadapt.h plumbing)
 #define CURSOR_RETRY_MODE 1
 #define CURSOR_RETRY_SHAPE 2
 #define CURSOR_RETRY_DELAY_MS 2000
@@ -100,6 +101,7 @@ Session* Session::s_ActiveSession;
 
 // Hermit: live bitrate requests running on pool threads (they can outlive their session)
 static std::atomic<int> s_LiveBitrateInFlight {0};
+static std::atomic<int> s_LiveFecInFlight {0};
 static bool s_LastSessionBitrateUncertain = false;
 QSemaphore Session::s_ActiveSessionSemaphore(1);
 
@@ -717,6 +719,17 @@ Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *prefere
       m_AppliedFramePacing(false),
       m_SavePreferences(true),
       m_AutoBitrateRunning(false),
+      m_AdaptTimer(0),
+      m_AdaptLastReceived(0),
+      m_AdaptLastDropped(0),
+      m_AdaptOverlayState(0),
+      m_LiveFec(false),
+      m_FecPendingSerial(0),
+      m_FecPendingPercent(0),
+      m_FecSentPercent(NetworkAdapt::kFecBase),
+      m_FecEffectivePercent(0),
+      m_FecUncertain(false),
+      m_FecRetryMs(0),
       m_HotkeyHelpSerial(0),
       m_LoopStartMs(0),
       m_StartHintPending(false),
@@ -2329,16 +2342,6 @@ void Session::toggleHotkeyHelp()
     m_HotkeyHelpSerial = overlays.showToast(text, 15000, true);
 }
 
-void Session::reportNetworkWindow(float lossPct, int rttMs)
-{
-    SDL_Event event = {};
-    event.type = SDL_USEREVENT;
-    event.user.code = SDL_CODE_NETWORK_WINDOW;
-    event.user.data1 = reinterpret_cast<void*>(static_cast<intptr_t>(lossPct * 100));
-    event.user.data2 = reinterpret_cast<void*>(static_cast<intptr_t>(rttMs));
-    SDL_PushEvent(&event);
-}
-
 void Session::openStreamPanel()
 {
     if (m_Panel == nullptr || m_Panel->isOpen()) {
@@ -2454,8 +2457,221 @@ void Session::publishNetDiagState()
     }
     const int requested = m_Panel != nullptr ? m_Panel->chosenBitrateKbps() : m_StreamConfig.bitrate;
     const int applied = m_Panel != nullptr ? m_Panel->appliedBitrateKbps() : m_StreamConfig.bitrate;
-    NetDiagLog::setBitrates(requested, applied, m_AutoBitrateRunning ? m_AutoBitrate.current() : 0);
+    NetDiagLog::setBitrates(requested, applied, m_AutoBitrateRunning ? m_NetworkAdapt.bitrate() : 0);
     NetDiagLog::setRenderMode(m_AppliedVsync, m_AppliedVsync && m_AppliedFramePacing);
+}
+
+Uint32 Session::adaptTimerCallback(Uint32 interval, void* param)
+{
+    Q_UNUSED(param);
+    SDL_Event event = {};
+    event.type = SDL_USEREVENT;
+    event.user.code = SDL_CODE_NETWORK_WINDOW;
+    SDL_PushEvent(&event);
+    return interval;  // periodic
+}
+
+NetworkAdapt::Policy Session::networkPolicy() const
+{
+    switch (m_Preferences->networkPolicy) {
+    case StreamingPreferences::NP_FRAME_PRIORITY:
+        return NetworkAdapt::Policy::FramePriority;
+    case StreamingPreferences::NP_QUALITY_PRIORITY:
+        return NetworkAdapt::Policy::QualityPriority;
+    default:
+        // Auto: the remote desktop (absolute) mouse means desktop work, where sharp text matters
+        // more than the frame rate; the game (relative) mouse means the opposite
+        return m_InputHandler != nullptr && m_InputHandler->isAbsoluteMouseMode() ?
+                    NetworkAdapt::Policy::QualityPriority : NetworkAdapt::Policy::FramePriority;
+    }
+}
+
+void Session::handleNetworkWindow(uint64_t now)
+{
+    publishNetDiagState();
+
+    // The window's figures: the frames that arrived and the frame numbers skipped since the last
+    // window (decoder thread, running totals in netdiag.h) and the control stream's round trip
+    NetworkAdapt::Window window;
+    {
+        uint32_t received = 0, dropped = 0;
+        NetDiagLog::window().totals(received, dropped);
+        window.framesReceived = static_cast<int>(received - m_AdaptLastReceived);
+        window.framesDropped = static_cast<int>(dropped - m_AdaptLastDropped);
+        m_AdaptLastReceived = received;
+        m_AdaptLastDropped = dropped;
+        uint32_t rtt = 0, rttVariance = 0;
+        if (LiGetEstimatedRttInfo(&rtt, &rttVariance)) {
+            window.rttMs = static_cast<int>(rtt);
+        }
+    }
+
+    // Frames of the previous session's decoder can still arrive right after a reconnect, so the
+    // first seconds are skipped
+    if (m_Panel == nullptr || now - m_LoopStartMs < 3000) {
+        return;
+    }
+    if (m_ResyncLiveBitrate && s_LiveBitrateInFlight.load() == 0 && !m_Panel->liveBitratePending() &&
+            now >= m_ResyncNotBeforeMs) {
+        // A request that may still have reached the host late (the previous session's, or one
+        // that timed out): send the bitrate this stream uses. Not while a newer change is being
+        // retried; its success schedules a resync again.
+        m_ResyncLiveBitrate = false;
+        if (!m_Panel->appliedUncertain()) {
+            m_ResyncRequestId = m_Panel->resendLiveBitrate(m_StreamConfig.bitrate);
+        }
+    }
+    if (m_Panel->bitrateEditing()) {
+        return;  // the chosen bitrate (the ceiling) is still moving under the slider
+    }
+    const int chosen = m_Panel->chosenBitrateKbps();
+    const bool running = m_Preferences->adaptiveBitrate && m_Panel->liveBitrateSupported();
+    if (!running) {
+        if (m_AutoBitrateRunning) {
+            m_AutoBitrateRunning = false;
+            m_Panel->setAutoBitrate(0);
+            m_AdaptOverlayState = 0;
+            // Bringing back the user's choice (also when a request in flight or a failed one may
+            // leave the host elsewhere)
+            m_Panel->setUserPickUnconfirmed(m_Panel->appliedBitrateKbps() != chosen ||
+                                            m_Panel->liveBitratePending() ||
+                                            m_Panel->appliedUncertain());
+        }
+        // The host streams at the chosen bitrate: after network adaptation was turned off, or
+        // when a pick failed on the way (again every 5 seconds)
+        if (m_Panel->liveBitrateSupported() && !m_Panel->liveBitratePending() &&
+                (m_Panel->appliedBitrateKbps() != chosen || m_Panel->appliedUncertain()) &&
+                now - m_AutoBitrateRetryMs >= 5000) {
+            m_AutoBitrateRetryMs = now;
+            m_Panel->applyLiveBitrate(chosen);
+        }
+    }
+    else {
+        if (!m_AutoBitrateRunning) {
+            if (m_Panel->liveBitratePending()) {
+                return;  // start from where the host is once the request in flight is done
+            }
+            m_AutoBitrateRunning = true;
+            m_Summary.noteAutoBitrate();
+            // Nothing is pending, so the user's last pick has had its result
+            m_Panel->setUserPickUnconfirmed(false);
+            // From where the host streams now (an earlier request may have failed)
+            m_NetworkAdapt.reset(chosen, m_Panel->appliedBitrateKbps(), networkPolicy(), m_LiveFec);
+        }
+        // The policy follows the mouse mode (Auto) or the setting, both of which can change any time
+        m_NetworkAdapt.setPolicy(networkPolicy());
+        m_NetworkAdapt.setFecAvailable(m_LiveFec);
+
+        const NetworkAdapt::Action action = m_NetworkAdapt.update(window, now, chosen);
+        if (action.bitrateKbps > 0) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Network adaptation (%s): %d kbps", action.reason, action.bitrateKbps);
+            NetDiagLog::note(QStringLiteral("adapt: %1 -> %2 kbps").arg(QLatin1String(action.reason)).arg(action.bitrateKbps));
+            if (action.bitrateKbps != chosen) {
+                // The controller took over (not just starting again at the new pick)
+                m_Panel->setUserPickUnconfirmed(false);
+            }
+            m_Panel->applyLiveBitrate(action.bitrateKbps);
+        }
+        else if (!m_Panel->liveBitratePending() &&
+                 (m_Panel->appliedBitrateKbps() != m_NetworkAdapt.bitrate() || m_Panel->appliedUncertain()) &&
+                 now - m_AutoBitrateRetryMs >= 5000) {
+            // A request failed on the way: send the controller's value again
+            m_AutoBitrateRetryMs = now;
+            m_Panel->applyLiveBitrate(m_NetworkAdapt.bitrate());
+        }
+        if (action.fecPercent > 0) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Network adaptation (%s): FEC %d%%", action.reason, action.fecPercent);
+            NetDiagLog::note(QStringLiteral("adapt: %1 -> fec %2").arg(QLatin1String(action.reason)).arg(action.fecPercent));
+        }
+    }
+
+    // FEC follows the controller's step (the host's default while it is off): one request in
+    // flight, the newest value goes once it is done; a request that failed on the way is sent
+    // again after 5 seconds (a timeout may still have reached the host, so the reply tells)
+    if (m_LiveFec && m_FecPendingSerial == 0) {
+        const int wanted = m_AutoBitrateRunning ? m_NetworkAdapt.fec() : NetworkAdapt::kFecBase;
+        if (m_FecSentPercent != wanted && (!m_FecUncertain || now - m_FecRetryMs >= 5000)) {
+            sendLiveFec(wanted == NetworkAdapt::kFecBase ? 0 : wanted);
+        }
+    }
+
+    if (m_AutoBitrateRunning) {
+        // The panel's "Automatic: now ..." line and the overlay: the host's effective FEC once
+        // known, the controller's step before the first reply; nothing when the host takes no FEC
+        const int fecShown = !m_LiveFec ? 0 : (m_FecEffectivePercent > 0 ? m_FecEffectivePercent : m_NetworkAdapt.fec());
+        m_Panel->setAutoBitrate(m_NetworkAdapt.bitrate(), fecShown);
+        m_AdaptOverlayState = static_cast<uint64_t>(static_cast<uint32_t>(m_NetworkAdapt.bitrate())) |
+                              (static_cast<uint64_t>(fecShown & 0xFF) << 32) |
+                              (static_cast<uint64_t>(static_cast<int>(m_NetworkAdapt.regime()) & 0xFF) << 40);
+    }
+    publishNetDiagState();
+}
+
+void Session::sendLiveFec(int percent)
+{
+    // Unique across sessions (all sessions run on the SDL main thread)
+    static uint32_t s_NextSerial = 0;
+    if (++s_NextSerial == 0) {
+        s_NextSerial = 1;
+    }
+    m_FecPendingSerial = s_NextSerial;
+    m_FecPendingPercent = percent;
+    const uint32_t serial = m_FecPendingSerial;
+    NvComputer* computer = m_Computer;
+    s_LiveFecInFlight++;
+    QThreadPool::globalInstance()->start([computer, percent, serial]() {
+        // > 0: the host's effective percentage; -1: the host cannot (404, 501, 400, or no
+        // "percent=" line), not asked again this session; 0: failed on the way (timeout, or 403
+        // while the host still registers the session), tried again later
+        int result;
+        try {
+            NvHTTP http(computer);
+            result = http.setLiveFec(percent, 5000);
+        } catch (const QtNetworkReplyException& e) {
+            result = (e.getError() == QNetworkReply::ContentNotFoundError ||
+                      e.getError() == QNetworkReply::OperationNotImplementedError ||
+                      e.getError() == QNetworkReply::ProtocolInvalidOperationError) ? -1 : 0;
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Live FEC change failed: %s", e.what());
+        } catch (const HostHttpResponseException& e) {
+            result = -1;
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Live FEC change failed: %s", e.what());
+        } catch (...) {
+            result = 0;
+        }
+        SDL_Event resultEvent = {};
+        resultEvent.type = SDL_USEREVENT;
+        resultEvent.user.code = SDL_CODE_LIVE_FEC_RESULT;
+        resultEvent.user.data1 = reinterpret_cast<void*>(static_cast<intptr_t>(serial));
+        resultEvent.user.data2 = reinterpret_cast<void*>(static_cast<intptr_t>(result));
+        s_LiveFecInFlight--;
+        SDL_PushEvent(&resultEvent);
+    });
+}
+
+void Session::handleLiveFecResult(uint32_t serial, int result)
+{
+    if (serial == 0 || serial != m_FecPendingSerial) {
+        return;  // a request of the previous session
+    }
+    m_FecPendingSerial = 0;
+    const int requested = m_FecPendingPercent;
+    if (result > 0) {
+        m_FecSentPercent = requested == 0 ? NetworkAdapt::kFecBase : requested;
+        m_FecEffectivePercent = result;
+        m_FecUncertain = false;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live FEC %d%% (0: the default): the host now uses %d%%", requested, result);
+    }
+    else if (result < 0) {
+        m_LiveFec = false;
+        m_FecUncertain = false;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live FEC: not supported by this host, not asked again");
+    }
+    else {
+        m_FecUncertain = true;
+        m_FecRetryMs = SDL_GetTicks64();
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Live FEC %d%%: failed, trying again in 5 seconds", requested);
+    }
+    publishNetDiagState();
 }
 
 void Session::handleStreamPanelAction(int action, intptr_t value)
@@ -2893,8 +3109,18 @@ void Session::exec()
     {
         QReadLocker lock(&m_Computer->lock);
         m_CursorOverlayState = m_Computer->localCursorVersion > 0 ? StatsOverlay::CursorHost : StatsOverlay::CursorNone;
+        m_LiveFec = m_Computer->liveFec;
     }
     updateCursorMode();
+
+    // Hermit: network adaptation (networkadapt.h): a window every 250 ms. A FEC request of the
+    // previous session still running can reach the host after this stream started: the first
+    // window then sends the default once.
+    NetDiagLog::window().totals(m_AdaptLastReceived, m_AdaptLastDropped);
+    if (s_LiveFecInFlight.load() > 0) {
+        m_FecSentPercent = -1;
+    }
+    m_AdaptTimer = SDL_AddTimer(NetworkAdapt::kWindowMs, adaptTimerCallback, nullptr);
 
     // Hijack this thread to be the SDL main thread. We have to do this
     // because we want to suspend all Qt processing until the stream is over.
@@ -3043,82 +3269,14 @@ void Session::exec()
                     openStreamPanel();
                 }
                 break;
-            case SDL_CODE_NETWORK_WINDOW: {
-                publishNetDiagState();
-                // Hermit: automatic bitrate (autobitrate.h), through Shell's live bitrate.
-                // Windows from the previous session's decoder can still be queued right after a
-                // reconnect, so the first seconds are skipped.
-                const uint64_t now = SDL_GetTicks64();
-                if (m_Panel == nullptr || now - m_LoopStartMs < 3000) {
-                    break;
-                }
-                if (m_ResyncLiveBitrate && s_LiveBitrateInFlight.load() == 0 && !m_Panel->liveBitratePending() &&
-                        now >= m_ResyncNotBeforeMs) {
-                    // A request that may still have reached the host late (the previous session's,
-                    // or one that timed out): send the bitrate this stream uses. Not while a newer
-                    // change is being retried; its success schedules a resync again.
-                    m_ResyncLiveBitrate = false;
-                    if (!m_Panel->appliedUncertain()) {
-                        m_ResyncRequestId = m_Panel->resendLiveBitrate(m_StreamConfig.bitrate);
-                    }
-                }
-                if (m_Panel->bitrateEditing()) {
-                    break;  // the chosen bitrate (the ceiling) is still moving under the slider
-                }
-                const int chosen = m_Panel->chosenBitrateKbps();
-                if (!m_Preferences->adaptiveBitrate || !m_Panel->liveBitrateSupported()) {
-                    if (m_AutoBitrateRunning) {
-                        m_AutoBitrateRunning = false;
-                        m_Panel->setAutoBitrate(0);
-                        // Bringing back the user's choice (also when a request in flight or a
-                        // failed one may leave the host elsewhere)
-                        m_Panel->setUserPickUnconfirmed(m_Panel->appliedBitrateKbps() != chosen ||
-                                                        m_Panel->liveBitratePending() ||
-                                                        m_Panel->appliedUncertain());
-                    }
-                    // The host streams at the chosen bitrate: after automatic bitrate was turned
-                    // off, or when a pick failed on the way (again every 5 seconds)
-                    if (m_Panel->liveBitrateSupported() && !m_Panel->liveBitratePending() &&
-                            (m_Panel->appliedBitrateKbps() != chosen || m_Panel->appliedUncertain()) &&
-                            now - m_AutoBitrateRetryMs >= 5000) {
-                        m_AutoBitrateRetryMs = now;
-                        m_Panel->applyLiveBitrate(chosen);
-                    }
-                    break;
-                }
-                if (!m_AutoBitrateRunning) {
-                    if (m_Panel->liveBitratePending()) {
-                        break;  // start from where the host is once the request in flight is done
-                    }
-                    m_AutoBitrateRunning = true;
-                    m_Summary.noteAutoBitrate();
-                    // Nothing is pending, so the user's last pick has had its result
-                    m_Panel->setUserPickUnconfirmed(false);
-                    // From where the host streams now (an earlier request may have failed)
-                    m_AutoBitrate.reset(chosen, m_Panel->appliedBitrateKbps());
-                }
-                const int kbps = m_AutoBitrate.update((intptr_t)event.user.data1 / 100.0f,
-                                                      (int)(intptr_t)event.user.data2,
-                                                      now, chosen);
-                if (kbps > 0) {
-                    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Automatic bitrate: %d kbps", kbps);
-                    if (kbps != chosen) {
-                        // Automatic bitrate took over (not just starting again at the new pick)
-                        m_Panel->setUserPickUnconfirmed(false);
-                    }
-                    m_Panel->applyLiveBitrate(kbps);
-                }
-                else if (!m_Panel->liveBitratePending() &&
-                         (m_Panel->appliedBitrateKbps() != m_AutoBitrate.current() || m_Panel->appliedUncertain()) &&
-                         now - m_AutoBitrateRetryMs >= 5000) {
-                    // A request failed on the way: send the controller's value again
-                    m_AutoBitrateRetryMs = now;
-                    m_Panel->applyLiveBitrate(m_AutoBitrate.current());
-                }
-                m_Panel->setAutoBitrate(m_AutoBitrate.current());
-                publishNetDiagState();
+            case SDL_CODE_NETWORK_WINDOW:
+                // Hermit: network adaptation (networkadapt.h), a 250 ms window from the timer
+                handleNetworkWindow(SDL_GetTicks64());
                 break;
-            }
+            case SDL_CODE_LIVE_FEC_RESULT:
+                handleLiveFecResult(static_cast<uint32_t>(reinterpret_cast<intptr_t>(event.user.data1)),
+                                    static_cast<int>(reinterpret_cast<intptr_t>(event.user.data2)));
+                break;
             case SDL_CODE_STREAM_PANEL_ACTION:
                 handleStreamPanelAction(static_cast<int>(reinterpret_cast<intptr_t>(event.user.data1)),
                                         reinterpret_cast<intptr_t>(event.user.data2));
@@ -3459,6 +3617,10 @@ DispatchDeferredCleanup:
     m_Panel = nullptr;
 
     cancelCursorTimers();
+    if (m_AdaptTimer != 0) {
+        SDL_RemoveTimer(m_AdaptTimer);
+        m_AdaptTimer = 0;
+    }
 
     // Uncapture the mouse and hide the window immediately,
     // so we can return to the Qt GUI ASAP.

@@ -128,6 +128,17 @@ public:
     };
     Q_ENUM(CaptureSysKeysMode);
 
+    // Hermit: what network adaptation protects when the network is unstable
+    // (streaming/networkadapt.h). Auto follows the mouse mode: game (relative) keeps the frame
+    // rate, remote desktop (absolute) keeps the quality.
+    enum NetworkPolicy
+    {
+        NP_AUTO,
+        NP_FRAME_PRIORITY,
+        NP_QUALITY_PRIORITY,
+    };
+    Q_ENUM(NetworkPolicy);
+
     Q_PROPERTY(int width MEMBER width NOTIFY displayModeChanged)
     Q_PROPERTY(int height MEMBER height NOTIFY displayModeChanged)
     Q_PROPERTY(int fps MEMBER fps NOTIFY displayModeChanged)
@@ -174,6 +185,7 @@ public:
     Q_PROPERTY(int overlayTextSize MEMBER overlayTextSize NOTIFY overlayTextSizeChanged)
     Q_PROPERTY(bool autoReconnect MEMBER autoReconnect NOTIFY autoReconnectChanged)
     Q_PROPERTY(bool adaptiveBitrate MEMBER adaptiveBitrate NOTIFY adaptiveBitrateChanged)
+    Q_PROPERTY(NetworkPolicy networkPolicy MEMBER networkPolicy NOTIFY networkPolicyChanged)
     // Hermit: network diagnostics, a 100 ms CSV log of the stream's network and playback figures
     // (streaming/netdiag.h); off by default
     Q_PROPERTY(bool netDiag MEMBER netDiag NOTIFY netDiagChanged)
@@ -221,6 +233,7 @@ public:
     int overlayTextSize;
     bool autoReconnect;
     bool adaptiveBitrate;
+    NetworkPolicy networkPolicy;
     bool netDiag;
     int packetSize;
     AudioConfig audioConfig;
@@ -277,6 +290,7 @@ signals:
     void overlayTextSizeChanged();
     void autoReconnectChanged();
     void adaptiveBitrateChanged();
+    void networkPolicyChanged();
     void netDiagChanged();
     void languageChanged();
     void rendererSelectionChanged();

@@ -23,8 +23,10 @@ Windows, and also works with other GameStream hosts such as Sunshine and Apollo.
   running app.
 - **Live bitrate.** On Shell hosts the bitrate changes instantly, without reconnecting or freezing
   the picture.
-- **Automatic bitrate.** On Shell hosts, Hermit can lower the bitrate when the network struggles and
-  raise it again when it recovers, up to the bitrate you chose.
+- **Automatic bitrate.** On Shell hosts, Hermit tells congestion from link loss every 250 ms: it
+  lowers the bitrate for congestion, raises the host's error correction (FEC) for loss, and steps
+  both back when the network recovers, up to the bitrate you chose. A policy picks what to protect
+  (frame rate or quality; by default it follows the mouse mode).
 - **Local cursor.** In remote desktop mouse mode, a Shell host sends the cursor's shape instead of
   drawing it into the video, and Hermit shows the pointer itself: it follows the mouse with no
   stream delay, in the host's cursor shapes.

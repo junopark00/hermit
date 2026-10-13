@@ -153,25 +153,48 @@ of other remote desktop clients.
 
 ## Live and automatic bitrate (Shell)
 
-**Automatic bitrate** adjusts the bitrate to the network during the stream. Turn it on with
-"Adjust the bitrate automatically to the network (Shell host)" in Settings, or "Adjust automatically to the network" in the stream panel. It is
-off by default.
+**Automatic bitrate** (network adaptation) adjusts the stream to the network while it runs. Turn it
+on with "Adjust the bitrate automatically to the network (Shell host)" in Settings, or "Adjust
+automatically to the network" in the stream panel. It is off by default.
 
-- Every second, Hermit looks at network loss and round-trip time and changes the bitrate live on the
-  host. It never reconnects.
-  - If more than 2% of frames are lost, or the round-trip time rises well above its usual value (by
-    at least 40 ms and 1.5 times), the bitrate drops to 80%, at most once every 2 seconds, down to
-    one fifth of the chosen bitrate (at least 2 Mbps).
-  - After ten good one-second intervals (and at least 10 seconds since the last change), the bitrate
-    rises by one tenth of the chosen bitrate (at least 1 Mbps), up to the chosen bitrate.
-  - In intervals with fewer than 20 frames (Shell sends only 10 to 12 frames per second for a still
-    picture), loss is not judged; only the round-trip time counts, and the interval counts as neither
-    good nor bad. This lets the bitrate recover slowly during document work with frequent pauses.
-  - When turned on, it starts from the bitrate the host is currently sending.
+- Every 250 ms, Hermit looks at the frames that arrived, the frame numbers the network skipped and
+  the round-trip time, and tells two kinds of trouble apart. It never reconnects.
+  - **Congestion**: the round-trip time rises well above its usual value (by more than 40 ms and 1.5
+    times), with or without loss. The link cannot carry the bitrate, so the bitrate is cut at once
+    and again every 0.5 s while it lasts, down to the policy's floor (below).
+  - **Link loss**: 5% or more of the frames are lost while the round-trip time stays flat (within
+    20 ms of usual). Lowering the bitrate does not help here (the first recording showed the same
+    loss at 35 and at 7 Mbps), so Hermit first raises the host's forward error correction (FEC):
+    20% → 35% → 50%. Only when loss goes on for one more second at 50% is the bitrate cut by 15%,
+    again every second while it lasts, down to the floor (smaller frames, fewer packets per frame).
+    FEC changes need Shell 1.4 (serverinfo `LiveFec`); on older hosts the bitrate rule applies alone.
+  - A decision needs two windows of the same kind in a row (0.5 s), and there is at most one action
+    per 0.5 s. One window of the other kind does not switch the regime until it repeats.
+  - Windows with fewer than 3 frames (a still picture: Shell sends only 10 to 12 frames per second
+    for one) decide nothing and count as neither good nor bad, so desktop work with pauses recovers.
+  - **Recovery**: after 3 s of clean windows (less than 1% loss, usual round trip) the bitrate rises
+    by 15% of the chosen bitrate, every 3 s, up to the chosen bitrate; the first rise after a cut
+    waits 6 s after that cut. FEC goes down one step after 6 s of clean windows, and again 6 s later.
+  - When turned on, it starts from the bitrate the host is currently sending and the host's FEC.
+- **When the network is unstable** (the setting under the checkbox, also in the panel) chooses what
+  to protect:
+  - **Keep the frame rate** (game): congestion cuts the bitrate by 30% per step, down to one eighth
+    of the chosen bitrate (at least 2 Mbps). The picture gets blurry for a moment but keeps moving.
+  - **Keep the quality** (remote desktop): congestion cuts by 20% per step, down to one third of the
+    chosen bitrate (at least 4 Mbps), and the link-loss rule stops there too, keeping FEC at 50%.
+    Sharp text and UI come first; a further step that lowers the frame rate instead is planned.
+  - **Auto** (default) follows the mouse mode: the game (relative) mouse keeps the frame rate, the
+    remote desktop (absolute) mouse keeps the quality. Switching the mouse mode switches the policy
+    at once.
 - The chosen bitrate is the upper limit. Changing it in the panel sets a new limit and a new starting
-  point. The panel shows "Automatic: now N Mbps (up to M Mbps)". While it is adjusting and the
-  connection is slow, the warning over the stream says that the bitrate is being lowered
-  automatically instead of asking you to lower it.
+  point. The panel shows "Automatic: now N Mbps, FEC F% (up to M Mbps)" (without the FEC part on
+  hosts that cannot change it); the performance overlay's "Automatic" line adds the regime word
+  ("congested" or "loss") while the link is not clean. While it is adjusting and the connection is
+  slow, the warning over the stream says that the bitrate is being lowered automatically instead of
+  asking you to lower it.
+- FEC requests work like bitrate requests: one at a time, the newest value follows, a failed one is
+  sent again after 5 s, and a host that refuses them (404) is not asked again this session. Turning
+  the setting off sends the host's default FEC back when it had been raised.
 - Turning it off returns to the chosen bitrate. While it is off, if the host's bitrate differs from
   the chosen one (right after turning it off, or after a request for your own value failed
   temporarily), Hermit sends the chosen value again every 5 seconds.
@@ -193,7 +216,10 @@ off by default.
 - If a request sent just before a reconnect could have changed the new stream (it was still in
   flight, or the previous session ended with a failed request), Hermit sends the current value again
   after that request finishes.
-- The rules live in `app/streaming/autobitrate.h`; Hermit for Android uses the same rules.
+- The rules live in `app/streaming/networkadapt.h` (replayed over a real recording in
+  `hermit/tests/hermit_core_test.cpp`); Hermit for Android still uses the earlier one-second rules.
+- With network diagnostics recording, every decision goes to the event column ("adapt: congested ->
+  24500 kbps", "adapt: loss -> fec 35", "adapt: recover -> 30000 kbps").
 
 When the bitrate changed during a stream (in the panel or automatically), the session summary and
 history report a time-weighted average, for example "Automatic · average 14 Mbps (up to 30)".
@@ -486,7 +512,7 @@ happened, so the behaviour can be analysed before any control change.
   seen, the longest gap between two frame arrivals (a stall still in progress counts), average host
   latency, decode and render time, round-trip time and its variance, loss, the requested (chosen),
   applied (host-confirmed) and automatic bitrates, V-Sync and frame pacing, and an event column
-  (bitrate changes, renderer resets).
+  (bitrate changes, network adaptation decisions, renderer resets).
 - The counters are the ones the performance overlay uses, read with lock-free atomics; a recording
   costs one wake-up of its own thread every 100 ms and a small file write. When the mode is off, the
   frame path checks one flag per frame and nothing else.

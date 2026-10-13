@@ -124,8 +124,26 @@ public:
         m_RenderQueueMax.store(0, std::memory_order_relaxed);
     }
 
-    // Decoder thread, once per decode unit. droppedBefore: frame numbers skipped since the last
-    // one; hostLatencyTenthsMs: the host's processing time in 0.1 ms units (0 if unknown).
+    // Decoder thread, once per decode unit, recording or not: running totals for the network
+    // adaptation controller (session.cpp reads them every 250 ms and takes the difference).
+    // Two relaxed increments; never reset.
+    void onFrameArrival(uint32_t droppedBefore)
+    {
+        m_TotalReceived.fetch_add(1, std::memory_order_relaxed);
+        if (droppedBefore != 0) {
+            m_TotalNetworkDropped.fetch_add(droppedBefore, std::memory_order_relaxed);
+        }
+    }
+
+    void totals(uint32_t& received, uint32_t& networkDropped) const
+    {
+        received = m_TotalReceived.load(std::memory_order_relaxed);
+        networkDropped = m_TotalNetworkDropped.load(std::memory_order_relaxed);
+    }
+
+    // Decoder thread, once per decode unit while recording. droppedBefore: frame numbers skipped
+    // since the last one; hostLatencyTenthsMs: the host's processing time in 0.1 ms units (0 if
+    // unknown).
     void onFrameReceived(uint64_t nowUs, uint32_t droppedBefore, uint16_t hostLatencyTenthsMs)
     {
         const uint64_t last = m_LastArrivalUs.load(std::memory_order_relaxed);
@@ -223,6 +241,8 @@ private:
     std::atomic<uint64_t> m_RenderUs {0};
     std::atomic<int> m_PacingQueueMax {0};
     std::atomic<int> m_RenderQueueMax {0};
+    std::atomic<uint32_t> m_TotalReceived {0};
+    std::atomic<uint32_t> m_TotalNetworkDropped {0};
 };
 
 // The recorder. One per stream, owned by Session; created when the stream loop starts (or when

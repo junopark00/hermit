@@ -61,6 +61,7 @@
 #define SER_AUTORECONNECT "autoreconnect"
 #define SER_ADAPTIVEBITRATE "adaptivebitrate"
 #define SER_NETDIAG "netdiag"
+#define SER_NETWORKPOLICY "networkpolicy"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
 
@@ -169,6 +170,9 @@ void StreamingPreferences::reload()
     overlayTextSize = qBound(12, settings.value(SER_OVERLAYTEXTSIZE, 20).toInt(), 40);
     autoReconnect = settings.value(SER_AUTORECONNECT, true).toBool();
     adaptiveBitrate = settings.value(SER_ADAPTIVEBITRATE, false).toBool();
+    networkPolicy = static_cast<NetworkPolicy>(qBound(static_cast<int>(NP_AUTO),
+                                                      settings.value(SER_NETWORKPOLICY, static_cast<int>(NP_AUTO)).toInt(),
+                                                      static_cast<int>(NP_QUALITY_PRIORITY)));
     netDiag = settings.value(SER_NETDIAG, false).toBool();
     enableHdr = settings.value(SER_HDR, false).toBool();
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
@@ -432,6 +436,7 @@ void StreamingPreferences::save()
     settings.setValue(SER_OVERLAYTEXTSIZE, overlayTextSize);
     settings.setValue(SER_AUTORECONNECT, autoReconnect);
     settings.setValue(SER_ADAPTIVEBITRATE, adaptiveBitrate);
+    settings.setValue(SER_NETWORKPOLICY, static_cast<int>(networkPolicy));
     settings.setValue(SER_NETDIAG, netDiag);
 }
 
