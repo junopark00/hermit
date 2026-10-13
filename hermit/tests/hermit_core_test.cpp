@@ -1710,6 +1710,7 @@ int main(int argc, char** argv)
     testClipboardPushRetries();
     testResolutionPresets();
     testQrPairingLink();
+    testNetDiag();
     testProfileProperties(repo);
 
     std::printf("%d checks, %d failed\n", g_Checks, g_Failures);

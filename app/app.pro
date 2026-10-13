@@ -190,6 +190,7 @@ SOURCES += \
     streaming/clipboardarchive.cpp \
     streaming/clipboardsync.cpp \
     streaming/cursorpacket.cpp \
+    streaming/netdiag.cpp \
     streaming/session.cpp \
     streaming/sessionsummary.cpp \
     streaming/streampanel.cpp \
@@ -236,6 +237,7 @@ HEADERS += \
     streaming/clipboardsync.h \
     streaming/clipboardvirtualfiles.h \
     streaming/cursorpacket.h \
+    streaming/netdiag.h \
     streaming/session.h \
     streaming/sessionsummary.h \
     streaming/streampanel.h \
