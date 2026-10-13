@@ -12,6 +12,7 @@ HERMIT_QT_DIR, else C:/Qt/6.11.3/msvc2022_64/bin/lrelease.exe.
 import os
 import subprocess
 import xml.etree.ElementTree as ET
+from typing import TypeIs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
@@ -488,6 +489,11 @@ TRANSLATIONS = {
 }
 
 
+def is_plural(translation: str | tuple[str, ...]) -> TypeIs[tuple[str, ...]]:
+    """A tuple value marks a plural (%n) message: one Korean text per numerus form."""
+    return isinstance(translation, tuple)
+
+
 def main():
     root = ET.Element('TS', version='2.1', language='ko_KR')
     contexts = {}
@@ -499,7 +505,7 @@ def main():
         message = ET.SubElement(contexts[context], 'message')
         ET.SubElement(message, 'source').text = source
         tr = ET.SubElement(message, 'translation')
-        if isinstance(translation, tuple):
+        if is_plural(translation):
             message.set('numerus', 'yes')
             for form in translation:
                 ET.SubElement(tr, 'numerusform').text = form
