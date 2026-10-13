@@ -17,10 +17,9 @@ class QQuickWindow;
 #define SDL_CODE_NETWORK_WINDOW 109
 
 // Hermit: settings panel shown over the stream (Ctrl+Alt+Shift+P, or the chevron handle at the
-// left or right edge of the stream window: always in remote desktop mouse mode, and in game mouse
-// mode while the mouse is not captured). It is a Qt Quick window: Qt event processing is
-// suspended during a stream, so Session::exec() pumps Qt events only while the panel or its handle
-// is visible. Settings that only need the client change at once; resolution, frame rate, bitrate,
+// left or right edge of the stream window, shown in every mouse mode; a captured game mouse does
+// not reach it). It is a Qt Quick window: Qt event processing is suspended during a stream, so
+// Session::exec() pumps Qt events only while the panel or its handle is visible. Settings that only need the client change at once; resolution, frame rate, bitrate,
 // codec and HDR are applied by reconnecting with the new settings (the host app keeps running).
 //
 // QML calls arrive while Session::exec() pumps Qt events; actions that must run in the SDL loop
@@ -108,10 +107,15 @@ public:
     void open();
     void close();
 
-    // Called on every pass of the SDL loop: shows the handle while the stream window has focus
-    // and the pointer can reach the handle (remote desktop mouse mode, where the pointer moves
-    // freely, or a released mouse in game mode), and keeps the windows on the stream window.
+    // Called on every pass of the SDL loop: shows the handle while the panel is closed and the
+    // stream window is not minimized, in every mouse mode (mouseCaptured and absoluteMouse no
+    // longer decide it); outside Windows only while the stream window has focus. Keeps the
+    // windows on the stream window.
     void sync(bool mouseCaptured, bool absoluteMouse, bool streamFocused, bool minimized);
+
+    // Windows: the stream window is being hidden (SDL hides it before it recreates the native
+    // window); hides the handle, which the system would destroy with its owner.
+    void streamWindowHidden();
 
     void setMuted(bool muted);
     bool muted() const { return m_Muted; }
@@ -247,10 +251,12 @@ private:
     qreal streamDpr() const;
 
     void watchStreamWindow(bool on);
+    void ownHandle(bool own);
+    void hideHandle();
 
     QQmlEngine* m_Engine;
     SDL_Window* m_StreamWindow;
-    bool m_WatchingStreamWindow = false;
+    void* m_WatchedWindow = nullptr;  // the stream window's HWND while it is watched (Windows)
     QString m_HostName;
     QString m_AppName;
     QQuickWindow* m_Panel = nullptr;
